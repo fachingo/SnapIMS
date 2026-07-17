@@ -149,6 +149,9 @@ def _payload_to_result(payload: dict[str, Any]) -> RecognitionResult:
 class MockRecognizer(BaseRecognizer):
     name = "mock"
 
+    def persistence_model_name(self) -> str:
+        return "deterministic-mock"
+
     def recognize(self, item: dict[str, Any], images: list[Path]) -> RecognitionResult:
         reference = hashlib.sha256(
             "|".join(str(image) for image in images).encode("utf-8")
@@ -177,6 +180,9 @@ class OpenAIRecognizer(BaseRecognizer):
             return self._model
         _ensure_dotenv_loaded()
         return os.getenv("SNAPIMS_OPENAI_MODEL", DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
+
+    def persistence_model_name(self) -> str:
+        return self._model_name()
 
     def _get_client(self) -> Any:
         if self._client is not None:
@@ -266,6 +272,9 @@ class GeminiRecognizer(BaseRecognizer):
 
 class LocalOCRRecognizer(BaseRecognizer):
     name = "local-ocr"
+
+    def persistence_model_name(self) -> str:
+        return "tesseract"
 
     def available(self) -> tuple[bool, str]:
         try:

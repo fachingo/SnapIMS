@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from snapims import db
+from snapims.recognition import repository
 from snapims.recognition.base import BaseRecognizer, RecognitionResult
 
 
@@ -14,6 +14,16 @@ from snapims.recognition.base import BaseRecognizer, RecognitionResult
 class BatchRecognitionFailure:
     item_id: str
     message: str
+
+
+@dataclass(frozen=True, slots=True)
+class BatchRecognitionOutcome:
+    item_id: str
+    status: str
+    result_id: int | None = None
+    suggested_title: str = ""
+    confidence: float = 0.0
+    message: str = ""
 
 
 @dataclass(slots=True)
@@ -27,6 +37,7 @@ class BatchRecognitionProgress:
     skipped: int = 0
     failed: int = 0
     failures: list[BatchRecognitionFailure] = field(default_factory=list)
+    outcomes: list[BatchRecognitionOutcome] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,15 +50,11 @@ class BatchRecognitionSummary:
     skipped: int
     failed: int
     failures: tuple[BatchRecognitionFailure, ...]
+    outcomes: tuple[BatchRecognitionOutcome, ...]
 
 
 def _item_has_recognition_results(db_file: Path, item_id_value: str) -> bool:
-    with db.connect(db_file) as connection:
-        row = connection.execute(
-            "SELECT 1 FROM recognition_results WHERE item_id = ? LIMIT 1",
-            (item_id_value,),
-        ).fetchone()
-    return row is not None
+    return repository.has_result(db_file, item_id_value)
 
 
 def _skip_reason(
@@ -74,63 +81,85 @@ def run_recognition(
     photos = db.get_item_photos(db_file, item_id_value)
     image_paths = [Path(photo["processed_path"]) for photo in photos]
     result = recognizer.recognize(item, image_paths)
-    with db.transaction(db_file) as connection:
-        cursor = connection.execute(
-            """
-            INSERT INTO recognition_results(
-                item_id, provider, created_at, suggested_title, edition, distributor,
-                release_year, barcode_candidates_json, confidence,
-                uncertainty_reasons_json, raw_response_reference, requires_review
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                item_id_value, result.provider_name, datetime.now().isoformat(timespec="seconds"),
-                result.suggested_title, result.edition, result.distributor, result.year,
-                json.dumps(result.barcode_candidates), result.confidence,
-                json.dumps(result.uncertainty_reasons), result.raw_response_reference,
-                int(result.requires_review),
-            ),
-        )
-        if cursor.lastrowid is None:
-            raise RuntimeError("SQLite did not return a recognition result ID")
-        return cursor.lastrowid, result
+    stored = repository.save_result(
+        db_file,
+        item_id_value,
+        result,
+        model_name=recognizer.persistence_model_name(),
+        created_at=datetime.now().isoformat(timespec="seconds"),
+    )
+    return stored.recognition_result_id, result
 
 
 def list_results(db_file: Path, item_id_value: str) -> list[dict]:
-    with db.connect(db_file) as connection:
-        rows = connection.execute(
-            "SELECT * FROM recognition_results WHERE item_id=? ORDER BY created_at DESC",
-            (item_id_value,),
-        ).fetchall()
-    return [dict(row) for row in rows]
+    return [result.as_dict() for result in repository.list_results_for_item(db_file, item_id_value)]
 
 
 def accept_result(db_file: Path, result_id: int) -> None:
-    with db.transaction(db_file) as connection:
-        row = connection.execute(
-            "SELECT * FROM recognition_results WHERE recognition_result_id=?", (result_id,)
-        ).fetchone()
-        if row is None:
-            raise KeyError(f"Unknown recognition result: {result_id}")
-        connection.execute(
-            """
-            UPDATE items SET title=CASE WHEN ?='' THEN title ELSE ? END,
-                edition=CASE WHEN ?='' THEN edition ELSE ? END,
-                distributor=CASE WHEN ?='' THEN distributor ELSE ? END,
-                recognition_provider=?, recognition_confidence=?, review=1, updated_at=?
-            WHERE item_id=?
-            """,
-            (
-                row["suggested_title"], row["suggested_title"],
-                row["edition"], row["edition"], row["distributor"], row["distributor"],
-                row["provider"], row["confidence"], datetime.now().isoformat(timespec="seconds"),
-                row["item_id"],
-            ),
+    repository.accept_result(
+        db_file,
+        result_id,
+        accepted_at=datetime.now().isoformat(timespec="seconds"),
+    )
+
+
+def accept_edited_result(
+    db_file: Path,
+    result_id: int,
+    edited_values: dict,
+) -> None:
+    repository.accept_result(
+        db_file,
+        result_id,
+        edited_values=edited_values,
+        accepted_at=datetime.now().isoformat(timespec="seconds"),
+    )
+
+
+def reject_result(db_file: Path, result_id: int) -> None:
+    repository.set_review_status(
+        db_file,
+        result_id,
+        repository.REVIEW_REJECTED,
+        reviewed_at=datetime.now().isoformat(timespec="seconds"),
+    )
+
+
+def skip_result(db_file: Path, result_id: int) -> None:
+    repository.set_review_status(
+        db_file,
+        result_id,
+        repository.REVIEW_SKIPPED,
+        reviewed_at=datetime.now().isoformat(timespec="seconds"),
+    )
+
+
+def mark_result_for_review(db_file: Path, result_id: int) -> None:
+    repository.set_review_status(
+        db_file,
+        result_id,
+        repository.REVIEW_REQUIRED,
+        reviewed_at=datetime.now().isoformat(timespec="seconds"),
+    )
+
+
+def retry_recognition(
+    db_file: Path,
+    item_id_value: str,
+    recognizer: BaseRecognizer,
+) -> tuple[int, RecognitionResult]:
+    try:
+        return run_recognition(db_file, item_id_value, recognizer)
+    except Exception as exc:
+        repository.save_failure(
+            db_file,
+            item_id_value,
+            provider=recognizer.name,
+            model_name=recognizer.persistence_model_name(),
+            created_at=datetime.now().isoformat(timespec="seconds"),
+            error_message=str(exc),
         )
-        connection.execute(
-            "UPDATE recognition_results SET accepted_at=? WHERE recognition_result_id=?",
-            (datetime.now().isoformat(timespec="seconds"), result_id),
-        )
+        raise
 
 
 def run_batch_recognition(
@@ -166,17 +195,63 @@ def run_batch_recognition(
             force_reprocess=force_reprocess,
         )
         if skip_message is not None:
+            existing = repository.latest_result_for_item(db_file, item_id_value)
             progress.skipped += 1
+            progress.outcomes.append(
+                BatchRecognitionOutcome(
+                    item_id=item_id_value,
+                    status="SKIPPED",
+                    result_id=existing.recognition_result_id if existing else None,
+                    suggested_title=existing.suggested_title if existing else "",
+                    confidence=existing.confidence if existing else 0.0,
+                    message=skip_message,
+                )
+            )
             progress.completed += 1
             publish(item_id_value)
             continue
         try:
-            _, result = run_recognition(db_file, item_id_value, recognizer)
+            result_id, result = run_recognition(db_file, item_id_value, recognizer)
         except Exception as exc:
+            failure_message = str(exc)
+            try:
+                failed_record = repository.save_failure(
+                    db_file,
+                    item_id_value,
+                    provider=recognizer.name,
+                    model_name=recognizer.persistence_model_name(),
+                    created_at=datetime.now().isoformat(timespec="seconds"),
+                    error_message=failure_message,
+                )
+                failed_result_id: int | None = failed_record.recognition_result_id
+            except Exception as persistence_exc:
+                failed_result_id = None
+                failure_message = (
+                    f"{failure_message} (failure record could not be saved: {persistence_exc})"
+                )
             progress.failed += 1
-            progress.failures.append(BatchRecognitionFailure(item_id=item_id_value, message=str(exc)))
+            progress.failures.append(
+                BatchRecognitionFailure(item_id=item_id_value, message=failure_message)
+            )
+            progress.outcomes.append(
+                BatchRecognitionOutcome(
+                    item_id=item_id_value,
+                    status="FAILED",
+                    result_id=failed_result_id,
+                    message=failure_message,
+                )
+            )
         else:
             progress.recognized += 1
+            progress.outcomes.append(
+                BatchRecognitionOutcome(
+                    item_id=item_id_value,
+                    status="REVIEW_REQUIRED" if result.requires_review else "UNREVIEWED",
+                    result_id=result_id,
+                    suggested_title=result.suggested_title,
+                    confidence=result.confidence,
+                )
+            )
             if result.requires_review:
                 progress.review_required += 1
         progress.completed += 1
@@ -191,4 +266,5 @@ def run_batch_recognition(
         skipped=progress.skipped,
         failed=progress.failed,
         failures=tuple(progress.failures),
+        outcomes=tuple(progress.outcomes),
     )

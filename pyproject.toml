@@ -28,6 +28,9 @@ snapims = "snapims.cli:main"
 [tool.setuptools.packages.find]
 include = ["snapims*"]
 
+[tool.setuptools.package-data]
+"snapims.recognition" = ["keyboard_component/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"

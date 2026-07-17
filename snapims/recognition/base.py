@@ -26,6 +26,9 @@ class BaseRecognizer(ABC):
     def available(self) -> tuple[bool, str]:
         return True, "Available"
 
+    def persistence_model_name(self) -> str:
+        return ""
+
     @abstractmethod
     def recognize(self, item: dict[str, Any], images: list[Path]) -> RecognitionResult:
         """Return suggestions only. Implementations must never mutate item records."""

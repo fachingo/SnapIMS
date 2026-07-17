@@ -193,6 +193,47 @@ CREATE INDEX IF NOT EXISTS idx_inventory_location ON inventory_events(to_locatio
 """
 MIGRATIONS = (
     (1, "Initial event-sourced SnapIMS prototype schema", SCHEMA_SQL),
+    (
+        2,
+        "Associate recognition results with batches and recognizer models",
+        """
+        ALTER TABLE recognition_results ADD COLUMN batch_id TEXT
+            REFERENCES batches(batch_id) ON DELETE RESTRICT;
+        ALTER TABLE recognition_results ADD COLUMN model_name TEXT NOT NULL DEFAULT '';
+        UPDATE recognition_results
+        SET batch_id = (
+            SELECT items.batch_id
+            FROM items
+            WHERE items.item_id = recognition_results.item_id
+        )
+        WHERE batch_id IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_recognition_batch
+            ON recognition_results(batch_id, created_at DESC);
+        """,
+    ),
+    (
+        3,
+        "Add durable recognition review state and acceptance audit",
+        """
+        ALTER TABLE recognition_results
+            ADD COLUMN result_status TEXT NOT NULL DEFAULT 'SUCCEEDED';
+        ALTER TABLE recognition_results
+            ADD COLUMN review_status TEXT NOT NULL DEFAULT 'UNREVIEWED';
+        ALTER TABLE recognition_results ADD COLUMN reviewed_at TEXT;
+        ALTER TABLE recognition_results
+            ADD COLUMN accepted_fields_json TEXT NOT NULL DEFAULT '[]';
+        ALTER TABLE recognition_results
+            ADD COLUMN accepted_values_json TEXT NOT NULL DEFAULT '{}';
+        ALTER TABLE recognition_results
+            ADD COLUMN error_message TEXT NOT NULL DEFAULT '';
+        ALTER TABLE items ADD COLUMN release_year INTEGER;
+        UPDATE recognition_results
+        SET review_status = 'ACCEPTED', reviewed_at = accepted_at
+        WHERE accepted_at IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_recognition_review_queue
+            ON recognition_results(batch_id, review_status, result_status, confidence);
+        """,
+    ),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 

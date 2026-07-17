@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>html, body { margin: 0; height: 0; overflow: hidden; }</style>
+  </head>
+  <body>
+    <script>
+      const send = (type, extra = {}) => {
+        window.parent.postMessage(
+          { isStreamlitMessage: true, type, ...extra },
+          "*"
+        );
+      };
+      send("streamlit:componentReady", { apiVersion: 1 });
+      send("streamlit:setFrameHeight", { height: 0 });
+
+      let counter = 0;
+      const parentDocument = window.parent.document;
+      if (parentDocument.__snapimsKeyboardHandler) {
+        parentDocument.removeEventListener(
+          "keydown",
+          parentDocument.__snapimsKeyboardHandler,
+          true
+        );
+      }
+      const handler = (event) => {
+        const target = event.target;
+        const tag = (target && target.tagName || "").toLowerCase();
+        const typing = tag === "input" || tag === "textarea" || tag === "select"
+          || Boolean(target && target.isContentEditable);
+        const ctrl = event.ctrlKey || event.metaKey;
+        const mapped = event.key === "Enter"
+          || event.key === "ArrowRight"
+          || event.key === "ArrowLeft"
+          || event.key === "Escape"
+          || /^[rReEfF1-9]$/.test(event.key);
+        if (!mapped || (typing && !(event.key === "Enter" && ctrl))) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        counter += 1;
+        send("streamlit:setComponentValue", {
+          value: {
+            id: `${Date.now()}-${counter}`,
+            key: event.key,
+            ctrl: event.ctrlKey,
+            meta: event.metaKey,
+            typing
+          }
+        });
+      };
+      parentDocument.__snapimsKeyboardHandler = handler;
+      parentDocument.addEventListener("keydown", handler, true);
+      window.addEventListener("beforeunload", () => {
+        if (parentDocument.__snapimsKeyboardHandler === handler) {
+          parentDocument.removeEventListener("keydown", handler, true);
+          delete parentDocument.__snapimsKeyboardHandler;
+        }
+      });
+    </script>
+  </body>
+</html>

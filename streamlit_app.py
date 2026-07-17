@@ -20,7 +20,9 @@ from snapims.inventory import (
 )
 from snapims.pipeline import parse_batch
 from snapims.processor import process_batch
+from snapims.recognition import repository
 from snapims.recognition.providers import recognizer_registry
+from snapims.recognition.review_ui import render_recognition_review
 from snapims.recognition.service import (
     BatchRecognitionProgress,
     accept_result,
@@ -39,6 +41,29 @@ st.markdown(
       [data-testid="stMetric"] {background:#f5f7fa;border:1px solid #e1e6ed;padding:14px;border-radius:12px;}
       .snap-card {border:1px solid #dbe2ea;border-radius:12px;padding:12px;background:white;margin-bottom:12px;}
       .small-muted {color:#687387;font-size:.88rem;}
+      .shortcut-strip {position:sticky;top:2.6rem;z-index:50;background:#17213a;color:white;
+        border-radius:8px;padding:7px 10px;margin:-6px 0 8px;font-size:.78rem;
+        display:flex;gap:12px;align-items:center;white-space:nowrap;overflow-x:auto;}
+      .shortcut-strip b {color:#9ee7d8;margin-right:-7px;}
+      .review-cover img {max-height:50vh;object-fit:contain;background:#111827;border-radius:8px;}
+      .review-heading {display:flex;align-items:center;gap:7px;margin-bottom:5px;}
+      .queue-position {margin-left:auto;font-weight:700;color:#475569;}
+      .status-badge {display:inline-block;border-radius:999px;padding:3px 9px;font-size:.72rem;
+        font-weight:800;text-transform:uppercase;letter-spacing:.04em;background:#e2e8f0;color:#334155;}
+      .status-badge.accepted {background:#dcfce7;color:#166534;}
+      .status-badge.rejected,.status-badge.failed {background:#fee2e2;color:#991b1b;}
+      .status-badge.skipped {background:#fef3c7;color:#92400e;}
+      .status-badge.review-required {background:#ffedd5;color:#9a3412;}
+      .status-badge.unreviewed {background:#dbeafe;color:#1e40af;}
+      .item-context {font-size:.77rem;color:#64748b;border-bottom:1px solid #e2e8f0;
+        padding-bottom:7px;margin-bottom:8px;}
+      .suggestion-title {font-size:1.55rem;font-weight:800;line-height:1.1;margin:4px 0 10px;}
+      .metadata-grid {display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:7px;}
+      .metadata-grid div {background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px;padding:6px 8px;}
+      .metadata-grid .wide {grid-column:1 / -1;}
+      .metadata-grid span {display:block;color:#64748b;font-size:.68rem;text-transform:uppercase;}
+      .metadata-grid b {display:block;font-size:.87rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      @media (max-width: 760px) {.shortcut-strip {position:static}.review-cover img {max-height:42vh;}}
     </style>
     """,
     unsafe_allow_html=True,
@@ -83,13 +108,18 @@ with st.sidebar:
     if configured_root != str(paths.root) and st.button("Use data directory"):
         st.session_state["data_root"] = configured_root
         st.rerun()
+    workspace_pages = [
+        "Dashboard", "Import batch", "Command events", "Item grid", "Item editor",
+        "CSV workflow", "Validation", "Database", "Recognition", "Recognition Review",
+        "Shopify dry-run", "Logs & warnings",
+    ]
+    pending_page = st.session_state.pop("pending_workspace_page", None)
+    if pending_page in workspace_pages:
+        st.session_state["workspace_page"] = pending_page
     page = st.radio(
         "Workspace",
-        [
-            "Dashboard", "Import batch", "Command events", "Item grid", "Item editor",
-            "CSV workflow", "Validation", "Database", "Recognition", "Shopify dry-run",
-            "Logs & warnings",
-        ],
+        workspace_pages,
+        key="workspace_page",
     )
     st.caption(f"Database: {paths.db_file}")
 
@@ -477,6 +507,17 @@ elif page == "Recognition":
                     {"item_id": failure.item_id, "message": failure.message}
                     for failure in summary.failures
                 ],
+                "outcomes": [
+                    {
+                        "item_id": outcome.item_id,
+                        "status": outcome.status,
+                        "result_id": outcome.result_id,
+                        "suggested_title": outcome.suggested_title,
+                        "confidence": outcome.confidence,
+                        "message": outcome.message,
+                    }
+                    for outcome in summary.outcomes
+                ],
             }
             if summary.failed:
                 st.warning(
@@ -489,7 +530,52 @@ elif page == "Recognition":
                     f"skipped {summary.skipped}."
                 )
         if "batch_recognition_summary" in st.session_state:
-            st.json(st.session_state["batch_recognition_summary"])
+            saved_summary = st.session_state["batch_recognition_summary"]
+            st.markdown("#### Batch results")
+            metric_columns = st.columns(5)
+            for column, label, key in zip(
+                metric_columns,
+                ("Completed", "Recognized", "Review required", "Skipped", "Failed"),
+                ("completed", "recognized", "review_required", "skipped", "failed"),
+                strict=True,
+            ):
+                column.metric(label, saved_summary[key])
+            for outcome in saved_summary.get("outcomes", []):
+                item = db.get_item(paths.db_file, outcome["item_id"])
+                row = st.columns([0.55, 2.5, 2.2, 0.8, 1, 0.85, 1.1])
+                if item and item["front_thumbnail"]:
+                    row[0].image(item["front_thumbnail"], width=52)
+                else:
+                    row[0].caption("No image")
+                row[1].caption(outcome["item_id"])
+                row[2].write(outcome["suggested_title"] or "—")
+                row[3].write(f"{outcome['confidence']:.0%}")
+                row[4].write(outcome["status"].replace("_", " ").title())
+                row[5].write(outcome["result_id"] or "—")
+                if outcome["result_id"] and row[6].button(
+                    "Open in Review",
+                    key=f"open_batch_result_{outcome['item_id']}_{outcome['result_id']}",
+                ):
+                    stored = repository.get_result(paths.db_file, outcome["result_id"])
+                    st.session_state["review_batch"] = saved_summary["batch_id"]
+                    review_filter = repository.QUEUE_ALL_UNREVIEWED
+                    if stored and stored.result_status == repository.RESULT_FAILED:
+                        review_filter = repository.QUEUE_FAILED
+                    elif stored and stored.review_status == repository.REVIEW_ACCEPTED:
+                        review_filter = repository.QUEUE_ACCEPTED
+                    elif stored and stored.review_status == repository.REVIEW_SKIPPED:
+                        review_filter = repository.QUEUE_SKIPPED
+                    elif stored and stored.review_status == repository.REVIEW_REQUIRED:
+                        review_filter = repository.QUEUE_REVIEW_REQUIRED
+                    st.session_state["review_filter"] = review_filter
+                    st.session_state["review_open_result_id"] = outcome["result_id"]
+                    st.session_state["pending_workspace_page"] = "Recognition Review"
+                    st.rerun()
+            with st.expander("Batch diagnostics"):
+                st.json(saved_summary)
+
+elif page == "Recognition Review":
+    render_recognition_review(paths)
 
 elif page == "Shopify dry-run":
     st.title("Shopify draft queue")
