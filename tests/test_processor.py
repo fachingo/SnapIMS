@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 import pytest
+import qrcode
 from PIL import Image
 
 from snapims import db
@@ -114,3 +116,56 @@ def test_excluded_photos_are_still_preserved_and_audited(tmp_path, data_paths) -
         (result.output_folder / "batch_manifest.json").read_text(encoding="utf-8")
     )
     assert len(manifest["excluded_photos"]) == 2
+
+
+def _write_qr_command_jpeg(path: Path, payload: str, captured_at: datetime) -> None:
+    qr = qrcode.make(payload).convert("RGB").resize((300, 300))
+    exif = Image.Exif()
+    exif[36867] = captured_at.strftime("%Y:%m:%d %H:%M:%S")
+    exif[37521] = f"{captured_at.microsecond:06d}"
+    qr.save(path, exif=exif)
+
+
+def test_unknown_cvhs1_command_is_quarantined_never_a_product_and_fully_audited(
+    tmp_path, data_paths
+) -> None:
+    source = create_demo_batch(tmp_path / "camera")
+    unknown_path = source / "PXL_20260716_120002500.jpg"
+    _write_qr_command_jpeg(
+        unknown_path, "CVHS1:DO:MAGIC", datetime(2026, 7, 16, 12, 0, 2, 500000)
+    )
+    source_hashes = {path.name: sha256_file(path) for path in source.glob("*.jpg")}
+
+    result = process_batch(source, paths=data_paths)
+
+    assert result.item_count == 2
+    assert result.product_photo_count == 4
+    assert result.command_count == 6
+    assert any("Unknown CVHS1 command quarantined" in warning for warning in result.warnings)
+
+    original_copy = next(
+        (data_paths.originals / result.batch_id).glob(f"*-{unknown_path.name}")
+    )
+    assert sha256_file(original_copy) == source_hashes[unknown_path.name]
+
+    manifest = json.loads(
+        (result.output_folder / "batch_manifest.json").read_text(encoding="utf-8")
+    )
+    assert len(manifest["unknown_commands"]) == 1
+    assert manifest["unknown_commands"][0]["qr_payload"] == "CVHS1:DO:MAGIC"
+    quarantine_copy = Path(manifest["unknown_commands"][0]["quarantine_copy_path"])
+    assert quarantine_copy.is_file()
+    assert quarantine_copy.parent.name == "commands"
+
+    with db.connect(data_paths.db_file) as connection:
+        photo_row = connection.execute(
+            "SELECT kind, qr_payload FROM photos WHERE original_name = ?",
+            (unknown_path.name,),
+        ).fetchone()
+        assert photo_row["kind"] == "command"
+        assert photo_row["qr_payload"] == "CVHS1:DO:MAGIC"
+        event_row = connection.execute(
+            "SELECT payload, warning FROM command_events WHERE command_kind = 'unknown_command'"
+        ).fetchone()
+        assert event_row["payload"] == "CVHS1:DO:MAGIC"
+        assert event_row["warning"]

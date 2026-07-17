@@ -51,12 +51,26 @@ def _decode_with_opencv(path: Path) -> list[str]:
 
 
 def decode_snapims_qr(path: Path) -> str | None:
-    """Return one recognized CVHS1 command, or None for an ordinary photograph."""
-    decoded = _decode_with_opencv(path)
-    recognized = [value.upper() for value in decoded if parse_command(value) is not None]
-    unique = list(dict.fromkeys(recognized))
-    if not unique:
-        return None
-    if len(unique) > 1:
-        raise QRDecodeError(f"Image contains multiple SnapIMS commands: {path.name}: {unique}")
-    return unique[0]
+    """Return one recognized CVHS1 command, one unrecognized ``CVHS1:`` payload for the
+    interpreter to quarantine, or None when the image carries no SnapIMS QR content at all.
+    """
+    decoded = [value.upper() for value in _decode_with_opencv(path)]
+    recognized = [value for value in decoded if parse_command(value) is not None]
+    unique_recognized = list(dict.fromkeys(recognized))
+    if len(unique_recognized) > 1:
+        raise QRDecodeError(
+            f"Image contains multiple SnapIMS commands: {path.name}: {unique_recognized}"
+        )
+    if unique_recognized:
+        return unique_recognized[0]
+
+    unrecognized_cvhs1 = [value for value in decoded if value.startswith("CVHS1:")]
+    unique_unrecognized = list(dict.fromkeys(unrecognized_cvhs1))
+    if len(unique_unrecognized) > 1:
+        raise QRDecodeError(
+            f"Image contains multiple unrecognized SnapIMS commands: {path.name}: "
+            f"{unique_unrecognized}"
+        )
+    if unique_unrecognized:
+        return unique_unrecognized[0]
+    return None

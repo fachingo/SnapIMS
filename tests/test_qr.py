@@ -24,6 +24,12 @@ def test_unknown_qr_is_ignored(tmp_path) -> None:
     assert decode_snapims_qr(path) is None
 
 
+def test_unrecognized_cvhs1_payload_is_surfaced_for_quarantine_not_dropped(tmp_path) -> None:
+    path = tmp_path / "unknown-command.png"
+    qrcode.make("CVHS1:DO:MAGIC").save(path)
+    assert decode_snapims_qr(path) == "CVHS1:DO:MAGIC"
+
+
 def test_heic_command_uses_safe_pillow_decoder_fallback(tmp_path) -> None:
     path = tmp_path / "command.heic"
     qr = qrcode.make("CVHS1:ITEM:NEXT").convert("RGB").resize((900, 900))

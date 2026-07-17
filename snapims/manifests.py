@@ -17,6 +17,7 @@ def photo_name(batch_id: str, shelf: str, sequence: int, photo_order: int) -> st
 
 
 def batch_to_dict(batch: BatchRecord, artifacts: list[ProcessedPhoto]) -> dict[str, object]:
+    unknown_stream_indexes = {photo.stream_index for photo in batch.unknown_commands}
     by_item: dict[str, list[ProcessedPhoto]] = {}
     for artifact in artifacts:
         if artifact.item_id:
@@ -83,6 +84,22 @@ def batch_to_dict(batch: BatchRecord, artifacts: list[ProcessedPhoto]) -> dict[s
             }
             for artifact in artifacts
             if artifact.kind == "excluded"
+        ],
+        "unknown_commands": [
+            {
+                "stream_index": artifact.source.stream_index,
+                "original_name": artifact.source.original_name,
+                "captured_at": artifact.source.captured_at.isoformat(),
+                "timestamp_source": artifact.source.timestamp_source,
+                "qr_payload": artifact.source.qr_payload,
+                "sha256": artifact.source.sha256,
+                "original_copy_path": str(artifact.original_copy_path),
+                "quarantine_copy_path": (
+                    str(artifact.processed_path) if artifact.processed_path else None
+                ),
+            }
+            for artifact in artifacts
+            if artifact.source.stream_index in unknown_stream_indexes
         ],
     }
 

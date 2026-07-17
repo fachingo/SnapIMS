@@ -53,6 +53,7 @@ class BatchRecord:
     source_fingerprint: str = ""
     items: list[ItemRecord] = field(default_factory=list)
     commands: list[PhotoRecord] = field(default_factory=list)
+    unknown_commands: list[PhotoRecord] = field(default_factory=list)
     source_photos: list[PhotoRecord] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     started: bool = False

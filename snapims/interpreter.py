@@ -66,9 +66,16 @@ def interpret_stream(
     for record in records:
         command = parse_command(record.qr_payload) if record.qr_payload else None
 
+        if command is None and record.qr_payload and record.qr_payload.upper().startswith("CVHS1:"):
+            normalized_payload = record.qr_payload.strip().upper()
+            batch.unknown_commands.append(replace(record, qr_payload=normalized_payload))
+            batch.warnings.append(
+                "Unknown CVHS1 command quarantined; never executed and excluded from item "
+                f"photos: {normalized_payload} ({record.original_name})"
+            )
+            continue
+
         if command is None:
-            if record.qr_payload and record.qr_payload.upper().startswith("CVHS1:"):
-                raise ProtocolError(f"Unknown CVHS1 command: {record.qr_payload}")
             if not batch.started:
                 batch.warnings.append(
                     f"Excluded ordinary photo before START: {record.original_name}"

@@ -82,6 +82,7 @@ def _artifact_plan(batch: BatchRecord, paths: DataPaths) -> list[ProcessedPhoto]
             )
 
     command_streams = {photo.stream_index for photo in batch.commands}
+    command_streams |= {photo.stream_index for photo in batch.unknown_commands}
     records = sorted(batch.source_photos, key=lambda photo: photo.stream_index)
     artifacts: list[ProcessedPhoto] = []
     for photo in records:

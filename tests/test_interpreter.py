@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from snapims.interpreter import ProtocolError, interpret_stream
+from snapims.interpreter import interpret_stream
 
 from .conftest import BASE_TIME, record
 
@@ -116,9 +116,36 @@ def test_mid_item_location_and_flags_warn_and_apply_safely_to_next_item() -> Non
     assert sum("inside item" in warning for warning in batch.warnings) == 2
 
 
-def test_unknown_cvhs_command_is_rejected_if_decoder_surfaces_it() -> None:
-    with pytest.raises(ProtocolError, match="Unknown CVHS1"):
-        interpret([
-            record(0, "start.jpg", "CVHS1:BATCH:START"), record(1, "shelf.jpg", "CVHS1:LOC:A1"),
-            record(2, "unknown.jpg", "CVHS1:DO:MAGIC"),
-        ])
+def test_unknown_cvhs1_command_before_start_is_quarantined_without_raising() -> None:
+    batch = interpret([
+        record(0, "unknown.jpg", "CVHS1:DO:MAGIC"), record(1, "start.jpg", "CVHS1:BATCH:START"),
+        record(2, "shelf.jpg", "CVHS1:LOC:A1"), record(3, "front.jpg"),
+        record(4, "end.jpg", "CVHS1:BATCH:END"),
+    ])
+    assert [p.original_name for p in batch.items[0].photos] == ["front.jpg"]
+    assert [photo.original_name for photo in batch.unknown_commands] == ["unknown.jpg"]
+    assert [photo.qr_payload for photo in batch.unknown_commands] == ["CVHS1:DO:MAGIC"]
+    assert any("Unknown CVHS1 command quarantined" in warning for warning in batch.warnings)
+
+
+def test_unknown_cvhs1_command_inside_open_item_is_quarantined_and_excluded_from_photos() -> None:
+    batch = interpret([
+        record(0, "start.jpg", "CVHS1:BATCH:START"), record(1, "shelf.jpg", "CVHS1:LOC:A1"),
+        record(2, "front.jpg"), record(3, "unknown.jpg", "CVHS1:DO:MAGIC"),
+        record(4, "back.jpg"), record(5, "end.jpg", "CVHS1:BATCH:END"),
+    ])
+    assert len(batch.items) == 1
+    assert [p.original_name for p in batch.items[0].photos] == ["front.jpg", "back.jpg"]
+    assert [photo.original_name for photo in batch.unknown_commands] == ["unknown.jpg"]
+    assert any("Unknown CVHS1 command quarantined" in warning for warning in batch.warnings)
+
+
+def test_unknown_cvhs1_command_after_end_is_quarantined_without_raising() -> None:
+    batch = interpret([
+        record(0, "start.jpg", "CVHS1:BATCH:START"), record(1, "shelf.jpg", "CVHS1:LOC:A1"),
+        record(2, "front.jpg"), record(3, "end.jpg", "CVHS1:BATCH:END"),
+        record(4, "unknown.jpg", "CVHS1:DO:MAGIC"),
+    ])
+    assert len(batch.items) == 1
+    assert [photo.original_name for photo in batch.unknown_commands] == ["unknown.jpg"]
+    assert any("Unknown CVHS1 command quarantined" in warning for warning in batch.warnings)

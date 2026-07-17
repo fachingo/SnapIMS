@@ -417,6 +417,22 @@ def insert_batch(
                     command.kind.value, command.value, photo_ids.get(command_photo.stream_index),
                 ),
             )
+        for unknown_photo in batch.unknown_commands:
+            connection.execute(
+                """
+                INSERT INTO command_events(
+                    batch_id, stream_index, occurred_at, payload, command_kind,
+                    command_value, source_photo_id, warning
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    batch.batch_id, unknown_photo.stream_index,
+                    unknown_photo.captured_at.isoformat(), unknown_photo.qr_payload or "",
+                    "unknown_command", None, photo_ids.get(unknown_photo.stream_index),
+                    "Unknown CVHS1 command quarantined; never executed and excluded from "
+                    "item photos.",
+                ),
+            )
 
 
 def list_batches(db_file: Path) -> list[dict[str, Any]]:
