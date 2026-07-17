@@ -17,8 +17,6 @@ _KEY_ACTIONS = {
     "Enter": ACTION_ACCEPT,
     "ArrowRight": ACTION_SKIP,
     "ArrowLeft": ACTION_PREVIOUS,
-    "r": ACTION_MANUAL_REVIEW,
-    "R": ACTION_MANUAL_REVIEW,
     "e": ACTION_EDIT,
     "E": ACTION_EDIT,
     "Escape": ACTION_CANCEL_EDIT,
@@ -85,3 +83,29 @@ def previous_result_id(result_ids: list[int], current_id: int) -> int | None:
     if index == 0:
         return current_id
     return result_ids[index - 1]
+
+
+def current_item_id(item_ids: list[str], preferred_id: str | None) -> str | None:
+    if not item_ids:
+        return None
+    if preferred_id in item_ids:
+        return preferred_id
+    return item_ids[0]
+
+
+def next_item_id(item_ids: list[str], current_id: str) -> str | None:
+    if current_id not in item_ids:
+        return item_ids[0] if item_ids else None
+    index = item_ids.index(current_id)
+    if index + 1 < len(item_ids):
+        return item_ids[index + 1]
+    return item_ids[0] if len(item_ids) > 1 else None
+
+
+def previous_item_id(item_ids: list[str], current_id: str) -> str | None:
+    if current_id not in item_ids:
+        return item_ids[0] if item_ids else None
+    index = item_ids.index(current_id)
+    if index == 0:
+        return current_id
+    return item_ids[index - 1]

@@ -18,20 +18,18 @@ REVIEW_SKIPPED = "SKIPPED"
 REVIEW_FAILED = "FAILED"
 HIGH_CONFIDENCE_THRESHOLD = 0.85
 
-QUEUE_ALL_UNREVIEWED = "All unreviewed"
+QUEUE_TO_REVIEW = "To review"
 QUEUE_NEEDS_ATTENTION = "Needs attention"
-QUEUE_REVIEW_REQUIRED = QUEUE_NEEDS_ATTENTION
-QUEUE_HIGH_CONFIDENCE = "High confidence"
 QUEUE_FAILED = "Failed"
-QUEUE_ACCEPTED = "Already accepted"
-QUEUE_SKIPPED = "Skipped"
+QUEUE_DONE = "Done"
+QUEUE_ALL_UNREVIEWED = QUEUE_TO_REVIEW
+QUEUE_REVIEW_REQUIRED = QUEUE_NEEDS_ATTENTION
+QUEUE_ACCEPTED = QUEUE_DONE
 QUEUE_FILTERS = (
-    QUEUE_ALL_UNREVIEWED,
-    QUEUE_REVIEW_REQUIRED,
-    QUEUE_HIGH_CONFIDENCE,
+    QUEUE_TO_REVIEW,
+    QUEUE_NEEDS_ATTENTION,
     QUEUE_FAILED,
-    QUEUE_ACCEPTED,
-    QUEUE_SKIPPED,
+    QUEUE_DONE,
 )
 
 
@@ -81,6 +79,14 @@ class ReviewQueueEntry:
     sequence: int
     front_image: str
     front_thumbnail: str
+    price_cents: int | None
+    condition: str
+    quantity: int
+    rare: bool
+    physical_review: bool
+    ready: bool
+    validation_status: str
+    validation_errors: tuple[str, ...]
 
 
 def _stored_result(row: Any) -> StoredRecognitionResult:
@@ -269,54 +275,37 @@ def save_failure(
 def list_review_queue(
     db_file: Path,
     batch_id_value: str,
-    queue_filter: str = QUEUE_ALL_UNREVIEWED,
+    queue_filter: str = QUEUE_TO_REVIEW,
+    *,
+    high_confidence_only: bool = False,
 ) -> list[ReviewQueueEntry]:
     if queue_filter not in QUEUE_FILTERS:
         raise ValueError(f"Unknown recognition queue filter: {queue_filter}")
     filters: dict[str, tuple[str, tuple[Any, ...]]] = {
-        QUEUE_ALL_UNREVIEWED: (
-            "latest.result_status = ? AND latest.review_status = ?",
-            (RESULT_SUCCEEDED, REVIEW_UNREVIEWED),
+        QUEUE_TO_REVIEW: (
+            "latest.result_status = ? AND latest.review_status IN (?, ?)",
+            (RESULT_SUCCEEDED, REVIEW_UNREVIEWED, REVIEW_SKIPPED),
         ),
-        QUEUE_REVIEW_REQUIRED: (
+        QUEUE_NEEDS_ATTENTION: (
             """
             latest.result_status = ?
-            AND (
-                latest.review_status IN (?, ?)
-                OR (
-                    latest.review_status = ?
-                    AND latest.requires_review = 1
-                )
-            )
+            AND latest.review_status IN (?, ?)
             """,
-            (
-                RESULT_SUCCEEDED,
-                REVIEW_REQUIRED,
-                REVIEW_REJECTED,
-                REVIEW_UNREVIEWED,
-            ),
-        ),
-        QUEUE_HIGH_CONFIDENCE: (
-            """
-            latest.result_status = ? AND latest.review_status = ?
-            AND latest.confidence >= ?
-            """,
-            (RESULT_SUCCEEDED, REVIEW_UNREVIEWED, HIGH_CONFIDENCE_THRESHOLD),
+            (RESULT_SUCCEEDED, REVIEW_REQUIRED, REVIEW_REJECTED),
         ),
         QUEUE_FAILED: (
             "latest.result_status = ?",
             (RESULT_FAILED,),
         ),
-        QUEUE_ACCEPTED: (
+        QUEUE_DONE: (
             "latest.result_status = ? AND latest.review_status = ?",
             (RESULT_SUCCEEDED, REVIEW_ACCEPTED),
         ),
-        QUEUE_SKIPPED: (
-            "latest.result_status = ? AND latest.review_status = ?",
-            (RESULT_SUCCEEDED, REVIEW_SKIPPED),
-        ),
     }
     where, parameters = filters[queue_filter]
+    if high_confidence_only:
+        where = f"({where}) AND latest.confidence >= ?"
+        parameters = (*parameters, HIGH_CONFIDENCE_THRESHOLD)
     db.initialize(db_file)
     with db.connect(db_file) as connection:
         rows = connection.execute(
@@ -335,7 +324,9 @@ def list_review_queue(
             )
             SELECT latest.*, i.title AS item_title, i.edition AS item_edition,
                    i.distributor AS item_distributor, i.release_year AS item_release_year,
-                   i.barcode AS item_barcode, i.shelf, i.sequence,
+                   i.barcode AS item_barcode, i.shelf, i.sequence, i.price_cents,
+                   i.condition, i.quantity, i.rare, i.review AS physical_review,
+                   i.ready, i.validation_status, i.validation_errors,
                    COALESCE(
                        MIN(CASE WHEN p.photo_order = 1 THEN p.processed_path END), ''
                    ) AS front_image,
@@ -347,7 +338,14 @@ def list_review_queue(
             LEFT JOIN photos p ON p.item_id = i.item_id AND p.kind = 'product'
             WHERE {where}
             GROUP BY latest.recognition_result_id
-            ORDER BY i.sequence, latest.recognition_result_id
+            ORDER BY
+                CASE latest.review_status
+                    WHEN 'UNREVIEWED' THEN 0
+                    WHEN 'SKIPPED' THEN 1
+                    ELSE 0
+                END,
+                i.sequence,
+                latest.recognition_result_id
             """,
             (batch_id_value, *parameters),
         ).fetchall()
@@ -367,6 +365,16 @@ def list_review_queue(
             sequence=int(row["sequence"]),
             front_image=str(row["front_image"]),
             front_thumbnail=str(row["front_thumbnail"]),
+            price_cents=(
+                int(row["price_cents"]) if row["price_cents"] is not None else None
+            ),
+            condition=str(row["condition"]),
+            quantity=int(row["quantity"]),
+            rare=bool(row["rare"]),
+            physical_review=bool(row["physical_review"]),
+            ready=bool(row["ready"]),
+            validation_status=str(row["validation_status"]),
+            validation_errors=tuple(json.loads(row["validation_errors"])),
         )
         for row in rows
     ]
@@ -406,7 +414,17 @@ def accept_result(
                 if value is not None and (not isinstance(value, str) or value.strip())
             }
         else:
-            allowed = {"title", "edition", "distributor", "release_year", "barcode"}
+            allowed = {
+                "title",
+                "edition",
+                "distributor",
+                "release_year",
+                "barcode",
+                "price_cents",
+                "condition",
+                "quantity",
+                "ready",
+            }
             values = {key: value for key, value in edited_values.items() if key in allowed}
         if values:
             assignments = ", ".join(f"{key} = ?" for key in values)

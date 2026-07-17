@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 
 from snapims import db
+from snapims.inventory import validate_items
+from snapims.protocol import LOCATION_RE
 from snapims.recognition import reconciliation, repository
 from snapims.recognition.base import BaseRecognizer, RecognitionResult
 
@@ -101,25 +103,72 @@ def review_flag_reconciliation_report(
     return reconciliation.build_review_flag_reconciliation_report(db_file)
 
 
-def accept_result(db_file: Path, result_id: int) -> None:
-    repository.accept_result(
+def accept_result(db_file: Path, result_id: int) -> list[str]:
+    stored = repository.accept_result(
         db_file,
         result_id,
         accepted_at=datetime.now().isoformat(timespec="seconds"),
     )
+    return validate_items(db_file, [stored.item_id])[stored.item_id]
 
 
 def accept_edited_result(
     db_file: Path,
     result_id: int,
     edited_values: dict,
-) -> None:
-    repository.accept_result(
+) -> list[str]:
+    stored = repository.accept_result(
         db_file,
         result_id,
         edited_values=edited_values,
         accepted_at=datetime.now().isoformat(timespec="seconds"),
     )
+    return validate_items(db_file, [stored.item_id])[stored.item_id]
+
+
+def correct_item_location(
+    db_file: Path,
+    item_id_value: str,
+    shelf: str,
+    reason: str,
+) -> list[str]:
+    normalized_shelf = shelf.strip().upper()
+    normalized_reason = reason.strip()
+    if not LOCATION_RE.fullmatch(f"CVHS1:LOC:{normalized_shelf}"):
+        raise ValueError("Shelf must be Q1 or A1 through J10")
+    if not normalized_reason:
+        raise ValueError("A reason is required to correct an item location")
+    changed_at = datetime.now().isoformat(timespec="seconds")
+    with db.transaction(db_file) as connection:
+        item = connection.execute(
+            "SELECT batch_id, shelf FROM items WHERE item_id = ?",
+            (item_id_value,),
+        ).fetchone()
+        if item is None:
+            raise KeyError(f"Unknown Item ID: {item_id_value}")
+        if item["shelf"] == normalized_shelf:
+            raise ValueError("The corrected location must differ from the current shelf")
+        connection.execute(
+            "UPDATE items SET shelf = ?, updated_at = ? WHERE item_id = ?",
+            (normalized_shelf, changed_at, item_id_value),
+        )
+        connection.execute(
+            """
+            INSERT INTO inventory_events(
+                item_id, batch_id, occurred_at, event_type, from_location,
+                to_location, source, notes
+            ) VALUES(?, ?, ?, 'LOCATION_CORRECTED', ?, ?, 'REVIEW_WORKSTATION', ?)
+            """,
+            (
+                item_id_value,
+                item["batch_id"],
+                changed_at,
+                item["shelf"],
+                normalized_shelf,
+                normalized_reason,
+            ),
+        )
+    return validate_items(db_file, [item_id_value])[item_id_value]
 
 
 def reject_result(db_file: Path, result_id: int) -> None:

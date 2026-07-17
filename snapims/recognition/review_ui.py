@@ -8,6 +8,8 @@ import streamlit as st
 
 from snapims import db
 from snapims.config import DataPaths
+from snapims.inventory import CONDITIONS
+from snapims.protocol import all_location_payloads
 from snapims.recognition import repository
 from snapims.recognition.keyboard import keyboard_shortcut_event
 from snapims.recognition.providers import recognizer_registry
@@ -21,14 +23,15 @@ from snapims.recognition.review import (
     ACTION_PREVIOUS,
     ACTION_RETRY,
     ACTION_SKIP,
-    current_result_id,
+    current_item_id,
     keyboard_decision,
-    next_result_id,
-    previous_result_id,
+    next_item_id,
+    previous_item_id,
 )
 from snapims.recognition.service import (
     accept_edited_result,
     accept_result,
+    correct_item_location,
     mark_result_for_review,
     reject_result,
     retry_recognition,
@@ -45,12 +48,18 @@ _STATUS_LABELS = {
 }
 
 
-def _compact_provider(providers: dict[str, Any]) -> str:
+def _provider_name(providers: dict[str, Any]) -> str:
     state_key = "recognition_provider_name"
     current = st.session_state.get(state_key)
     if current not in providers:
         current = "openai" if providers["openai"].available()[0] else "mock"
         st.session_state[state_key] = current
+    return str(current)
+
+
+def _compact_provider(providers: dict[str, Any]) -> str:
+    state_key = "recognition_provider_name"
+    current = _provider_name(providers)
     st.caption(f"Provider: `{current}`")
     if st.button("Change", key="review_change_provider"):
         st.session_state["review_provider_picker_visible"] = not st.session_state.get(
@@ -74,10 +83,9 @@ def _shortcut_strip() -> None:
     st.markdown(
         """
         <div class="shortcut-strip">
-          <b>Enter</b> Accept
-          <b>→</b> Skip
+          <b>Enter</b> Accept & next
+          <b>→</b> Later
           <b>←</b> Previous
-          <b>R</b> Manual review
           <b>E</b> Edit
           <b>Esc</b> Cancel edit
           <b>⌘/Ctrl+Enter</b> Save edit
@@ -89,20 +97,28 @@ def _shortcut_strip() -> None:
     )
 
 
-def _set_next(queue_ids: list[int], current_id: int) -> None:
-    st.session_state["review_preferred_result_id"] = next_result_id(queue_ids, current_id)
+def _set_next(queue_item_ids: list[str], current_item_id_value: str) -> None:
+    st.session_state["review_preferred_item_id"] = next_item_id(
+        queue_item_ids,
+        current_item_id_value,
+    )
     st.session_state["review_edit_mode"] = False
 
 
 def _edited_values(result_id: int) -> dict[str, Any]:
     year = st.session_state.get(f"review_year_{result_id}")
     release_year = None if year in (None, "") else int(str(year))
+    price = st.session_state.get(f"review_price_{result_id}")
     return {
         "title": st.session_state.get(f"review_title_{result_id}", ""),
         "edition": st.session_state.get(f"review_edition_{result_id}", ""),
         "distributor": st.session_state.get(f"review_distributor_{result_id}", ""),
         "release_year": release_year,
         "barcode": st.session_state.get(f"review_barcode_{result_id}", ""),
+        "price_cents": round(float(price) * 100) if price is not None else None,
+        "condition": st.session_state.get(f"review_condition_{result_id}", "Not Graded"),
+        "quantity": int(st.session_state.get(f"review_quantity_{result_id}", 1)),
+        "ready": int(bool(st.session_state.get(f"review_ready_{result_id}", False))),
     }
 
 
@@ -111,18 +127,20 @@ def _perform_action(
     *,
     db_file: Path,
     entry: repository.ReviewQueueEntry,
-    queue_ids: list[int],
+    queue_item_ids: list[str],
     provider_name: str,
 ) -> None:
     result_id = entry.result.recognition_result_id
+    item_id = entry.result.item_id
     if action.startswith(ACTION_PHOTO_PREFIX):
         st.session_state[f"review_photo_{entry.result.item_id}"] = int(
             action.removeprefix(ACTION_PHOTO_PREFIX)
         )
         st.rerun()
     if action == ACTION_PREVIOUS:
-        st.session_state["review_preferred_result_id"] = previous_result_id(
-            queue_ids, result_id
+        st.session_state["review_preferred_item_id"] = previous_item_id(
+            queue_item_ids,
+            item_id,
         )
         st.session_state["review_edit_mode"] = False
         st.rerun()
@@ -137,10 +155,22 @@ def _perform_action(
     try:
         if action == ACTION_ACCEPT:
             with st.spinner("Accepting suggestion…"):
-                accept_result(db_file, result_id)
+                errors = accept_result(db_file, result_id)
+                st.session_state["review_last_validation"] = {
+                    "item_id": item_id,
+                    "errors": errors,
+                }
         elif action == ACTION_ACCEPT_EDITED:
             with st.spinner("Saving edited metadata…"):
-                accept_edited_result(db_file, result_id, _edited_values(result_id))
+                errors = accept_edited_result(
+                    db_file,
+                    result_id,
+                    _edited_values(result_id),
+                )
+                st.session_state["review_last_validation"] = {
+                    "item_id": item_id,
+                    "errors": errors,
+                }
         elif action == ACTION_SKIP:
             skip_result(db_file, result_id)
         elif action == ACTION_MANUAL_REVIEW:
@@ -157,7 +187,7 @@ def _perform_action(
                 )
         else:
             return
-        _set_next(queue_ids, result_id)
+        _set_next(queue_item_ids, item_id)
     finally:
         st.session_state["review_busy"] = False
     st.rerun()
@@ -227,7 +257,6 @@ def _render_suggestion(entry: repository.ReviewQueueEntry, edit_mode: bool) -> N
     result = entry.result
     if result.result_status == repository.RESULT_FAILED:
         st.error(result.error_message or "Recognition failed without an error message.")
-        return
     barcode = result.barcode_candidates[0] if result.barcode_candidates else ""
     if edit_mode:
         st.text_input(
@@ -259,6 +288,36 @@ def _render_suggestion(entry: repository.ReviewQueueEntry, edit_mode: bool) -> N
             value=result.edition,
             key=f"review_edition_{result.recognition_result_id}",
         )
+        price_column, condition_column, quantity_column = st.columns(3)
+        price_column.number_input(
+            "Price",
+            min_value=0.0,
+            value=0.0 if entry.price_cents is None else entry.price_cents / 100,
+            step=1.0,
+            key=f"review_price_{result.recognition_result_id}",
+        )
+        condition_column.selectbox(
+            "Condition",
+            CONDITIONS,
+            index=(
+                CONDITIONS.index(entry.condition)
+                if entry.condition in CONDITIONS
+                else 0
+            ),
+            key=f"review_condition_{result.recognition_result_id}",
+        )
+        quantity_column.number_input(
+            "Quantity",
+            min_value=0,
+            value=entry.quantity,
+            step=1,
+            key=f"review_quantity_{result.recognition_result_id}",
+        )
+        st.checkbox(
+            "Ready for draft",
+            value=entry.ready,
+            key=f"review_ready_{result.recognition_result_id}",
+        )
         st.caption("Ctrl+Enter saves these values. Escape discards edit mode.")
         return
 
@@ -281,6 +340,32 @@ def _render_suggestion(entry: repository.ReviewQueueEntry, edit_mode: bool) -> N
         st.warning(" · ".join(result.uncertainty_reasons))
     else:
         st.caption("No uncertainty noted.")
+    price = "—" if entry.price_cents is None else f"${entry.price_cents / 100:.2f}"
+    physical_review = "Yes" if entry.physical_review else "No"
+    rare = "Yes" if entry.rare else "No"
+    readiness = (
+        "Ready for draft"
+        if entry.validation_status == "READY"
+        else entry.validation_status.title()
+    )
+    st.markdown(
+        f"""
+        <div class="metadata-grid">
+          <div><span>Price</span><b>{price}</b></div>
+          <div><span>Condition</span><b>{escape(entry.condition)}</b></div>
+          <div><span>Quantity</span><b>{entry.quantity}</b></div>
+          <div><span>Shelf</span><b>{escape(entry.shelf)}</b></div>
+          <div><span>Rare</span><b>{rare}</b></div>
+          <div><span>Physical review</span><b>{physical_review}</b></div>
+          <div class="wide"><span>Validation</span><b>{escape(readiness)}</b></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if entry.validation_errors:
+        st.error("\n".join(f"• {error}" for error in entry.validation_errors))
+    elif entry.validation_status == "READY":
+        st.success("Ready for draft")
 
 
 def render_review(paths: DataPaths) -> None:

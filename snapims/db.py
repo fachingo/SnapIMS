@@ -435,6 +435,29 @@ def get_batch(db_file: Path, batch_id_value: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def get_setting(db_file: Path, key: str) -> str | None:
+    initialize(db_file)
+    with connect(db_file) as connection:
+        row = connection.execute(
+            "SELECT value FROM settings WHERE key = ?",
+            (key,),
+        ).fetchone()
+    return str(row["value"]) if row is not None else None
+
+
+def set_setting(db_file: Path, key: str, value: str) -> None:
+    initialize(db_file)
+    with transaction(db_file) as connection:
+        connection.execute(
+            """
+            INSERT INTO settings(key, value, updated_at)
+            VALUES(?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+            """,
+            (key, value, _now()),
+        )
+
+
 def list_items(
     db_file: Path, *, batch_id_value: str | None = None, status: str | None = None
 ) -> list[dict[str, Any]]:
