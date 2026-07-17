@@ -6,7 +6,7 @@ from typing import Any
 
 import streamlit as st
 
-from snapims import db
+from snapims import active_batch, db
 from snapims.config import DataPaths
 from snapims.inventory import CONDITIONS
 from snapims.recognition import repository
@@ -374,10 +374,18 @@ def render_review(paths: DataPaths) -> None:
         st.info("Import and recognize a batch before opening the review workstation.")
         return
 
+    batch_options = [batch["batch_id"] for batch in batches]
+    active = active_batch.get_active_batch(paths.db_file)
+    default_index = (
+        batch_options.index(active["batch_id"])
+        if active and active["batch_id"] in batch_options
+        else 0
+    )
     controls = st.columns([1.35, 1.1, 0.9])
     batch_id = controls[0].selectbox(
         "Batch",
-        [batch["batch_id"] for batch in batches],
+        batch_options,
+        index=default_index,
         key="review_batch",
     )
     queue_filter = controls[1].selectbox(

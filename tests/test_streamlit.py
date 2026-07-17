@@ -4,7 +4,7 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
-from snapims import db
+from snapims import active_batch, db
 from snapims.demo import create_demo_batch
 from snapims.processor import process_batch
 from snapims.recognition import repository
@@ -23,6 +23,14 @@ def _run_review_app(data_paths, monkeypatch) -> AppTest:
 
 def _item_context_text(app: AppTest) -> str:
     return " ".join(str(element.value) for element in app.markdown)
+
+
+def _distinct_camera_roll(tmp_path: Path, name: str) -> Path:
+    """Create a demo camera roll with a fingerprint distinct from other rolls."""
+    source = create_demo_batch(tmp_path / name)
+    product = sorted(source.glob("*.jpg"))[2]
+    product.write_bytes(product.read_bytes() + f"-{name}".encode())
+    return source
 
 
 def test_streamlit_dashboard_renders_without_runtime_errors(
@@ -224,6 +232,82 @@ def test_review_resume_falls_back_to_valid_item_when_preferred_left_queue(
     assert not app.exception
     assert items[1]["item_id"] in _item_context_text(app)
     assert items[0]["item_id"] not in _item_context_text(app)
+
+
+def test_dashboard_shows_active_batch_and_continue_action(
+    tmp_path: Path, monkeypatch, data_paths
+) -> None:
+    result = process_batch(create_demo_batch(tmp_path / "camera"), paths=data_paths)
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(data_paths.root))
+
+    app = AppTest.from_file("streamlit_app.py", default_timeout=30).run()
+
+    assert not app.exception
+    assert result.batch_id in _item_context_text(app)
+    continue_button = next(button for button in app.button if button.key == "dashboard_continue")
+    app = continue_button.click().run()
+
+    assert not app.exception
+    workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
+    assert workspace.value == "Recognition"
+
+
+def test_dashboard_change_batch_is_explicit_and_does_not_auto_switch(
+    tmp_path: Path, monkeypatch, data_paths
+) -> None:
+    batch_a = process_batch(_distinct_camera_roll(tmp_path, "camera-a"), paths=data_paths)
+    batch_b = process_batch(_distinct_camera_roll(tmp_path, "camera-b"), paths=data_paths)
+    active_batch.set_active_batch(data_paths.db_file, batch_a.batch_id)
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(data_paths.root))
+
+    app = AppTest.from_file("streamlit_app.py", default_timeout=30).run()
+
+    assert batch_a.batch_id in _item_context_text(app)
+    assert active_batch.get_active_batch(data_paths.db_file)["batch_id"] == batch_a.batch_id
+
+    change_select = next(box for box in app.selectbox if box.key == "dashboard_change_batch")
+    app = change_select.set_value(batch_b.batch_id).run()
+    set_active_button = next(
+        button for button in app.button if button.key == "dashboard_set_active"
+    )
+    app = set_active_button.click().run()
+
+    assert not app.exception
+    assert active_batch.get_active_batch(data_paths.db_file)["batch_id"] == batch_b.batch_id
+
+
+def test_review_and_publish_pages_default_to_active_batch_and_exclude_others(
+    tmp_path: Path, monkeypatch, data_paths
+) -> None:
+    batch_a = process_batch(_distinct_camera_roll(tmp_path, "camera-a"), paths=data_paths)
+    items_a = db.list_items(data_paths.db_file, batch_id_value=batch_a.batch_id)
+    run_batch_recognition(data_paths.db_file, batch_a.batch_id, MockRecognizer())
+
+    batch_b = process_batch(_distinct_camera_roll(tmp_path, "camera-b"), paths=data_paths)
+    items_b = db.list_items(data_paths.db_file, batch_id_value=batch_b.batch_id)
+    run_batch_recognition(data_paths.db_file, batch_b.batch_id, MockRecognizer())
+
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(data_paths.root))
+    app = AppTest.from_file("streamlit_app.py", default_timeout=30).run()
+    workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
+
+    app = workspace.set_value("Review").run()
+    assert not app.exception
+    review_batch = next(box for box in app.selectbox if box.key == "review_batch")
+    assert review_batch.value == batch_b.batch_id
+    context_text = _item_context_text(app)
+    assert items_b[0]["item_id"] in context_text
+    assert items_a[0]["item_id"] not in context_text
+    assert items_a[1]["item_id"] not in context_text
+
+    workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
+    app = workspace.set_value("Shopify dry-run").run()
+    assert not app.exception
+    dry_run_batch = next(box for box in app.selectbox if box.key == "shopify_dry_run_batch")
+    assert dry_run_batch.value == batch_b.batch_id
+    dry_run_item = next(box for box in app.selectbox if box.key == "shopify_dry_run_item")
+    assert set(dry_run_item.options) == {item["item_id"] for item in items_b}
+    assert not set(dry_run_item.options) & {item["item_id"] for item in items_a}
 
 
 def test_advanced_settings_keeps_workspace_diagnostics_reachable(

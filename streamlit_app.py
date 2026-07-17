@@ -8,7 +8,7 @@ from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 
-from snapims import __version__, db
+from snapims import __version__, active_batch, db
 from snapims.config import DataPaths, ShopifyConfig
 from snapims.inventory import (
     CONDITIONS,
@@ -108,6 +108,18 @@ def show_images(db_file: Path, item_id_value: str) -> None:
             st.info("This item has one photograph.")
 
 
+def active_batch_default_index(db_file: Path, batch_options: list[str]) -> int:
+    """Return the index of the durable active batch within ``batch_options``.
+
+    Falls back to 0 (the most recent batch) when no active batch is set or
+    the stored one is no longer present, without persisting a change.
+    """
+    active = active_batch.get_active_batch(db_file)
+    if active and active["batch_id"] in batch_options:
+        return batch_options.index(active["batch_id"])
+    return 0
+
+
 def compact_provider_selector(providers, *, key: str) -> str:
     state_key = "recognition_provider_name"
     current = st.session_state.get(state_key)
@@ -160,8 +172,44 @@ if page == "Dashboard":
         columns, ("Batches", "Items", "Ready", "Uploaded", "Blocked"), summary.values(), strict=True
     ):
         column.metric(label, value)
-    st.subheader("Recent batches")
+
+    st.subheader("Active batch")
     batches = db.list_batches(paths.db_file)
+    if not batches:
+        st.info("No batches yet. Open Import batch to process the demo or a Pixel session.")
+    else:
+        batch_options = [row["batch_id"] for row in batches]
+        active = active_batch.get_active_batch(paths.db_file)
+        if active is None:
+            st.warning("No active batch is set. Choose one below.")
+            default_index = 0
+        else:
+            next_action = active_batch.compute_next_action(paths.db_file, active["batch_id"])
+            info_col, action_col = st.columns([3, 1])
+            with info_col:
+                st.markdown(f"**{active['batch_id']}**")
+                st.caption(f"Imported {active['imported_at']} · {active['item_count']} item(s)")
+                st.info(f"**Next:** {next_action.label}. {next_action.detail}")
+            with action_col:
+                if st.button(
+                    "Continue", type="primary", key="dashboard_continue", width="stretch"
+                ):
+                    st.session_state["pending_workspace_page"] = next_action.target_page
+                    st.rerun()
+            default_index = (
+                batch_options.index(active["batch_id"])
+                if active["batch_id"] in batch_options
+                else 0
+            )
+        with st.expander("Change batch", expanded=active is None):
+            chosen = st.selectbox(
+                "Batch", batch_options, index=default_index, key="dashboard_change_batch"
+            )
+            if st.button("Set as active batch", key="dashboard_set_active"):
+                active_batch.set_active_batch(paths.db_file, chosen)
+                st.rerun()
+
+    st.subheader("Recent batches")
     if batches:
         st.dataframe(
             [
@@ -175,8 +223,6 @@ if page == "Dashboard":
             hide_index=True,
             width="stretch",
         )
-    else:
-        st.info("No batches yet. Open Import batch to process the demo or a Pixel session.")
 
 elif page == "Import batch":
     st.title("Import a QR-delimited photo batch")
@@ -243,7 +289,13 @@ elif page == "Command events":
     if not batches:
         st.info("Import a batch first.")
     else:
-        selected = st.selectbox("Batch", [row["batch_id"] for row in batches])
+        batch_options = [row["batch_id"] for row in batches]
+        selected = st.selectbox(
+            "Batch",
+            batch_options,
+            index=active_batch_default_index(paths.db_file, batch_options),
+            key="command_events_batch",
+        )
         with db.connect(paths.db_file) as connection:
             events = connection.execute(
                 """
@@ -335,7 +387,13 @@ elif page == "CSV workflow":
     if not batches:
         st.info("Import a batch first.")
     else:
-        selected = st.selectbox("Batch", [row["batch_id"] for row in batches])
+        batch_options = [row["batch_id"] for row in batches]
+        selected = st.selectbox(
+            "Batch",
+            batch_options,
+            index=active_batch_default_index(paths.db_file, batch_options),
+            key="csv_workflow_batch",
+        )
         destination = paths.processed / selected / "inventory_work.csv"
         if st.button("Refresh inventory_work.csv"):
             export_inventory_csv(paths.db_file, selected, destination)
@@ -362,7 +420,16 @@ elif page == "CSV workflow":
 elif page == "Validation":
     st.title("Validation")
     batches = db.list_batches(paths.db_file)
-    selected = st.selectbox("Batch", [""] + [row["batch_id"] for row in batches])
+    batch_options = [""] + [row["batch_id"] for row in batches]
+    active = active_batch.get_active_batch(paths.db_file)
+    default_index = (
+        batch_options.index(active["batch_id"])
+        if active and active["batch_id"] in batch_options
+        else 0
+    )
+    selected = st.selectbox(
+        "Batch", batch_options, index=default_index, key="validation_batch"
+    )
     if st.button("Validate selected batch", type="primary"):
         item_ids = [item["item_id"] for item in db.list_items(paths.db_file, batch_id_value=selected or None)]
         results = validate_items(paths.db_file, item_ids)
@@ -617,9 +684,23 @@ elif page == "Shopify dry-run":
             "mode": "SIMULATION / DRAFT ONLY",
         }
     )
-    items = db.list_items(paths.db_file)
+    batches = db.list_batches(paths.db_file)
+    if not batches:
+        st.info("Import a batch first.")
+        items = []
+    else:
+        batch_options = [row["batch_id"] for row in batches]
+        batch_id_value = st.selectbox(
+            "Batch",
+            batch_options,
+            index=active_batch_default_index(paths.db_file, batch_options),
+            key="shopify_dry_run_batch",
+        )
+        items = db.list_items(paths.db_file, batch_id_value=batch_id_value)
     if items:
-        item_id_value = st.selectbox("Item", [item["item_id"] for item in items])
+        item_id_value = st.selectbox(
+            "Item", [item["item_id"] for item in items], key="shopify_dry_run_item"
+        )
         remote_check = st.checkbox("Use credentials for read-only remote SKU check", value=False)
         if st.button("Run Shopify dry-run", type="primary"):
             report = service.dry_run(item_id_value, remote_check=remote_check)
@@ -639,6 +720,8 @@ elif page == "Shopify dry-run":
                     st.json(result)
                 except Exception as exc:
                     st.error(str(exc))
+    elif batches:
+        st.info("No items in this batch.")
 
 elif page == "Logs & warnings":
     st.title("Logs and warnings")

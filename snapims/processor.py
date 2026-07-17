@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from snapims import db
+from snapims.active_batch import set_active_batch
 from snapims.config import DataPaths
 from snapims.images import copy_original, create_safe_jpeg
 from snapims.interpreter import make_batch_id
@@ -171,6 +172,7 @@ def process_batch(
         batch_id_value = existing_db["batch_id"]
         output = paths.processed / batch_id_value
         LOGGER.info("Duplicate import skipped batch=%s", batch_id_value)
+        set_active_batch(paths.db_file, batch_id_value)
         return ImportResult(
             batch_id=batch_id_value,
             item_count=int(existing_db["item_count"]),
@@ -197,6 +199,7 @@ def process_batch(
             )
         db.insert_batch(paths.db_file, batch, artifacts)
         work_csv = export_inventory_csv(paths.db_file, batch.batch_id, paths.processed / batch.batch_id / "inventory_work.csv")
+        set_active_batch(paths.db_file, batch.batch_id)
         return ImportResult(
             batch_id=batch.batch_id, item_count=len(batch.items),
             product_photo_count=batch.photo_count, command_count=len(batch.commands),
@@ -251,6 +254,7 @@ def process_batch(
         work_csv = export_inventory_csv(
             paths.db_file, batch.batch_id, final_processed / "inventory_work.csv"
         )
+        set_active_batch(paths.db_file, batch.batch_id)
     except ImportInterrupted:
         LOGGER.warning("Import interrupted; staging retained for resume batch=%s", batch.batch_id)
         raise
