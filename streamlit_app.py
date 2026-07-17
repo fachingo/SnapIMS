@@ -22,7 +22,7 @@ from snapims.pipeline import parse_batch
 from snapims.processor import process_batch
 from snapims.recognition import repository
 from snapims.recognition.providers import recognizer_registry
-from snapims.recognition.review_ui import render_recognition_review
+from snapims.recognition.review_ui import render_review
 from snapims.recognition.service import (
     BatchRecognitionProgress,
     accept_result,
@@ -89,29 +89,57 @@ def show_images(db_file: Path, item_id_value: str) -> None:
     front, *optional = photos
     left, right = st.columns([1.35, 1])
     with left:
-        st.image(front["processed_path"], caption=f"Front · {front['proposed_name']}", use_container_width=True)
+        st.image(
+            front["processed_path"],
+            caption=f"Front · {front['proposed_name']}",
+            width="stretch",
+        )
     with right:
         if optional:
             columns = st.columns(2)
             for index, photo in enumerate(optional):
                 with columns[index % 2]:
-                    st.image(photo["thumbnail_path"], caption=photo["proposed_name"], use_container_width=True)
+                    st.image(
+                        photo["thumbnail_path"],
+                        caption=photo["proposed_name"],
+                        width="stretch",
+                    )
         else:
             st.info("This item has one photograph.")
+
+
+def compact_provider_selector(providers, *, key: str) -> str:
+    state_key = "recognition_provider_name"
+    current = st.session_state.get(state_key)
+    if current not in providers:
+        current = "openai" if providers["openai"].available()[0] else "mock"
+        st.session_state[state_key] = current
+    st.caption(f"Provider: `{current}`")
+    change_key = f"{key}_change_provider"
+    if st.button("Change", key=change_key):
+        visible_key = f"{key}_provider_picker_visible"
+        st.session_state[visible_key] = not st.session_state.get(visible_key, False)
+    if st.session_state.get(f"{key}_provider_picker_visible", False):
+        selected = st.selectbox(
+            "Provider",
+            list(providers),
+            index=list(providers).index(current),
+            key=f"{key}_provider_choice",
+            label_visibility="collapsed",
+        )
+        st.session_state[state_key] = selected
+        current = selected
+    return str(current)
 
 
 paths = data_paths()
 with st.sidebar:
     st.title("📸 SnapIMS")
     st.caption(f"Prototype {__version__}")
-    configured_root = st.text_input("Data directory", value=str(paths.root))
-    if configured_root != str(paths.root) and st.button("Use data directory"):
-        st.session_state["data_root"] = configured_root
-        st.rerun()
     workspace_pages = [
         "Dashboard", "Import batch", "Command events", "Item grid", "Item editor",
-        "CSV workflow", "Validation", "Database", "Recognition", "Recognition Review",
-        "Shopify dry-run", "Logs & warnings",
+        "CSV workflow", "Validation", "Recognition", "Review", "Shopify dry-run",
+        "Logs & warnings", "Settings & diagnostics",
     ]
     pending_page = st.session_state.pop("pending_workspace_page", None)
     if pending_page in workspace_pages:
@@ -121,7 +149,6 @@ with st.sidebar:
         workspace_pages,
         key="workspace_page",
     )
-    st.caption(f"Database: {paths.db_file}")
 
 
 if page == "Dashboard":
@@ -146,7 +173,7 @@ if page == "Dashboard":
                 for row in batches
             ],
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
     else:
         st.info("No batches yet. Open Import batch to process the demo or a Pixel session.")
@@ -158,13 +185,13 @@ elif page == "Import batch":
     batch_name = st.text_input("Optional batch name", placeholder="COMEDY")
     recursive = st.checkbox("Include subfolders", value=False)
     preview_col, import_col = st.columns(2)
-    if preview_col.button("Dry-run parser preview", type="primary", use_container_width=True):
+    if preview_col.button("Dry-run parser preview", type="primary", width="stretch"):
         try:
             preview = parse_batch(Path(source_text), batch_name=batch_name or None, recursive=recursive)
             st.session_state["preview"] = preview
         except Exception as exc:
             st.error(str(exc))
-    if import_col.button("Preserve and import batch", use_container_width=True):
+    if import_col.button("Preserve and import batch", width="stretch"):
         try:
             result = process_batch(
                 Path(source_text), paths=paths, batch_name=batch_name or None, recursive=recursive
@@ -195,7 +222,7 @@ elif page == "Import batch":
                 }
                 for item in preview.items
             ],
-            hide_index=True, use_container_width=True,
+            hide_index=True, width="stretch",
         )
         with st.expander("Command stream", expanded=True):
             st.dataframe(
@@ -205,7 +232,7 @@ elif page == "Import batch":
                         "Payload": command.qr_payload, "Photo": command.original_name,
                     }
                     for command in preview.commands
-                ], hide_index=True, use_container_width=True,
+                ], hide_index=True, width="stretch",
             )
         if preview.warnings:
             st.warning("\n".join(preview.warnings))
@@ -226,7 +253,7 @@ elif page == "Command events":
                 WHERE e.batch_id=? ORDER BY e.stream_index
                 """, (selected,),
             ).fetchall()
-        st.dataframe([dict(row) for row in events], hide_index=True, use_container_width=True)
+        st.dataframe([dict(row) for row in events], hide_index=True, width="stretch")
         event_index = st.selectbox("Inspect command image", [row["stream_index"] for row in events])
         event = next(row for row in events if row["stream_index"] == event_index)
         st.image(event["original_copy_path"], caption=event["payload"], width=520)
@@ -244,7 +271,7 @@ elif page == "Item grid":
             with columns[index % 4]:
                 st.markdown('<div class="snap-card">', unsafe_allow_html=True)
                 if item["front_thumbnail"]:
-                    st.image(item["front_thumbnail"], use_container_width=True)
+                    st.image(item["front_thumbnail"], width="stretch")
                 st.markdown(f"**{item['title'] or 'Untitled VHS'}**")
                 st.caption(
                     f"{item['item_id']} · Shelf {item['shelf']} · {item['image_count']} image(s)"
@@ -349,43 +376,32 @@ elif page == "Validation":
                 "Errors": "; ".join(json.loads(item["validation_errors"])),
             }
             for item in items
-        ], hide_index=True, use_container_width=True,
+        ], hide_index=True, width="stretch",
     )
-
-elif page == "Database":
-    st.title("Database inspection and audit")
-    with db.connect(paths.db_file) as connection:
-        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
-    st.metric("SQLite integrity", integrity)
-    tables = [
-        "schema_migrations", "batches", "items", "photos", "command_events",
-        "recognition_results", "catalog_products", "inventory_events", "shopify_sync",
-        "settings", "upload_attempts",
-    ]
-    table = st.selectbox("Table", tables)
-    with db.connect(paths.db_file) as connection:
-        rows = connection.execute(f"SELECT * FROM {table} LIMIT 1000").fetchall()
-    st.dataframe([dict(row) for row in rows], hide_index=True, use_container_width=True)
-    audit_path = paths.exports / f"inventory-events-{os.getpid()}.csv"
-    if st.button("Generate inventory event audit CSV"):
-        export_audit_csv(paths.db_file, audit_path)
-    if audit_path.exists():
-        st.download_button("Download audit CSV", audit_path.read_bytes(), file_name="inventory-events.csv")
 
 elif page == "Recognition":
     st.title("Recognition providers")
     st.warning("Recognition produces suggestions only. Nothing becomes authoritative until you accept it.")
     providers = recognizer_registry()
-    st.dataframe(
-        [
-            {"Provider": name, "Available": provider.available()[0], "Status": provider.available()[1]}
-            for name, provider in providers.items()
-        ], hide_index=True, use_container_width=True,
-    )
+    with st.expander("Provider diagnostics", expanded=False):
+        st.dataframe(
+            [
+                {
+                    "Provider": name,
+                    "Available": provider.available()[0],
+                    "Status": provider.available()[1],
+                }
+                for name, provider in providers.items()
+            ],
+            hide_index=True,
+            width="stretch",
+        )
     items = db.list_items(paths.db_file)
     if items:
-        item_id_value = st.selectbox("Item", [item["item_id"] for item in items])
-        provider_name = st.selectbox("Provider", list(providers))
+        item_column, provider_column = st.columns([3, 1])
+        item_id_value = item_column.selectbox("Item", [item["item_id"] for item in items])
+        with provider_column:
+            provider_name = compact_provider_selector(providers, key="single_recognition")
         if st.button("Generate suggestions", type="primary"):
             try:
                 result_id, result = run_recognition(paths.db_file, item_id_value, providers[provider_name])
@@ -399,7 +415,7 @@ elif page == "Recognition":
                 st.error(str(exc))
         results = list_results(paths.db_file, item_id_value)
         if results:
-            st.dataframe(results, hide_index=True, use_container_width=True)
+            st.dataframe(results, hide_index=True, width="stretch")
             chosen = st.selectbox("Suggestion to accept", [row["recognition_result_id"] for row in results])
             if st.button("Accept selected fields into item"):
                 accept_result(paths.db_file, chosen)
@@ -412,8 +428,17 @@ elif page == "Recognition":
         st.info("Import a batch before running batch recognition.")
     else:
         batch_options = [row["batch_id"] for row in batches]
-        batch_id_value = st.selectbox("Batch", batch_options, key="batch_recognition_batch")
-        batch_provider_name = st.selectbox("Provider", list(providers), key="batch_recognition_provider")
+        batch_column, provider_column = st.columns([3, 1])
+        batch_id_value = batch_column.selectbox(
+            "Batch",
+            batch_options,
+            key="batch_recognition_batch",
+        )
+        with provider_column:
+            batch_provider_name = compact_provider_selector(
+                providers,
+                key="batch_recognition",
+            )
         skip_existing = st.checkbox(
             "Skip items that already have a recognition result",
             value=True,
@@ -569,13 +594,13 @@ elif page == "Recognition":
                         review_filter = repository.QUEUE_REVIEW_REQUIRED
                     st.session_state["review_filter"] = review_filter
                     st.session_state["review_open_result_id"] = outcome["result_id"]
-                    st.session_state["pending_workspace_page"] = "Recognition Review"
+                    st.session_state["pending_workspace_page"] = "Review"
                     st.rerun()
             with st.expander("Batch diagnostics"):
                 st.json(saved_summary)
 
-elif page == "Recognition Review":
-    render_recognition_review(paths)
+elif page == "Review":
+    render_review(paths)
 
 elif page == "Shopify dry-run":
     st.title("Shopify draft queue")
@@ -632,3 +657,34 @@ elif page == "Logs & warnings":
         st.code("\n".join(lines) or "Log is empty.")
     else:
         st.info("The log will appear after the first import.")
+
+elif page == "Settings & diagnostics":
+    st.title("Settings & diagnostics")
+    with st.expander("Workspace storage", expanded=False):
+        configured_root = st.text_input("Data directory", value=str(paths.root))
+        if configured_root != str(paths.root) and st.button("Use data directory"):
+            st.session_state["data_root"] = configured_root
+            st.rerun()
+        st.caption(f"Database path: {paths.db_file}")
+    with st.expander("Database inspection and audit", expanded=False):
+        with db.connect(paths.db_file) as connection:
+            integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        st.metric("SQLite integrity", integrity)
+        tables = [
+            "schema_migrations", "batches", "items", "photos", "command_events",
+            "recognition_results", "catalog_products", "inventory_events", "shopify_sync",
+            "settings", "upload_attempts",
+        ]
+        table = st.selectbox("Table", tables)
+        with db.connect(paths.db_file) as connection:
+            rows = connection.execute(f"SELECT * FROM {table} LIMIT 1000").fetchall()
+        st.dataframe([dict(row) for row in rows], hide_index=True, width="stretch")
+        audit_path = paths.exports / f"inventory-events-{os.getpid()}.csv"
+        if st.button("Generate inventory event audit CSV"):
+            export_audit_csv(paths.db_file, audit_path)
+        if audit_path.exists():
+            st.download_button(
+                "Download audit CSV",
+                audit_path.read_bytes(),
+                file_name="inventory-events.csv",
+            )

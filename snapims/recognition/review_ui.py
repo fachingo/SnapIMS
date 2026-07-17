@@ -45,6 +45,31 @@ _STATUS_LABELS = {
 }
 
 
+def _compact_provider(providers: dict[str, Any]) -> str:
+    state_key = "recognition_provider_name"
+    current = st.session_state.get(state_key)
+    if current not in providers:
+        current = "openai" if providers["openai"].available()[0] else "mock"
+        st.session_state[state_key] = current
+    st.caption(f"Provider: `{current}`")
+    if st.button("Change", key="review_change_provider"):
+        st.session_state["review_provider_picker_visible"] = not st.session_state.get(
+            "review_provider_picker_visible",
+            False,
+        )
+    if st.session_state.get("review_provider_picker_visible", False):
+        selected = st.selectbox(
+            "Provider",
+            list(providers),
+            index=list(providers).index(current),
+            key="review_provider_choice",
+            label_visibility="collapsed",
+        )
+        st.session_state[state_key] = selected
+        current = selected
+    return str(current)
+
+
 def _shortcut_strip() -> None:
     st.markdown(
         """
@@ -151,19 +176,19 @@ def _render_photos(db_file: Path, item_id: str) -> None:
     st.image(
         main_path,
         caption=f"Photo {selected + 1} of {len(photos)}",
-        use_container_width=True,
+        width="stretch",
     )
     st.markdown("</div>", unsafe_allow_html=True)
     columns = st.columns(len(photos), gap="small")
     for index, (column, photo) in enumerate(zip(columns, photos, strict=True)):
         with column:
             thumbnail = photo["thumbnail_path"] or photo["processed_path"]
-            st.image(thumbnail, use_container_width=True)
+            st.image(thumbnail, width="stretch")
             if st.button(
                 str(index + 1),
                 key=f"review_thumb_{item_id}_{index}",
                 type="primary" if index == selected else "secondary",
-                use_container_width=True,
+                width="stretch",
             ):
                 st.session_state[photo_key] = index
                 st.rerun()
@@ -243,23 +268,23 @@ def _render_suggestion(entry: repository.ReviewQueueEntry, edit_mode: bool) -> N
         <div class="suggestion-title">{escape(result.suggested_title or "No title suggested")}</div>
         <div class="metadata-grid">
           <div><span>Year</span><b>{result.release_year or "—"}</b></div>
-          <div><span>Confidence</span><b>{confidence_percent}%</b></div>
           <div><span>Studio</span><b>{escape(result.distributor or "—")}</b></div>
           <div><span>Barcode</span><b>{escape(barcode or "—")}</b></div>
-          <div class="wide"><span>Edition / format</span><b>{escape(result.edition or "—")}</b></div>
+          <div><span>Edition / format</span><b>{escape(result.edition or "—")}</b></div>
         </div>
         """,
         unsafe_allow_html=True,
     )
     st.progress(result.confidence, text=f"Overall confidence · {confidence_percent}%")
+    st.markdown("**Uncertainty**")
     if result.uncertainty_reasons:
         st.warning(" · ".join(result.uncertainty_reasons))
     else:
-        st.caption("No uncertainty reasons supplied.")
+        st.caption("No uncertainty noted.")
 
 
-def render_recognition_review(paths: DataPaths) -> None:
-    st.title("Recognition Review")
+def render_review(paths: DataPaths) -> None:
+    st.title("Review")
     _shortcut_strip()
     batches = db.list_batches(paths.db_file)
     if not batches:
@@ -278,11 +303,8 @@ def render_recognition_review(paths: DataPaths) -> None:
         key="review_filter",
     )
     providers = recognizer_registry()
-    provider_name = controls[2].selectbox(
-        "Retry provider",
-        list(providers),
-        key="review_retry_provider",
-    )
+    with controls[2]:
+        provider_name = _compact_provider(providers)
     queue = repository.list_review_queue(paths.db_file, batch_id, queue_filter)
     if not queue:
         st.success(f"No items in “{queue_filter}” for this batch.")
@@ -327,7 +349,7 @@ def render_recognition_review(paths: DataPaths) -> None:
             if save.button(
                 "Save edits & next",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
                 disabled=busy,
             ):
                 _perform_action(
@@ -337,7 +359,7 @@ def render_recognition_review(paths: DataPaths) -> None:
                     queue_ids=queue_ids,
                     provider_name=provider_name,
                 )
-            if cancel.button("Cancel edit", use_container_width=True, disabled=busy):
+            if cancel.button("Cancel edit", width="stretch", disabled=busy):
                 _perform_action(
                     ACTION_CANCEL_EDIT,
                     db_file=paths.db_file,
@@ -351,7 +373,7 @@ def render_recognition_review(paths: DataPaths) -> None:
             if accept_col.button(
                 "Accept",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
                 disabled=busy or failed,
             ):
                 _perform_action(
@@ -363,7 +385,7 @@ def render_recognition_review(paths: DataPaths) -> None:
                 )
             if skip_col.button(
                 "Skip",
-                use_container_width=True,
+                width="stretch",
                 disabled=busy or failed,
             ):
                 _perform_action(
@@ -375,7 +397,7 @@ def render_recognition_review(paths: DataPaths) -> None:
                 )
             if review_col.button(
                 "Manual review",
-                use_container_width=True,
+                width="stretch",
                 disabled=busy or failed,
             ):
                 _perform_action(
@@ -386,7 +408,7 @@ def render_recognition_review(paths: DataPaths) -> None:
                     provider_name=provider_name,
                 )
             previous_col, edit_col, retry_col, reject_col = st.columns(4)
-            if previous_col.button("← Previous", use_container_width=True, disabled=busy):
+            if previous_col.button("← Previous", width="stretch", disabled=busy):
                 _perform_action(
                     ACTION_PREVIOUS,
                     db_file=paths.db_file,
@@ -396,7 +418,7 @@ def render_recognition_review(paths: DataPaths) -> None:
                 )
             if edit_col.button(
                 "Edit",
-                use_container_width=True,
+                width="stretch",
                 disabled=busy or failed,
             ):
                 _perform_action(
@@ -406,7 +428,7 @@ def render_recognition_review(paths: DataPaths) -> None:
                     queue_ids=queue_ids,
                     provider_name=provider_name,
                 )
-            if retry_col.button("Retry", use_container_width=True, disabled=busy):
+            if retry_col.button("Retry", width="stretch", disabled=busy):
                 try:
                     _perform_action(
                         ACTION_RETRY,
@@ -419,7 +441,7 @@ def render_recognition_review(paths: DataPaths) -> None:
                     st.error(str(exc))
             if reject_col.button(
                 "Reject",
-                use_container_width=True,
+                width="stretch",
                 disabled=busy or failed,
             ):
                 _perform_action(
@@ -429,5 +451,14 @@ def render_recognition_review(paths: DataPaths) -> None:
                     queue_ids=queue_ids,
                     provider_name=provider_name,
                 )
-        with st.expander("Diagnostics"):
-            st.json(entry.result.as_dict())
+        with st.expander("Details", expanded=False):
+            st.caption(f"Result ID: {entry.result.recognition_result_id}")
+            st.caption(
+                f"Provider: {entry.result.provider} · Model: "
+                f"{entry.result.model_name or 'not recorded'}"
+            )
+            st.caption(f"Created: {entry.result.created_at}")
+            st.caption(
+                "Response reference: "
+                f"{entry.result.raw_response_reference or 'not recorded'}"
+            )

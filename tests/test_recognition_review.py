@@ -89,7 +89,7 @@ def test_accept_all_updates_correct_item_and_audits_fields(review_batch) -> None
     assert untouched["title"] == ""
     assert stored.review_status == repository.REVIEW_ACCEPTED
     assert stored.accepted_at
-    assert stored.accepted_fields == ("title", "edition", "distributor")
+    assert stored.accepted_fields == ("title",)
 
 
 def test_blank_suggestions_do_not_erase_existing_values(review_batch) -> None:

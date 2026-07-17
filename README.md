@@ -12,7 +12,7 @@ This repository is a working prototype based on **Canada VHS Inventory System Ve
 - SHA-256 original preservation, GPS-free processed JPEGs, collision-safe names, resume markers, and duplicate batch detection
 - Required manifests, warnings, command audit copies, work CSV, and SQLite records
 - CSV export/re-import strictly by immutable Item ID
-- Streamlit dashboard, importer/preview, command review, image grid, item editor, validation, database browser, recognition, Shopify dry-run, and logs
+- Streamlit dashboard, importer/preview, command review, image grid, item editor, validation, recognition, keyboard-first Review, advanced diagnostics, Shopify dry-run, and logs
 - Mock recognition plus provider-neutral OpenAI, Gemini, and local-OCR adapter boundaries
 - Shopify draft-product boundary with SKU checks, staged media, inventory activation, checkpoints, dry-run default, and deliberate live confirmation
 - Synthetic QR-delimited demo generation and automated end-to-end tests

@@ -158,8 +158,8 @@ class MockRecognizer(BaseRecognizer):
         ).hexdigest()[:16]
         return RecognitionResult(
             suggested_title=item.get("title") or f"Demo VHS {int(item.get('sequence', 0)):03d}",
-            edition=item.get("edition") or "Standard VHS",
-            distributor=item.get("distributor") or "Demo Distributor",
+            edition="",
+            distributor="",
             confidence=0.91,
             uncertainty_reasons=("Synthetic mock result; verify against the cover",),
             provider_name=self.name,

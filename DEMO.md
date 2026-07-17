@@ -38,8 +38,9 @@ rm -rf demo-data
 8. Open **Item grid** and confirm two B2 item cards.
 9. Open **Item editor**, add a title and price, set a valid condition, mark the item READY, and save.
 10. Open **Validation** and confirm the edited item is READY.
-11. Open **Recognition**, select `mock`, generate a suggestion, and observe that the item remains unchanged until **Accept selected fields** is used.
-12. Open **Shopify dry-run**. With no credentials, confirm `SIMULATE_CREATE_DRAFT`; no network write is made.
+11. Open **Recognition**, use the configured `mock` provider, and generate a suggestion.
+12. Open **Review** and observe that the item remains unchanged until the suggestion is accepted.
+13. Open **Shopify dry-run**. With no credentials, confirm `SIMULATE_CREATE_DRAFT`; no network write is made.
 
 ## Expected identifiers and files
 

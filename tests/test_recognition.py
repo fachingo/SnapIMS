@@ -39,6 +39,8 @@ def test_mock_recognizer_saves_suggestions_without_auto_accepting(tmp_path, data
     result_id, result = run_recognition(data_paths.db_file, item["item_id"], MockRecognizer())
     assert result.provider_name == "mock"
     assert result.requires_review is True
+    assert result.edition == ""
+    assert result.distributor == ""
     unchanged = db.get_item(data_paths.db_file, item["item_id"])
     assert unchanged["title"] == ""
     assert list_results(data_paths.db_file, item["item_id"])[0]["recognition_result_id"] == result_id
@@ -47,6 +49,35 @@ def test_mock_recognizer_saves_suggestions_without_auto_accepting(tmp_path, data
     assert accepted["title"].startswith("Demo VHS")
     assert accepted["recognition_provider"] == "mock"
     assert accepted["review"] == 1
+
+
+def test_blank_mock_modifiers_preserve_authoritative_item_values(
+    tmp_path, data_paths
+) -> None:
+    process_batch(create_demo_batch(tmp_path / "camera"), paths=data_paths)
+    item = db.list_items(data_paths.db_file)[0]
+    db.update_item(
+        data_paths.db_file,
+        item["item_id"],
+        {
+            "edition": "Authoritative edition",
+            "distributor": "Authoritative distributor",
+        },
+    )
+
+    result_id, result = run_recognition(
+        data_paths.db_file,
+        item["item_id"],
+        MockRecognizer(),
+    )
+    accept_result(data_paths.db_file, result_id)
+
+    accepted = db.get_item(data_paths.db_file, item["item_id"])
+    assert result.edition == ""
+    assert result.distributor == ""
+    assert accepted is not None
+    assert accepted["edition"] == "Authoritative edition"
+    assert accepted["distributor"] == "Authoritative distributor"
 
 
 def test_provider_registry_runs_without_api_keys(monkeypatch) -> None:
