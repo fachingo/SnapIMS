@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "snapims"
+version = "0.3.0"
+description = "Camera-first inventory intake, review, and Shopify draft publishing"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.68,<2",
+    "Pillow>=10.4,<13",
+    "numpy>=2,<3",
+    "opencv-python-headless>=4.10,<5",
+    "pillow-heif>=0.18,<2",
+    "python-dotenv>=1.0,<2",
+    "streamlit>=1.42,<2",
+    "qrcode[pil]>=8.0,<9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<10", "ruff>=0.9,<1", "mypy>=1.14,<2"]
+
+[project.scripts]
+snapims = "snapims.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["snapims*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "UP042"]
