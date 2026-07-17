@@ -19,7 +19,8 @@ REVIEW_FAILED = "FAILED"
 HIGH_CONFIDENCE_THRESHOLD = 0.85
 
 QUEUE_ALL_UNREVIEWED = "All unreviewed"
-QUEUE_REVIEW_REQUIRED = "Review required"
+QUEUE_NEEDS_ATTENTION = "Needs attention"
+QUEUE_REVIEW_REQUIRED = QUEUE_NEEDS_ATTENTION
 QUEUE_HIGH_CONFIDENCE = "High confidence"
 QUEUE_FAILED = "Failed"
 QUEUE_ACCEPTED = "Already accepted"
@@ -280,10 +281,20 @@ def list_review_queue(
         QUEUE_REVIEW_REQUIRED: (
             """
             latest.result_status = ?
-            AND latest.review_status IN (?, ?)
-            AND (latest.requires_review = 1 OR latest.review_status = ?)
+            AND (
+                latest.review_status IN (?, ?)
+                OR (
+                    latest.review_status = ?
+                    AND latest.requires_review = 1
+                )
+            )
             """,
-            (RESULT_SUCCEEDED, REVIEW_UNREVIEWED, REVIEW_REQUIRED, REVIEW_REQUIRED),
+            (
+                RESULT_SUCCEEDED,
+                REVIEW_REQUIRED,
+                REVIEW_REJECTED,
+                REVIEW_UNREVIEWED,
+            ),
         ),
         QUEUE_HIGH_CONFIDENCE: (
             """
@@ -403,7 +414,7 @@ def accept_result(
                 f"""
                 UPDATE items
                 SET {assignments}, recognition_provider = ?,
-                    recognition_confidence = ?, review = 1, updated_at = ?
+                    recognition_confidence = ?, updated_at = ?
                 WHERE item_id = ?
                 """,
                 (
@@ -419,7 +430,7 @@ def accept_result(
                 """
                 UPDATE items
                 SET recognition_provider = ?, recognition_confidence = ?,
-                    review = 1, updated_at = ?
+                    updated_at = ?
                 WHERE item_id = ?
                 """,
                 (row["provider"], row["confidence"], accepted_at, row["item_id"]),
@@ -460,7 +471,7 @@ def set_review_status(
     with db.transaction(db_file) as connection:
         row = connection.execute(
             """
-            SELECT item_id, result_status FROM recognition_results
+            SELECT result_status FROM recognition_results
             WHERE recognition_result_id = ?
             """,
             (result_id,),
@@ -477,11 +488,6 @@ def set_review_status(
             """,
             (status, reviewed_at, result_id),
         )
-        if status == REVIEW_REQUIRED:
-            connection.execute(
-                "UPDATE items SET review = 1, updated_at = ? WHERE item_id = ?",
-                (reviewed_at, row["item_id"]),
-            )
     stored = get_result(db_file, result_id)
     if stored is None:
         raise RuntimeError("Reviewed recognition result could not be reloaded")

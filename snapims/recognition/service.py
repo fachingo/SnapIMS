@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from snapims import db
-from snapims.recognition import repository
+from snapims.recognition import reconciliation, repository
 from snapims.recognition.base import BaseRecognizer, RecognitionResult
 
 
@@ -93,6 +93,12 @@ def run_recognition(
 
 def list_results(db_file: Path, item_id_value: str) -> list[dict]:
     return [result.as_dict() for result in repository.list_results_for_item(db_file, item_id_value)]
+
+
+def review_flag_reconciliation_report(
+    db_file: Path,
+) -> reconciliation.ReviewFlagReconciliationReport:
+    return reconciliation.build_review_flag_reconciliation_report(db_file)
 
 
 def accept_result(db_file: Path, result_id: int) -> None:

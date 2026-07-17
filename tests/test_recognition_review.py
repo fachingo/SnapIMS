@@ -8,7 +8,7 @@ import pytest
 from snapims import db
 from snapims.demo import create_demo_batch
 from snapims.processor import process_batch
-from snapims.recognition import repository
+from snapims.recognition import reconciliation, repository
 from snapims.recognition.base import BaseRecognizer, RecognitionResult
 from snapims.recognition.providers import MockRecognizer
 from snapims.recognition.review import (
@@ -24,6 +24,8 @@ from snapims.recognition.service import (
     accept_result,
     mark_result_for_review,
     reject_result,
+    review_flag_reconciliation_report,
+    run_batch_recognition,
     run_recognition,
     skip_result,
 )
@@ -86,10 +88,42 @@ def test_accept_all_updates_correct_item_and_audits_fields(review_batch) -> None
     assert untouched is not None
     assert stored is not None
     assert accepted["title"] == "Demo VHS 001"
+    assert accepted["review"] == 0
     assert untouched["title"] == ""
     assert stored.review_status == repository.REVIEW_ACCEPTED
     assert stored.accepted_at
     assert stored.accepted_fields == ("title",)
+    assert stored.accepted_values == {"title": "Demo VHS 001"}
+
+
+def test_physical_review_flags_survive_recognition_acceptance(review_batch) -> None:
+    _, items, paths = review_batch
+    manual_review_item = items[0]
+    qr_review_item = items[1]
+    assert qr_review_item["review"] == 1
+    db.update_item(paths.db_file, manual_review_item["item_id"], {"review": 1})
+    manual_result_id, _ = run_recognition(
+        paths.db_file,
+        manual_review_item["item_id"],
+        MockRecognizer(),
+    )
+    qr_result_id, _ = run_recognition(
+        paths.db_file,
+        qr_review_item["item_id"],
+        MockRecognizer(),
+    )
+
+    accept_result(paths.db_file, manual_result_id)
+    accept_result(paths.db_file, qr_result_id)
+
+    manual_accepted = db.get_item(paths.db_file, manual_review_item["item_id"])
+    qr_accepted = db.get_item(paths.db_file, qr_review_item["item_id"])
+    qr_stored = repository.get_result(paths.db_file, qr_result_id)
+    assert manual_accepted is not None and manual_accepted["review"] == 1
+    assert qr_accepted is not None and qr_accepted["review"] == 1
+    assert qr_stored is not None
+    assert qr_stored.review_status == repository.REVIEW_ACCEPTED
+    assert qr_stored.accepted_at is not None
 
 
 def test_blank_suggestions_do_not_erase_existing_values(review_batch) -> None:
@@ -155,12 +189,35 @@ def test_rejected_skipped_and_manual_review_states_persist(review_batch) -> None
     skipped = repository.get_result(paths.db_file, skipped_id)
     assert rejected is not None and rejected.review_status == repository.REVIEW_REJECTED
     assert skipped is not None and skipped.review_status == repository.REVIEW_SKIPPED
+    needs_attention = repository.list_review_queue(
+        paths.db_file,
+        rejected.batch_id,
+        repository.QUEUE_NEEDS_ATTENTION,
+    )
+    assert [entry.result.recognition_result_id for entry in needs_attention] == [rejected_id]
 
     retry_id, _ = run_recognition(paths.db_file, items[0]["item_id"], MockRecognizer())
     mark_result_for_review(paths.db_file, retry_id)
     db.initialize(paths.db_file)
     manual = repository.get_result(paths.db_file, retry_id)
     assert manual is not None and manual.review_status == repository.REVIEW_REQUIRED
+    manual_item = db.get_item(paths.db_file, items[0]["item_id"])
+    assert manual_item is not None and manual_item["review"] == 0
+
+
+def test_batch_created_result_uses_same_acceptance_path(review_batch) -> None:
+    batch_id, items, paths = review_batch
+    summary = run_batch_recognition(paths.db_file, batch_id, MockRecognizer())
+    result_id = summary.outcomes[0].result_id
+    assert result_id is not None
+
+    accept_result(paths.db_file, result_id)
+
+    item = db.get_item(paths.db_file, items[0]["item_id"])
+    stored = repository.get_result(paths.db_file, result_id)
+    assert item is not None and item["review"] == 0
+    assert stored is not None and stored.review_status == repository.REVIEW_ACCEPTED
+    assert stored.accepted_at is not None
 
 
 def test_review_queue_filters_return_latest_durable_states(review_batch) -> None:
@@ -239,6 +296,50 @@ def test_keyboard_shortcuts_ignore_typing_except_ctrl_enter() -> None:
     assert typed_enter.action is None
     assert typed_letter.action is None
     assert ctrl_enter.action == ACTION_ACCEPT_EDITED
+
+
+def test_reconciliation_reports_physical_and_recognition_derived_evidence(
+    review_batch,
+) -> None:
+    _, items, paths = review_batch
+    result_id, _ = run_recognition(paths.db_file, items[0]["item_id"], MockRecognizer())
+    accept_result(paths.db_file, result_id)
+    accepted = repository.get_result(paths.db_file, result_id)
+    assert accepted is not None and accepted.accepted_at is not None
+    with db.transaction(paths.db_file) as connection:
+        connection.execute(
+            "UPDATE items SET review = 1, updated_at = ? WHERE item_id = ?",
+            (accepted.accepted_at, items[0]["item_id"]),
+        )
+
+    report = review_flag_reconciliation_report(paths.db_file)
+    rows = {row.item_id: row for row in report.rows}
+
+    derived = rows[items[0]["item_id"]]
+    physical = rows[items[1]["item_id"]]
+    assert derived.classification == reconciliation.LIKELY_RECOGNITION_DERIVED
+    assert derived.accepted_result_ids == (result_id,)
+    assert derived.acceptance_matches_item_update is True
+    assert physical.classification == reconciliation.CONFIRMED_PHYSICAL_REVIEW
+    assert physical.command_review_evidence is True
+    assert physical.manifest_review_evidence is True
+    assert db.get_item(paths.db_file, items[0]["item_id"])["review"] == 1
+    assert db.get_item(paths.db_file, items[1]["item_id"])["review"] == 1
+
+
+def test_reconciliation_leaves_unaudited_manual_or_legacy_flags_ambiguous(
+    review_batch,
+) -> None:
+    _, items, paths = review_batch
+    db.update_item(paths.db_file, items[0]["item_id"], {"review": 1})
+
+    report = review_flag_reconciliation_report(paths.db_file)
+    row = next(value for value in report.rows if value.item_id == items[0]["item_id"])
+
+    assert row.classification == reconciliation.AMBIGUOUS_REVIEW_FLAG
+    assert row.command_review_evidence is False
+    assert row.manifest_review_evidence is False
+    assert db.get_item(paths.db_file, items[0]["item_id"])["review"] == 1
 
 
 def test_review_schema_migrates_existing_recognition_rows(tmp_path) -> None:

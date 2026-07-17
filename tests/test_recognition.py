@@ -48,7 +48,7 @@ def test_mock_recognizer_saves_suggestions_without_auto_accepting(tmp_path, data
     accepted = db.get_item(data_paths.db_file, item["item_id"])
     assert accepted["title"].startswith("Demo VHS")
     assert accepted["recognition_provider"] == "mock"
-    assert accepted["review"] == 1
+    assert accepted["review"] == 0
 
 
 def test_blank_mock_modifiers_preserve_authoritative_item_values(
