@@ -9,7 +9,6 @@ import streamlit as st
 from snapims import db
 from snapims.config import DataPaths
 from snapims.inventory import CONDITIONS
-from snapims.protocol import all_location_payloads
 from snapims.recognition import repository
 from snapims.recognition.keyboard import keyboard_shortcut_event
 from snapims.recognition.providers import recognizer_registry
@@ -31,7 +30,6 @@ from snapims.recognition.review import (
 from snapims.recognition.service import (
     accept_edited_result,
     accept_result,
-    correct_item_location,
     mark_result_for_review,
     reject_result,
     retry_recognition,
@@ -395,19 +393,19 @@ def render_review(paths: DataPaths) -> None:
         st.success(f"No items in “{queue_filter}” for this batch.")
         return
 
-    queue_ids = [entry.result.recognition_result_id for entry in queue]
-    requested = st.session_state.pop("review_open_result_id", None)
-    preferred = requested or st.session_state.get("review_preferred_result_id")
-    selected_id = current_result_id(queue_ids, preferred)
-    if selected_id is None:
+    queue_item_ids = [entry.result.item_id for entry in queue]
+    requested = st.session_state.pop("review_open_item_id", None)
+    preferred = requested or st.session_state.get("review_preferred_item_id")
+    selected_item = current_item_id(queue_item_ids, preferred)
+    if selected_item is None:
         return
-    st.session_state["review_preferred_result_id"] = selected_id
-    entry = next(item for item in queue if item.result.recognition_result_id == selected_id)
-    position = queue_ids.index(selected_id) + 1
+    st.session_state["review_preferred_item_id"] = selected_item
+    entry = next(item for item in queue if item.result.item_id == selected_item)
+    position = queue_item_ids.index(selected_item) + 1
     edit_mode = bool(st.session_state.get("review_edit_mode", False))
     busy = bool(st.session_state.get("review_busy", False))
 
-    event = keyboard_shortcut_event(key=f"review_keyboard_{selected_id}")
+    event = keyboard_shortcut_event(key=f"review_keyboard_{selected_item}")
     decision = keyboard_decision(
         event,
         last_event_id=str(st.session_state.get("review_last_keyboard_event", "")),
@@ -419,7 +417,7 @@ def render_review(paths: DataPaths) -> None:
             decision.action,
             db_file=paths.db_file,
             entry=entry,
-            queue_ids=queue_ids,
+            queue_item_ids=queue_item_ids,
             provider_name=provider_name,
         )
 
@@ -441,7 +439,7 @@ def render_review(paths: DataPaths) -> None:
                     ACTION_ACCEPT_EDITED,
                     db_file=paths.db_file,
                     entry=entry,
-                    queue_ids=queue_ids,
+                    queue_item_ids=queue_item_ids,
                     provider_name=provider_name,
                 )
             if cancel.button("Cancel edit", width="stretch", disabled=busy):
@@ -449,7 +447,7 @@ def render_review(paths: DataPaths) -> None:
                     ACTION_CANCEL_EDIT,
                     db_file=paths.db_file,
                     entry=entry,
-                    queue_ids=queue_ids,
+                    queue_item_ids=queue_item_ids,
                     provider_name=provider_name,
                 )
         else:
@@ -465,7 +463,7 @@ def render_review(paths: DataPaths) -> None:
                     ACTION_ACCEPT,
                     db_file=paths.db_file,
                     entry=entry,
-                    queue_ids=queue_ids,
+                    queue_item_ids=queue_item_ids,
                     provider_name=provider_name,
                 )
             if skip_col.button(
@@ -477,7 +475,7 @@ def render_review(paths: DataPaths) -> None:
                     ACTION_SKIP,
                     db_file=paths.db_file,
                     entry=entry,
-                    queue_ids=queue_ids,
+                    queue_item_ids=queue_item_ids,
                     provider_name=provider_name,
                 )
             if review_col.button(
@@ -489,7 +487,7 @@ def render_review(paths: DataPaths) -> None:
                     ACTION_MANUAL_REVIEW,
                     db_file=paths.db_file,
                     entry=entry,
-                    queue_ids=queue_ids,
+                    queue_item_ids=queue_item_ids,
                     provider_name=provider_name,
                 )
             previous_col, edit_col, retry_col, reject_col = st.columns(4)
@@ -498,7 +496,7 @@ def render_review(paths: DataPaths) -> None:
                     ACTION_PREVIOUS,
                     db_file=paths.db_file,
                     entry=entry,
-                    queue_ids=queue_ids,
+                    queue_item_ids=queue_item_ids,
                     provider_name=provider_name,
                 )
             if edit_col.button(
@@ -510,7 +508,7 @@ def render_review(paths: DataPaths) -> None:
                     ACTION_EDIT,
                     db_file=paths.db_file,
                     entry=entry,
-                    queue_ids=queue_ids,
+                    queue_item_ids=queue_item_ids,
                     provider_name=provider_name,
                 )
             if retry_col.button("Retry", width="stretch", disabled=busy):
@@ -519,7 +517,7 @@ def render_review(paths: DataPaths) -> None:
                         ACTION_RETRY,
                         db_file=paths.db_file,
                         entry=entry,
-                        queue_ids=queue_ids,
+                        queue_item_ids=queue_item_ids,
                         provider_name=provider_name,
                     )
                 except Exception as exc:
@@ -533,7 +531,7 @@ def render_review(paths: DataPaths) -> None:
                     "reject",
                     db_file=paths.db_file,
                     entry=entry,
-                    queue_ids=queue_ids,
+                    queue_item_ids=queue_item_ids,
                     provider_name=provider_name,
                 )
         with st.expander("Details", expanded=False):

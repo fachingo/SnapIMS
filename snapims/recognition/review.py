@@ -59,32 +59,6 @@ def keyboard_decision(
     return KeyboardDecision(action, event_id)
 
 
-def current_result_id(result_ids: list[int], preferred_id: int | None) -> int | None:
-    if not result_ids:
-        return None
-    if preferred_id in result_ids:
-        return preferred_id
-    return result_ids[0]
-
-
-def next_result_id(result_ids: list[int], current_id: int) -> int | None:
-    if current_id not in result_ids:
-        return result_ids[0] if result_ids else None
-    index = result_ids.index(current_id)
-    if index + 1 < len(result_ids):
-        return result_ids[index + 1]
-    return result_ids[0] if len(result_ids) > 1 else None
-
-
-def previous_result_id(result_ids: list[int], current_id: int) -> int | None:
-    if current_id not in result_ids:
-        return result_ids[0] if result_ids else None
-    index = result_ids.index(current_id)
-    if index == 0:
-        return current_id
-    return result_ids[index - 1]
-
-
 def current_item_id(item_ids: list[str], preferred_id: str | None) -> str | None:
     if not item_ids:
         return None

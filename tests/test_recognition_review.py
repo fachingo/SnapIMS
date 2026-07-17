@@ -14,10 +14,10 @@ from snapims.recognition.providers import MockRecognizer
 from snapims.recognition.review import (
     ACTION_ACCEPT,
     ACTION_ACCEPT_EDITED,
-    current_result_id,
+    current_item_id,
     keyboard_decision,
-    next_result_id,
-    previous_result_id,
+    next_item_id,
+    previous_item_id,
 )
 from snapims.recognition.service import (
     accept_edited_result,
@@ -234,39 +234,90 @@ def test_review_queue_filters_return_latest_durable_states(review_batch) -> None
         error_message="Unreadable cover",
     )
 
-    assert len(repository.list_review_queue(paths.db_file, batch_id)) == 2
     assert len(
-        repository.list_review_queue(
-            paths.db_file, batch_id, repository.QUEUE_REVIEW_REQUIRED
-        )
+        repository.list_review_queue(paths.db_file, batch_id, repository.QUEUE_TO_REVIEW)
     ) == 2
     assert len(
         repository.list_review_queue(
-            paths.db_file, batch_id, repository.QUEUE_HIGH_CONFIDENCE
+            paths.db_file, batch_id, repository.QUEUE_NEEDS_ATTENTION
         )
-    ) == 2
+    ) == 0
     assert len(
         repository.list_review_queue(paths.db_file, batch_id, repository.QUEUE_FAILED)
     ) == 1
+    assert len(
+        repository.list_review_queue(paths.db_file, batch_id, repository.QUEUE_DONE)
+    ) == 0
 
     accept_result(paths.db_file, first_id)
     skip_result(paths.db_file, second_id)
 
-    assert len(repository.list_review_queue(paths.db_file, batch_id)) == 0
     assert len(
-        repository.list_review_queue(paths.db_file, batch_id, repository.QUEUE_ACCEPTED)
+        repository.list_review_queue(paths.db_file, batch_id, repository.QUEUE_DONE)
     ) == 1
     assert len(
-        repository.list_review_queue(paths.db_file, batch_id, repository.QUEUE_SKIPPED)
+        repository.list_review_queue(paths.db_file, batch_id, repository.QUEUE_TO_REVIEW)
     ) == 1
+
+
+def test_review_queue_truth_table_reaches_every_latest_state(review_batch) -> None:
+    """Every recognition-review state must map to exactly one of the four queues."""
+    batch_id, items, paths = review_batch
+    third = _insert_item(batch_id, 3, paths)
+    fourth = _insert_item(batch_id, 4, paths)
+    fifth = _insert_item(batch_id, 5, paths)
+    sixth = _insert_item(batch_id, 6, paths)
+
+    unreviewed_id, _ = run_recognition(paths.db_file, items[0]["item_id"], MockRecognizer())
+    skipped_id, _ = run_recognition(paths.db_file, items[1]["item_id"], MockRecognizer())
+    skip_result(paths.db_file, skipped_id)
+    manual_id, _ = run_recognition(paths.db_file, third["item_id"], MockRecognizer())
+    mark_result_for_review(paths.db_file, manual_id)
+    rejected_id, _ = run_recognition(paths.db_file, fourth["item_id"], MockRecognizer())
+    reject_result(paths.db_file, rejected_id)
+    accepted_id, _ = run_recognition(paths.db_file, fifth["item_id"], MockRecognizer())
+    accept_result(paths.db_file, accepted_id)
+    repository.save_failure(
+        paths.db_file,
+        sixth["item_id"],
+        provider="mock",
+        model_name="deterministic-mock",
+        created_at="2026-07-16T20:00:00",
+        error_message="Unreadable cover",
+    )
+    assert unreviewed_id and manual_id and rejected_id  # keep linters quiet about reuse
+
+    to_review = repository.list_review_queue(paths.db_file, batch_id, repository.QUEUE_TO_REVIEW)
+    needs_attention = repository.list_review_queue(
+        paths.db_file, batch_id, repository.QUEUE_NEEDS_ATTENTION
+    )
+    failed = repository.list_review_queue(paths.db_file, batch_id, repository.QUEUE_FAILED)
+    done = repository.list_review_queue(paths.db_file, batch_id, repository.QUEUE_DONE)
+
+    assert {entry.result.item_id for entry in to_review} == {
+        items[0]["item_id"],
+        items[1]["item_id"],
+    }
+    assert {entry.result.item_id for entry in needs_attention} == {
+        third["item_id"],
+        fourth["item_id"],
+    }
+    assert {entry.result.item_id for entry in failed} == {sixth["item_id"]}
+    assert {entry.result.item_id for entry in done} == {fifth["item_id"]}
 
 
 def test_queue_navigation_advances_and_moves_previous() -> None:
-    result_ids = [11, 12, 13]
-    assert current_result_id(result_ids, None) == 11
-    assert next_result_id(result_ids, 11) == 12
-    assert previous_result_id(result_ids, 12) == 11
-    assert previous_result_id(result_ids, 11) == 11
+    item_ids = ["BATCH-B2-011", "BATCH-B2-012", "BATCH-B2-013"]
+    assert current_item_id(item_ids, None) == "BATCH-B2-011"
+    assert next_item_id(item_ids, "BATCH-B2-011") == "BATCH-B2-012"
+    assert previous_item_id(item_ids, "BATCH-B2-012") == "BATCH-B2-011"
+    assert previous_item_id(item_ids, "BATCH-B2-011") == "BATCH-B2-011"
+
+
+def test_queue_navigation_falls_back_to_first_item_when_preferred_id_left_queue() -> None:
+    item_ids = ["BATCH-B2-011", "BATCH-B2-012"]
+    assert current_item_id(item_ids, "BATCH-B2-099") == "BATCH-B2-011"
+    assert current_item_id([], "BATCH-B2-011") is None
 
 
 def test_keyboard_handler_does_not_double_submit() -> None:

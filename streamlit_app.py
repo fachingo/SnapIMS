@@ -583,17 +583,18 @@ elif page == "Recognition":
                 ):
                     stored = repository.get_result(paths.db_file, outcome["result_id"])
                     st.session_state["review_batch"] = saved_summary["batch_id"]
-                    review_filter = repository.QUEUE_ALL_UNREVIEWED
+                    review_filter = repository.QUEUE_TO_REVIEW
                     if stored and stored.result_status == repository.RESULT_FAILED:
                         review_filter = repository.QUEUE_FAILED
                     elif stored and stored.review_status == repository.REVIEW_ACCEPTED:
-                        review_filter = repository.QUEUE_ACCEPTED
-                    elif stored and stored.review_status == repository.REVIEW_SKIPPED:
-                        review_filter = repository.QUEUE_SKIPPED
-                    elif stored and stored.review_status == repository.REVIEW_REQUIRED:
-                        review_filter = repository.QUEUE_REVIEW_REQUIRED
+                        review_filter = repository.QUEUE_DONE
+                    elif stored and stored.review_status in (
+                        repository.REVIEW_REQUIRED,
+                        repository.REVIEW_REJECTED,
+                    ):
+                        review_filter = repository.QUEUE_NEEDS_ATTENTION
                     st.session_state["review_filter"] = review_filter
-                    st.session_state["review_open_result_id"] = outcome["result_id"]
+                    st.session_state["review_open_item_id"] = outcome["item_id"]
                     st.session_state["pending_workspace_page"] = "Review"
                     st.rerun()
             with st.expander("Batch diagnostics"):
