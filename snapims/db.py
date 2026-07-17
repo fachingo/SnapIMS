@@ -251,8 +251,71 @@ def connect(db_file: Path) -> sqlite3.Connection:
     return connection
 
 
+def _split_statements(script: str) -> list[str]:
+    """Split a migration script into individually executable statements.
+
+    ``sqlite3.Connection.executescript`` implicitly commits any open
+    transaction before it runs, which defeats atomic migrations. None of the
+    migration scripts in ``MIGRATIONS`` use semicolons inside string
+    literals, triggers, or views, so a plain split is safe here.
+    """
+    return [statement.strip() for statement in script.split(";") if statement.strip()]
+
+
+def _migration_backup_path(db_file: Path) -> Path:
+    backup_dir = db_file.parent / "migration-backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = f"{datetime.now():%Y%m%d-%H%M%S-%f}"
+    return backup_dir / f"{db_file.stem}-pre-migration-{stamp}{db_file.suffix}"
+
+
+def _backup_before_migration(db_file: Path) -> Path:
+    """Create an online SQLite backup of ``db_file`` before altering its schema.
+
+    Uses SQLite's backup API so the source database can remain open (in WAL
+    mode) elsewhere while a consistent snapshot is copied out.
+    """
+    destination = _migration_backup_path(db_file)
+    source = sqlite3.connect(db_file)
+    target = sqlite3.connect(destination)
+    try:
+        source.backup(target)
+    finally:
+        target.close()
+        source.close()
+    return destination
+
+
+def _apply_migration(
+    connection: sqlite3.Connection, version: int, description: str, sql: str
+) -> None:
+    """Apply one migration as a single all-or-nothing transaction.
+
+    SQLite supports transactional DDL, so wrapping every statement plus the
+    ``schema_migrations`` bookkeeping row and the ``user_version`` pragma in
+    one explicit ``BEGIN``/``COMMIT`` means a failure partway through a
+    multi-statement migration never records the version as applied and never
+    leaves a half-declared schema behind; the whole migration rolls back.
+    """
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        for statement in _split_statements(sql):
+            connection.execute(statement)
+        connection.execute(
+            "INSERT INTO schema_migrations(version, applied_at, description) VALUES(?, ?, ?)",
+            (version, _now(), description),
+        )
+        connection.execute(f"PRAGMA user_version = {version}")
+    except Exception:
+        connection.rollback()
+        raise
+    else:
+        connection.commit()
+
+
 def initialize(db_file: Path) -> None:
-    with connect(db_file) as connection:
+    connection = connect(db_file)
+    try:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -265,15 +328,18 @@ def initialize(db_file: Path) -> None:
         applied = {
             row[0] for row in connection.execute("SELECT version FROM schema_migrations")
         }
-        for version, description, sql in MIGRATIONS:
-            if version in applied:
-                continue
-            connection.executescript(sql)
-            connection.execute(
-                "INSERT INTO schema_migrations(version, applied_at, description) VALUES(?, ?, ?)",
-                (version, _now(), description),
-            )
-            connection.execute(f"PRAGMA user_version = {version}")
+        pending = [migration for migration in MIGRATIONS if migration[0] not in applied]
+        if not pending:
+            return
+        if applied:
+            # An "empty" database (nothing recorded as applied yet) has
+            # nothing worth protecting; only back up when real, previously
+            # migrated data is about to be altered.
+            _backup_before_migration(db_file)
+        for version, description, sql in pending:
+            _apply_migration(connection, version, description, sql)
+    finally:
+        connection.close()
 
 
 @contextmanager
