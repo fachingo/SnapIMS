@@ -95,6 +95,14 @@ def test_review_accept_advances_to_next_item_by_item_id(
     assert items[0]["item_id"] in _item_context_text(app)
 
     app = next(button for button in app.button if button.label == "Accept & next").click().run()
+    blocked = repository.latest_result_for_item(data_paths.db_file, items[0]["item_id"])
+    assert blocked is not None and blocked.review_status == repository.REVIEW_UNREVIEWED
+    assert items[0]["item_id"] in _item_context_text(app)
+    assert any("Price must be greater than zero" in str(error.value) for error in app.error)
+
+    price = next(number for number in app.number_input if number.label == "Price (CAD)")
+    app = price.set_value(12.99).run()
+    app = next(button for button in app.button if button.label == "Accept & next").click().run()
 
     assert not app.exception
     accepted = repository.latest_result_for_item(data_paths.db_file, items[0]["item_id"])
@@ -118,7 +126,9 @@ def test_review_edit_and_save_updates_item_and_advances(
     assert not app.exception
 
     title_input = app.text_input(key=f"review_title_{stored.recognition_result_id}")
-    title_input.set_value("Operator-confirmed title").run()
+    app = title_input.set_value("Operator-confirmed title").run()
+    price = app.number_input(key=f"review_price_{stored.recognition_result_id}")
+    app = price.set_value(14.95).run()
     app = next(
         button for button in app.button if button.label == "Save edits & next"
     ).click().run()
@@ -127,6 +137,7 @@ def test_review_edit_and_save_updates_item_and_advances(
     updated_item = db.get_item(data_paths.db_file, items[0]["item_id"])
     assert updated_item is not None
     assert updated_item["title"] == "Operator-confirmed title"
+    assert updated_item["price_cents"] == 1495
     assert items[1]["item_id"] in _item_context_text(app)
 
 
@@ -401,7 +412,7 @@ def test_review_overview_open_from_skipped_recognition_selects_correct_item(
     assert not app.exception
     assert any(title.value == "Review" for title in app.title)
     queue_filter = next(box for box in app.selectbox if box.key == "review_filter")
-    assert queue_filter.value == repository.QUEUE_TO_REVIEW
+    assert queue_filter.value == repository.QUEUE_UNRESOLVED
     assert items[0]["item_id"] in _item_context_text(app)
 
 
@@ -435,7 +446,7 @@ def test_browser_restart_restores_durable_review_cursor_and_progress(
     durable_progress.set_review_cursor(
         data_paths.db_file,
         result.batch_id,
-        repository.QUEUE_TO_REVIEW,
+        repository.QUEUE_UNRESOLVED,
         items[1]["item_id"],
     )
     monkeypatch.setenv("SNAPIMS_DATA_DIR", str(data_paths.root))
@@ -585,6 +596,8 @@ def test_synthetic_operator_completes_import_review_publish_without_diagnostics(
 
     items = db.list_items(data_paths.db_file, batch_id_value=batch_id)
     for _ in items:
+        price = next(number for number in app.number_input if number.label == "Price (CAD)")
+        app = price.set_value(12.99).run()
         accept_button = next(
             button for button in app.button if button.label == "Accept & next"
         )
@@ -592,6 +605,7 @@ def test_synthetic_operator_completes_import_review_publish_without_diagnostics(
         assert not app.exception
 
     # Publish: a simulated dry-run works with no credentials.
+    app = AppTest.from_file("streamlit_app.py", default_timeout=30).run()
     workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
     app = workspace.set_value("Publish").run()
     dry_run_button = next(

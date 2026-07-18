@@ -26,12 +26,11 @@ from snapims.recognition.review import (
     ACTION_SKIP,
     current_item_id,
     keyboard_decision,
-    next_item_id,
+    next_remaining_item_id,
     previous_item_id,
 )
 from snapims.recognition.service import (
-    accept_edited_result,
-    accept_result,
+    approve_review_result,
     correct_item_location,
     mark_result_for_review,
     retry_recognition,
@@ -100,28 +99,44 @@ def _shortcut_strip() -> None:
     )
 
 
-def _set_next(queue_item_ids: list[str], current_item_id_value: str) -> None:
-    st.session_state["review_preferred_item_id"] = next_item_id(
-        queue_item_ids,
-        current_item_id_value,
+def _set_next(
+    db_file: Path,
+    batch_id: str,
+    queue_item_ids: list[str],
+    current_item_id_value: str,
+) -> None:
+    remaining = repository.list_review_queue(
+        db_file, batch_id, repository.QUEUE_UNRESOLVED
     )
+    remaining_ids = [entry.result.item_id for entry in remaining]
+    st.session_state["review_preferred_item_id"] = next_remaining_item_id(
+        queue_item_ids, current_item_id_value, remaining_ids
+    )
+    st.session_state["review_pending_filter"] = repository.QUEUE_UNRESOLVED
     st.session_state["review_edit_mode"] = False
 
 
-def _edited_values(result_id: int) -> dict[str, Any]:
+def _edited_values(entry: repository.ReviewQueueEntry) -> dict[str, Any]:
+    result = entry.result
+    result_id = result.recognition_result_id
     year = st.session_state.get(f"review_year_{result_id}")
     release_year = None if year in (None, "") else int(str(year))
     price = st.session_state.get(f"review_price_{result_id}")
     return {
-        "title": st.session_state.get(f"review_title_{result_id}", ""),
-        "edition": st.session_state.get(f"review_edition_{result_id}", ""),
-        "distributor": st.session_state.get(f"review_distributor_{result_id}", ""),
-        "release_year": release_year,
-        "barcode": st.session_state.get(f"review_barcode_{result_id}", ""),
+        "title": st.session_state.get(f"review_title_{result_id}", result.suggested_title),
+        "edition": st.session_state.get(f"review_edition_{result_id}", result.edition),
+        "distributor": st.session_state.get(
+            f"review_distributor_{result_id}", result.distributor
+        ),
+        "release_year": release_year if year is not None else result.release_year,
+        "barcode": st.session_state.get(
+            f"review_barcode_{result_id}",
+            result.barcode_candidates[0] if result.barcode_candidates else "",
+        ),
         "price_cents": round(float(price) * 100) if price is not None else None,
-        "condition": st.session_state.get(f"review_condition_{result_id}", "Not Graded"),
-        "quantity": int(st.session_state.get(f"review_quantity_{result_id}", 1)),
-        "ready": int(bool(st.session_state.get(f"review_ready_{result_id}", False))),
+        "condition": st.session_state.get(f"review_condition_{result_id}", entry.condition),
+        "quantity": int(st.session_state.get(f"review_quantity_{result_id}", entry.quantity)),
+        "ready": 1,
     }
 
 
@@ -158,17 +173,17 @@ def _perform_action(
     try:
         if action == ACTION_ACCEPT:
             with st.spinner("Accepting suggestion…"):
-                errors = accept_result(db_file, result_id)
+                errors = approve_review_result(db_file, result_id, _edited_values(entry))
                 st.session_state["review_last_validation"] = {
                     "item_id": item_id,
                     "errors": errors,
                 }
         elif action == ACTION_ACCEPT_EDITED:
             with st.spinner("Saving edited metadata…"):
-                errors = accept_edited_result(
+                errors = approve_review_result(
                     db_file,
                     result_id,
-                    _edited_values(result_id),
+                    _edited_values(entry),
                 )
                 st.session_state["review_last_validation"] = {
                     "item_id": item_id,
@@ -188,7 +203,8 @@ def _perform_action(
                 )
         else:
             return
-        _set_next(queue_item_ids, item_id)
+        if action not in (ACTION_ACCEPT, ACTION_ACCEPT_EDITED) or not errors:
+            _set_next(db_file, entry.result.batch_id, queue_item_ids, item_id)
     finally:
         st.session_state["review_busy"] = False
     st.rerun()
@@ -304,12 +320,10 @@ def _render_suggestion(entry: repository.ReviewQueueEntry, edit_mode: bool) -> N
             step=1,
             key=f"review_quantity_{result.recognition_result_id}",
         )
-        st.checkbox(
-            "Ready for draft",
-            value=entry.ready,
-            key=f"review_ready_{result.recognition_result_id}",
+        st.caption(
+            "Approval marks this item ready after every required field validates. "
+            "Ctrl+Enter saves; Escape cancels."
         )
-        st.caption("Ctrl+Enter saves these values. Escape discards edit mode.")
         return
 
     confidence_percent = round(result.confidence * 100)
@@ -331,7 +345,15 @@ def _render_suggestion(entry: repository.ReviewQueueEntry, edit_mode: bool) -> N
         st.warning(" · ".join(result.uncertainty_reasons))
     else:
         st.caption("No uncertainty noted.")
-    price = "—" if entry.price_cents is None else f"${entry.price_cents / 100:.2f}"
+    st.number_input(
+        "Price (CAD)",
+        min_value=0.0,
+        value=0.0 if entry.price_cents is None else entry.price_cents / 100,
+        step=0.01,
+        format="%.2f",
+        key=f"review_price_{result.recognition_result_id}",
+        help="Required before this tape can be approved and marked ready.",
+    )
     physical_review = "Yes" if entry.physical_review else "No"
     rare = "Yes" if entry.rare else "No"
     readiness = (
@@ -342,7 +364,6 @@ def _render_suggestion(entry: repository.ReviewQueueEntry, edit_mode: bool) -> N
     st.markdown(
         f"""
         <div class="metadata-grid">
-          <div><span>Price</span><b>{price}</b></div>
           <div><span>Condition</span><b>{escape(entry.condition)}</b></div>
           <div><span>Quantity</span><b>{entry.quantity}</b></div>
           <div><span>Shelf</span><b>{escape(entry.shelf)}</b></div>
@@ -357,6 +378,11 @@ def _render_suggestion(entry: repository.ReviewQueueEntry, edit_mode: bool) -> N
         st.error("\n".join(f"• {error}" for error in entry.validation_errors))
     elif entry.validation_status == "READY":
         st.success("Ready for draft")
+    last_validation = st.session_state.get("review_last_validation")
+    if last_validation and last_validation.get("item_id") == result.item_id:
+        errors = last_validation.get("errors") or []
+        if errors:
+            st.error("Approval blocked:\n" + "\n".join(f"• {error}" for error in errors))
 
 
 def render_batch_details_section(db_file: Path, batch_id_value: str) -> None:
@@ -405,9 +431,7 @@ def _queue_for_item(db_file: Path, item_id_value: str) -> str:
         return repository.QUEUE_FAILED
     if stored.review_status == repository.REVIEW_ACCEPTED:
         return repository.QUEUE_DONE
-    if stored.review_status in (repository.REVIEW_REQUIRED, repository.REVIEW_REJECTED):
-        return repository.QUEUE_NEEDS_ATTENTION
-    return repository.QUEUE_TO_REVIEW
+    return repository.QUEUE_UNRESOLVED
 
 
 def _overview_status_label(db_file: Path, item_id_value: str) -> str:
@@ -675,6 +699,9 @@ def render_review(paths: DataPaths) -> None:
     provider_name = _render_recognition_overview(paths, batch_id, providers)
 
     _shortcut_strip()
+    pending_filter = st.session_state.pop("review_pending_filter", None)
+    if pending_filter in repository.QUEUE_FILTERS:
+        st.session_state["review_filter"] = pending_filter
     queue_filter = st.selectbox(
         "Queue",
         repository.QUEUE_FILTERS,
@@ -682,7 +709,21 @@ def render_review(paths: DataPaths) -> None:
     )
     queue = repository.list_review_queue(paths.db_file, batch_id, queue_filter)
     if not queue:
-        st.success(f"No items in “{queue_filter}” for this batch.")
+        if repository.batch_review_complete(paths.db_file, batch_id):
+            st.success("Batch review complete. Every item was independently approved.")
+        else:
+            unresolved = repository.list_review_queue(
+                paths.db_file, batch_id, repository.QUEUE_UNRESOLVED
+            )
+            if unresolved:
+                st.info(
+                    f"No items in “{queue_filter}”. "
+                    f"{len(unresolved)} unresolved item(s) remain in Unresolved."
+                )
+            else:
+                st.info(
+                    "Review is not complete. Some items still need recognition before approval."
+                )
         return
 
     queue_item_ids = [entry.result.item_id for entry in queue]

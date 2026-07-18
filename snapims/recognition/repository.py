@@ -19,6 +19,7 @@ REVIEW_FAILED = "FAILED"
 HIGH_CONFIDENCE_THRESHOLD = 0.85
 
 QUEUE_TO_REVIEW = "To review"
+QUEUE_UNRESOLVED = "Unresolved"
 QUEUE_NEEDS_ATTENTION = "Needs attention"
 QUEUE_FAILED = "Failed"
 QUEUE_DONE = "Done"
@@ -26,6 +27,7 @@ QUEUE_ALL_UNREVIEWED = QUEUE_TO_REVIEW
 QUEUE_REVIEW_REQUIRED = QUEUE_NEEDS_ATTENTION
 QUEUE_ACCEPTED = QUEUE_DONE
 QUEUE_FILTERS = (
+    QUEUE_UNRESOLVED,
     QUEUE_TO_REVIEW,
     QUEUE_NEEDS_ATTENTION,
     QUEUE_FAILED,
@@ -282,6 +284,10 @@ def list_review_queue(
     if queue_filter not in QUEUE_FILTERS:
         raise ValueError(f"Unknown recognition queue filter: {queue_filter}")
     filters: dict[str, tuple[str, tuple[Any, ...]]] = {
+        QUEUE_UNRESOLVED: (
+            "NOT (latest.result_status = ? AND latest.review_status = ?)",
+            (RESULT_SUCCEEDED, REVIEW_ACCEPTED),
+        ),
         QUEUE_TO_REVIEW: (
             "latest.result_status = ? AND latest.review_status IN (?, ?)",
             (RESULT_SUCCEEDED, REVIEW_UNREVIEWED, REVIEW_SKIPPED),
@@ -378,6 +384,39 @@ def list_review_queue(
         )
         for row in rows
     ]
+
+
+def batch_review_complete(db_file: Path, batch_id_value: str) -> bool:
+    """Return true only when every item has an accepted latest recognition result."""
+    db.initialize(db_file)
+    with db.connect(db_file) as connection:
+        row = connection.execute(
+            """
+            WITH ranked AS (
+                SELECT rr.item_id, rr.result_status, rr.review_status,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY rr.item_id
+                           ORDER BY rr.recognition_result_id DESC
+                       ) AS result_rank
+                FROM recognition_results rr
+                WHERE rr.batch_id = ?
+            ),
+            latest AS (
+                SELECT * FROM ranked WHERE result_rank = 1
+            )
+            SELECT COUNT(*) AS total,
+                   SUM(
+                       CASE WHEN latest.result_status = ?
+                                  AND latest.review_status = ?
+                            THEN 1 ELSE 0 END
+                   ) AS completed
+            FROM items
+            LEFT JOIN latest ON latest.item_id = items.item_id
+            WHERE items.batch_id = ?
+            """,
+            (batch_id_value, RESULT_SUCCEEDED, REVIEW_ACCEPTED, batch_id_value),
+        ).fetchone()
+    return bool(row and row["total"] > 0 and row["completed"] == row["total"])
 
 
 def accept_result(

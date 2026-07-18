@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from snapims import db
-from snapims.inventory import validate_items
+from snapims.inventory import validate_items, validation_errors
 from snapims.protocol import LOCATION_RE
 from snapims.recognition import progress as durable_progress
 from snapims.recognition import reconciliation, repository
@@ -122,6 +122,33 @@ def accept_edited_result(
         db_file,
         result_id,
         edited_values=edited_values,
+        accepted_at=datetime.now().isoformat(timespec="seconds"),
+    )
+    return validate_items(db_file, [stored.item_id])[stored.item_id]
+
+
+def approve_review_result(
+    db_file: Path,
+    result_id: int,
+    edited_values: dict,
+) -> list[str]:
+    """Validate and approve exactly one item, without persisting an invalid approval."""
+    result = repository.get_result(db_file, result_id)
+    if result is None:
+        raise KeyError(f"Unknown recognition result: {result_id}")
+    item = db.get_item(db_file, result.item_id)
+    if item is None:
+        raise KeyError(f"Unknown Item ID: {result.item_id}")
+    values = dict(edited_values)
+    values["ready"] = 1
+    projected = {**item, **values}
+    errors = validation_errors(projected, db.get_item_photos(db_file, result.item_id))
+    if errors:
+        return errors
+    stored = repository.accept_result(
+        db_file,
+        result_id,
+        edited_values=values,
         accepted_at=datetime.now().isoformat(timespec="seconds"),
     )
     return validate_items(db_file, [stored.item_id])[stored.item_id]

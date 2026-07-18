@@ -21,11 +21,13 @@ from snapims.recognition.review import (
     current_item_id,
     keyboard_decision,
     next_item_id,
+    next_remaining_item_id,
     previous_item_id,
 )
 from snapims.recognition.service import (
     accept_edited_result,
     accept_result,
+    approve_review_result,
     correct_item_location,
     mark_result_for_review,
     reject_result,
@@ -35,6 +37,7 @@ from snapims.recognition.service import (
     run_recognition,
     skip_result,
 )
+from snapims.shopify.publish import build_publish_queue
 
 
 class _BlankRecognizer(BaseRecognizer):
@@ -79,6 +82,66 @@ def _insert_item(batch_id: str, sequence: int, paths) -> dict:
     item = db.get_item(paths.db_file, item_id)
     assert item is not None
     return item
+
+
+def _four_item_review_batch(tmp_path, data_paths) -> tuple[str, list[dict]]:
+    result = process_batch(create_demo_batch(tmp_path / "camera-four"), paths=data_paths)
+    originals = db.list_items(data_paths.db_file, batch_id_value=result.batch_id)
+    with db.connect(data_paths.db_file) as connection:
+        source = dict(
+            connection.execute(
+                "SELECT * FROM items WHERE item_id=?", (originals[1]["item_id"],)
+            ).fetchone()
+        )
+        photos = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM photos WHERE item_id=? ORDER BY photo_order",
+                (originals[1]["item_id"],),
+            )
+        ]
+    for sequence in (3, 4):
+        item_id = f"{result.batch_id}-B2-{sequence:03d}"
+        clone = dict(source)
+        clone.update(item_id=item_id, sku=item_id, sequence=sequence, ready=0)
+        columns = list(clone)
+        with db.transaction(data_paths.db_file) as connection:
+            connection.execute(
+                f"INSERT INTO items({','.join(columns)}) "
+                f"VALUES({','.join('?' for _ in columns)})",
+                list(clone.values()),
+            )
+            connection.execute("INSERT INTO shopify_sync(item_id) VALUES(?)", (item_id,))
+            for offset, source_photo in enumerate(photos, start=1):
+                photo = dict(source_photo)
+                photo.pop("photo_id")
+                photo.update(
+                    item_id=item_id,
+                    stream_index=sequence * 100 + offset,
+                    proposed_name=f"{item_id}-{offset}.jpg",
+                )
+                photo_columns = list(photo)
+                connection.execute(
+                    f"INSERT INTO photos({','.join(photo_columns)}) "
+                    f"VALUES({','.join('?' for _ in photo_columns)})",
+                    list(photo.values()),
+                )
+    items = db.list_items(data_paths.db_file, batch_id_value=result.batch_id)
+    run_batch_recognition(data_paths.db_file, result.batch_id, MockRecognizer())
+    return result.batch_id, items
+
+
+def _approval_values(result: repository.StoredRecognitionResult, price_cents: int | None) -> dict:
+    return {
+        "title": result.suggested_title,
+        "edition": result.edition,
+        "distributor": result.distributor,
+        "release_year": result.release_year,
+        "barcode": result.barcode_candidates[0] if result.barcode_candidates else "",
+        "price_cents": price_cents,
+        "condition": "Very Good",
+        "quantity": 1,
+    }
 
 
 def test_accept_all_updates_correct_item_and_audits_fields(review_batch) -> None:
@@ -324,6 +387,92 @@ def test_queue_navigation_falls_back_to_first_item_when_preferred_id_left_queue(
     item_ids = ["BATCH-B2-011", "BATCH-B2-012"]
     assert current_item_id(item_ids, "BATCH-B2-099") == "BATCH-B2-011"
     assert current_item_id([], "BATCH-B2-011") is None
+
+
+def test_four_item_approval_is_item_scoped_and_queues_remaining_items(
+    tmp_path, data_paths
+) -> None:
+    batch_id, items = _four_item_review_batch(tmp_path, data_paths)
+    first = repository.latest_result_for_item(data_paths.db_file, items[0]["item_id"])
+    assert first is not None
+
+    errors = approve_review_result(
+        data_paths.db_file, first.recognition_result_id, _approval_values(first, 1299)
+    )
+
+    assert errors == []
+    statuses = [
+        repository.latest_result_for_item(data_paths.db_file, item["item_id"]).review_status
+        for item in items
+    ]
+    assert statuses == [repository.REVIEW_ACCEPTED] + [repository.REVIEW_UNREVIEWED] * 3
+    unresolved = repository.list_review_queue(
+        data_paths.db_file, batch_id, repository.QUEUE_UNRESOLVED
+    )
+    assert [entry.result.item_id for entry in unresolved] == [
+        item["item_id"] for item in items[1:]
+    ]
+    assert not repository.batch_review_complete(data_paths.db_file, batch_id)
+    refreshed = db.list_items(data_paths.db_file, batch_id_value=batch_id)
+    assert [bool(item["ready"]) for item in refreshed] == [True, False, False, False]
+    publish = build_publish_queue(data_paths.db_file, batch_id)
+    assert [entry.state for entry in publish] == ["Ready", "Blocked", "Blocked", "Blocked"]
+    reconstructed = repository.list_review_queue(
+        data_paths.db_file, batch_id, repository.QUEUE_UNRESOLVED
+    )
+    assert [entry.result.item_id for entry in reconstructed] == [
+        item["item_id"] for item in items[1:]
+    ]
+
+
+def test_review_approval_requires_price_and_persists_edited_price(
+    tmp_path, data_paths
+) -> None:
+    batch_id, items = _four_item_review_batch(tmp_path, data_paths)
+    result = repository.latest_result_for_item(data_paths.db_file, items[0]["item_id"])
+    assert result is not None
+
+    errors = approve_review_result(
+        data_paths.db_file, result.recognition_result_id, _approval_values(result, None)
+    )
+
+    assert "Price must be greater than zero" in errors
+    blocked = repository.latest_result_for_item(data_paths.db_file, items[0]["item_id"])
+    assert blocked is not None and blocked.review_status == repository.REVIEW_UNREVIEWED
+    assert db.get_item(data_paths.db_file, items[0]["item_id"])["ready"] == 0
+
+    assert approve_review_result(
+        data_paths.db_file, result.recognition_result_id, _approval_values(result, 1795)
+    ) == []
+    reloaded = db.get_item(data_paths.db_file, items[0]["item_id"])
+    assert reloaded is not None and reloaded["price_cents"] == 1795
+    assert reloaded["ready"] == 1
+    assert not repository.batch_review_complete(data_paths.db_file, batch_id)
+
+
+def test_batch_completes_only_after_last_independent_item_approval(
+    tmp_path, data_paths
+) -> None:
+    batch_id, items = _four_item_review_batch(tmp_path, data_paths)
+    prior_ids = [item["item_id"] for item in items]
+    for index, item in enumerate(items):
+        result = repository.latest_result_for_item(data_paths.db_file, item["item_id"])
+        assert result is not None
+        assert approve_review_result(
+            data_paths.db_file, result.recognition_result_id, _approval_values(result, 1000 + index)
+        ) == []
+        remaining = repository.list_review_queue(
+            data_paths.db_file, batch_id, repository.QUEUE_UNRESOLVED
+        )
+        next_id = next_remaining_item_id(
+            prior_ids, item["item_id"], [entry.result.item_id for entry in remaining]
+        )
+        if index < 3:
+            assert next_id == items[index + 1]["item_id"]
+            assert not repository.batch_review_complete(data_paths.db_file, batch_id)
+        else:
+            assert next_id is None
+            assert repository.batch_review_complete(data_paths.db_file, batch_id)
 
 
 def test_keyboard_handler_does_not_double_submit() -> None:

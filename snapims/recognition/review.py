@@ -84,6 +84,22 @@ def next_item_id(item_ids: list[str], current_id: str) -> str | None:
     return item_ids[0] if len(item_ids) > 1 else None
 
 
+def next_remaining_item_id(
+    previous_item_ids: list[str], current_id: str, remaining_item_ids: list[str]
+) -> str | None:
+    """Choose the next still-unresolved item using the prior durable queue order."""
+    if not remaining_item_ids:
+        return None
+    remaining = set(remaining_item_ids)
+    if current_id in previous_item_ids:
+        index = previous_item_ids.index(current_id)
+        ordered = previous_item_ids[index + 1 :] + previous_item_ids[:index]
+        for item_id in ordered:
+            if item_id in remaining:
+                return item_id
+    return remaining_item_ids[0]
+
+
 def previous_item_id(item_ids: list[str], current_id: str) -> str | None:
     if current_id not in item_ids:
         return item_ids[0] if item_ids else None
