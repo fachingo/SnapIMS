@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,7 @@ import streamlit as st
 
 from snapims import active_batch, db
 from snapims.config import DataPaths
-from snapims.inventory import CONDITIONS
+from snapims.inventory import CONDITIONS, POOL_MODES, validate_items
 from snapims.recognition import repository
 from snapims.recognition.keyboard import keyboard_shortcut_event
 from snapims.recognition.providers import recognizer_registry
@@ -33,6 +34,7 @@ from snapims.recognition.service import (
     mark_result_for_review,
     reject_result,
     retry_recognition,
+    run_batch_recognition,
     skip_result,
 )
 
@@ -366,12 +368,260 @@ def _render_suggestion(entry: repository.ReviewQueueEntry, edit_mode: bool) -> N
         st.success("Ready for draft")
 
 
+def render_batch_details_section(db_file: Path, batch_id_value: str) -> None:
+    """Human-readable item grouping/timeline for one batch.
+
+    Raw command-stream evidence (QR payload, stream index, command kind,
+    source photo) is intentionally excluded here; that raw evidence
+    remains reachable under Settings & diagnostics.
+    """
+    batch = db.get_batch(db_file, batch_id_value)
+    if batch is None:
+        return
+    with st.expander(f"Batch details · {batch_id_value}", expanded=False):
+        columns = st.columns(3)
+        columns[0].metric("Items", batch["item_count"])
+        columns[1].metric("Product images", batch["product_photo_count"])
+        columns[2].metric("Warnings", batch["warning_count"])
+        items = db.list_items(db_file, batch_id_value=batch_id_value)
+        st.dataframe(
+            [
+                {
+                    "Sequence": item["sequence"],
+                    "Shelf": item["shelf"],
+                    "Title": item["title"] or "Untitled VHS",
+                    "Images": item["image_count"],
+                    "Rare": bool(item["rare"]),
+                    "Review": bool(item["review"]),
+                }
+                for item in items
+            ],
+            hide_index=True,
+            width="stretch",
+        )
+        warnings = json.loads(batch["warnings_json"])
+        if warnings:
+            st.warning("\n".join(warnings))
+        else:
+            st.caption("No parser warnings for this batch.")
+
+
+def _queue_for_item(db_file: Path, item_id_value: str) -> str:
+    stored = repository.latest_result_for_item(db_file, item_id_value)
+    if stored is None:
+        return repository.QUEUE_TO_REVIEW
+    if stored.result_status == repository.RESULT_FAILED:
+        return repository.QUEUE_FAILED
+    if stored.review_status == repository.REVIEW_ACCEPTED:
+        return repository.QUEUE_DONE
+    if stored.review_status in (repository.REVIEW_REQUIRED, repository.REVIEW_REJECTED):
+        return repository.QUEUE_NEEDS_ATTENTION
+    return repository.QUEUE_TO_REVIEW
+
+
+def _overview_status_label(db_file: Path, item_id_value: str) -> str:
+    stored = repository.latest_result_for_item(db_file, item_id_value)
+    if stored is None:
+        return "Not yet recognized"
+    if stored.result_status == repository.RESULT_FAILED:
+        return "Failed"
+    return _STATUS_LABELS.get(stored.review_status, stored.review_status.title())
+
+
+def _run_batch_recognition_with_progress(
+    db_file: Path,
+    batch_id_value: str,
+    recognizer: Any,
+    *,
+    skip_existing: bool,
+    only_missing_title: bool,
+    force_reprocess: bool,
+) -> None:
+    progress_bar = st.progress(0.0, text="Starting batch recognition…")
+    status = st.empty()
+    metrics = st.empty()
+    failures_box = st.empty()
+
+    def update_progress(state: Any) -> None:
+        total = state.total or 1
+        progress_bar.progress(
+            state.completed / total,
+            text=f"Processing {state.current_item_id or 'batch'} ({state.completed}/{state.total})",
+        )
+        status.markdown(f"**Current item:** `{state.current_item_id or '—'}`")
+        metrics.markdown(
+            "\n".join(
+                [
+                    f"- **Completed:** {state.completed}/{state.total}",
+                    f"- **Recognized:** {state.recognized}",
+                    f"- **Review required:** {state.review_required}",
+                    f"- **Skipped:** {state.skipped}",
+                    f"- **Failed:** {state.failed}",
+                ]
+            )
+        )
+        if state.failures:
+            failures_box.error(
+                "Failures:\n"
+                + "\n".join(f"- `{failure.item_id}`: {failure.message}" for failure in state.failures)
+            )
+        else:
+            failures_box.empty()
+
+    summary = run_batch_recognition(
+        db_file,
+        batch_id_value,
+        recognizer,
+        skip_existing=skip_existing,
+        only_missing_title=only_missing_title,
+        force_reprocess=force_reprocess,
+        progress_callback=update_progress,
+    )
+    st.session_state["review_recognition_summary"] = {
+        "batch_id": summary.batch_id,
+        "recognized": summary.recognized,
+        "review_required": summary.review_required,
+        "skipped": summary.skipped,
+        "failed": summary.failed,
+    }
+    if summary.failed:
+        st.warning(
+            f"Batch recognition finished with {summary.failed} failure(s). "
+            f"Recognized {summary.recognized}, skipped {summary.skipped}."
+        )
+    else:
+        st.success(
+            f"Batch recognition finished. Recognized {summary.recognized}, "
+            f"skipped {summary.skipped}."
+        )
+
+
+def _render_recognition_overview(
+    paths: DataPaths, batch_id_value: str, providers: dict[str, Any]
+) -> str:
+    st.subheader("Review overview")
+    items = db.list_items(paths.db_file, batch_id_value=batch_id_value)
+    if not items:
+        st.info("This batch has no items yet.")
+        return _provider_name(providers)
+
+    options_col, provider_col = st.columns([3, 1])
+    with options_col:
+        skip_existing = st.checkbox(
+            "Skip items that already have a recognition result",
+            value=True,
+            key="review_overview_skip_existing",
+        )
+        only_missing_title = st.checkbox(
+            "Only process items with no title",
+            value=False,
+            key="review_overview_only_missing_title",
+        )
+        force_reprocess = st.checkbox(
+            "Force reprocess",
+            value=False,
+            key="review_overview_force_reprocess",
+        )
+    with provider_col:
+        provider_name = _compact_provider(providers)
+
+    unattempted = sum(
+        1
+        for item in items
+        if repository.latest_result_for_item(paths.db_file, item["item_id"]) is None
+    )
+    action_label = "Start recognition" if unattempted == len(items) else "Resume recognition"
+    if st.button(action_label, type="primary", key="review_overview_run_recognition"):
+        _run_batch_recognition_with_progress(
+            paths.db_file,
+            batch_id_value,
+            providers[provider_name],
+            skip_existing=skip_existing,
+            only_missing_title=only_missing_title,
+            force_reprocess=force_reprocess,
+        )
+
+    summary = st.session_state.get("review_recognition_summary")
+    if summary and summary["batch_id"] == batch_id_value:
+        metric_columns = st.columns(4)
+        for column, label, key in zip(
+            metric_columns,
+            ("Recognized", "Review required", "Skipped", "Failed"),
+            ("recognized", "review_required", "skipped", "failed"),
+            strict=True,
+        ):
+            column.metric(label, summary[key])
+
+    st.caption("Click a card to open that item in the workstation below.")
+    columns = st.columns(4)
+    for index, item in enumerate(items):
+        with columns[index % 4]:
+            st.markdown('<div class="snap-card">', unsafe_allow_html=True)
+            if item["front_thumbnail"]:
+                st.image(item["front_thumbnail"], width="stretch")
+            st.markdown(f"**{item['title'] or 'Untitled VHS'}**")
+            st.caption(f"{item['item_id']} · Shelf {item['shelf']}")
+            flags = [name for name, value in (("RARE", item["rare"]), ("REVIEW", item["review"])) if value]
+            if flags:
+                st.warning(" · ".join(flags))
+            st.caption(_overview_status_label(paths.db_file, item["item_id"]))
+            if st.button("Open", key=f"review_overview_open_{item['item_id']}", width="stretch"):
+                st.session_state["review_open_item_id"] = item["item_id"]
+                st.session_state["review_filter"] = _queue_for_item(paths.db_file, item["item_id"])
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+    st.divider()
+    return provider_name
+
+
+def _render_more(db_file: Path, item_id_value: str) -> None:
+    item = db.get_item(db_file, item_id_value)
+    if item is None:
+        return
+    with st.expander("More", expanded=False):
+        with st.form(f"review_more_{item_id_value}"):
+            st.caption("Advanced item fields, moved here from the former Item editor page.")
+            first, second = st.columns(2)
+            vendor = first.text_input("Vendor", value=item["vendor"])
+            product_type = second.text_input("Product type", value=item["product_type"])
+            tags = st.text_input("Tags (comma separated)", value=item["tags"])
+            condition_notes = st.text_area("Condition notes", value=item["condition_notes"])
+            description = st.text_area("Description", value=item["description"], height=120)
+            third, fourth = st.columns(2)
+            shelf = third.text_input("Shelf", value=item["shelf"])
+            pool_mode = fourth.selectbox(
+                "Inventory mode",
+                POOL_MODES,
+                index=POOL_MODES.index(item["pool_mode"]) if item["pool_mode"] in POOL_MODES else 0,
+            )
+            physical_review = st.checkbox(
+                "Physical REVIEW flag (manual override)", value=bool(item["review"])
+            )
+            if st.form_submit_button("Save advanced fields"):
+                db.update_item(
+                    db_file,
+                    item_id_value,
+                    {
+                        "vendor": vendor,
+                        "product_type": product_type,
+                        "tags": tags,
+                        "condition_notes": condition_notes,
+                        "description": description,
+                        "shelf": shelf.strip().upper(),
+                        "pool_mode": pool_mode,
+                        "review": int(physical_review),
+                    },
+                )
+                validate_items(db_file, [item_id_value])
+                st.success("Saved advanced fields.")
+                st.rerun()
+
+
 def render_review(paths: DataPaths) -> None:
     st.title("Review")
-    _shortcut_strip()
     batches = db.list_batches(paths.db_file)
     if not batches:
-        st.info("Import and recognize a batch before opening the review workstation.")
+        st.info("Import a batch before opening the review workstation.")
         return
 
     batch_options = [batch["batch_id"] for batch in batches]
@@ -381,21 +631,23 @@ def render_review(paths: DataPaths) -> None:
         if active and active["batch_id"] in batch_options
         else 0
     )
-    controls = st.columns([1.35, 1.1, 0.9])
-    batch_id = controls[0].selectbox(
+    batch_id = st.selectbox(
         "Batch",
         batch_options,
         index=default_index,
         key="review_batch",
     )
-    queue_filter = controls[1].selectbox(
+    render_batch_details_section(paths.db_file, batch_id)
+
+    providers = recognizer_registry()
+    provider_name = _render_recognition_overview(paths, batch_id, providers)
+
+    _shortcut_strip()
+    queue_filter = st.selectbox(
         "Queue",
         repository.QUEUE_FILTERS,
         key="review_filter",
     )
-    providers = recognizer_registry()
-    with controls[2]:
-        provider_name = _compact_provider(providers)
     queue = repository.list_review_queue(paths.db_file, batch_id, queue_filter)
     if not queue:
         st.success(f"No items in “{queue_filter}” for this batch.")
@@ -542,6 +794,7 @@ def render_review(paths: DataPaths) -> None:
                     queue_item_ids=queue_item_ids,
                     provider_name=provider_name,
                 )
+        _render_more(paths.db_file, entry.result.item_id)
         with st.expander("Details", expanded=False):
             st.caption(f"Result ID: {entry.result.recognition_result_id}")
             st.caption(

@@ -33,13 +33,28 @@ def _distinct_camera_roll(tmp_path: Path, name: str) -> Path:
     return source
 
 
-def test_streamlit_dashboard_renders_without_runtime_errors(
+def test_streamlit_home_renders_without_runtime_errors(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("SNAPIMS_DATA_DIR", str(tmp_path / "ui-data"))
     app = AppTest.from_file("streamlit_app.py", default_timeout=20).run()
     assert not app.exception
-    assert any("SnapIMS dashboard" in title.value for title in app.title)
+    assert any("SnapIMS home" in title.value for title in app.title)
+
+
+def test_workspace_navigation_has_exactly_the_five_operator_destinations(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(tmp_path / "ui-data"))
+    app = AppTest.from_file("streamlit_app.py", default_timeout=20).run()
+    workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
+    assert list(workspace.options) == [
+        "Home",
+        "Import",
+        "Review",
+        "Publish",
+        "Settings & diagnostics",
+    ]
 
 
 def test_review_page_renders_persisted_queue_without_routine_diagnostics(
@@ -184,7 +199,7 @@ def test_review_retry_recovers_failed_item_to_to_review(
     assert items[0]["item_id"] not in {entry.result.item_id for entry in failed_queue}
 
 
-def test_review_open_in_review_from_skipped_batch_outcome_selects_correct_item(
+def test_review_overview_open_from_skipped_recognition_selects_correct_item(
     tmp_path: Path, monkeypatch, data_paths
 ) -> None:
     result = process_batch(create_demo_batch(tmp_path / "camera"), paths=data_paths)
@@ -192,18 +207,18 @@ def test_review_open_in_review_from_skipped_batch_outcome_selects_correct_item(
     run_batch_recognition(data_paths.db_file, result.batch_id, MockRecognizer())
 
     monkeypatch.setenv("SNAPIMS_DATA_DIR", str(data_paths.root))
-    app = AppTest.from_file("streamlit_app.py", default_timeout=30).run()
+    app = AppTest.from_file("streamlit_app.py", default_timeout=30)
+    app.session_state["recognition_provider_name"] = "mock"
+    app = app.run()
     workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
-    app = workspace.set_value("Recognition").run()
-    run_button = next(button for button in app.button if button.key == "batch_recognition_run")
+    app = workspace.set_value("Review").run()
+    run_button = next(
+        button for button in app.button if button.key == "review_overview_run_recognition"
+    )
     app = run_button.click().run()
 
-    saved_summary = app.session_state["batch_recognition_summary"]
-    outcome = next(
-        outcome for outcome in saved_summary["outcomes"] if outcome["item_id"] == items[0]["item_id"]
-    )
-    assert outcome["status"] == "SKIPPED"
-    open_key = f"open_batch_result_{outcome['item_id']}_{outcome['result_id']}"
+    assert not app.exception
+    open_key = f"review_overview_open_{items[0]['item_id']}"
     app = next(button for button in app.button if button.key == open_key).click().run()
 
     assert not app.exception
@@ -249,7 +264,7 @@ def test_dashboard_shows_active_batch_and_continue_action(
 
     assert not app.exception
     workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
-    assert workspace.value == "Recognition"
+    assert workspace.value == "Review"
 
 
 def test_dashboard_change_batch_is_explicit_and_does_not_auto_switch(
@@ -301,7 +316,7 @@ def test_review_and_publish_pages_default_to_active_batch_and_exclude_others(
     assert items_a[1]["item_id"] not in context_text
 
     workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
-    app = workspace.set_value("Shopify dry-run").run()
+    app = workspace.set_value("Publish").run()
     assert not app.exception
     dry_run_batch = next(box for box in app.selectbox if box.key == "shopify_dry_run_batch")
     assert dry_run_batch.value == batch_b.batch_id
@@ -311,16 +326,105 @@ def test_review_and_publish_pages_default_to_active_batch_and_exclude_others(
 
 
 def test_advanced_settings_keeps_workspace_diagnostics_reachable(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, data_paths
 ) -> None:
-    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(tmp_path / "ui-data"))
+    process_batch(create_demo_batch(tmp_path / "camera"), paths=data_paths)
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(data_paths.root))
     app = AppTest.from_file("streamlit_app.py", default_timeout=20).run()
     workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
 
-    workspace.set_value("Settings & diagnostics").run()
+    app = workspace.set_value("Settings & diagnostics").run()
 
     assert not app.exception
     assert any(title.value == "Settings & diagnostics" for title in app.title)
     labels = {expander.label for expander in app.expander}
+    # Every former diagnostic-only capability (raw command events, the
+    # database/table browser, manual validation rerun, and raw logs) must
+    # remain reachable from this single consolidated destination.
     assert "Workspace storage" in labels
     assert "Database inspection and audit" in labels
+    assert "Command events (raw)" in labels
+    assert "Validation (raw)" in labels
+    assert "Logs & warnings" in labels
+
+
+def test_synthetic_operator_completes_import_review_publish_without_diagnostics(
+    tmp_path: Path, monkeypatch, data_paths
+) -> None:
+    """A synthetic operator finishes the whole workflow using only the
+    three primary destinations; Settings & diagnostics is never opened."""
+    source = create_demo_batch(tmp_path / "camera")
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(data_paths.root))
+
+    app = AppTest.from_file("streamlit_app.py", default_timeout=30)
+    app.session_state["recognition_provider_name"] = "mock"
+    app = app.run()
+    workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
+
+    # Import.
+    app = workspace.set_value("Import").run()
+    photo_directory = next(
+        text_input for text_input in app.text_input if text_input.label == "Photo directory"
+    )
+    app = photo_directory.set_value(str(source)).run()
+    import_button = next(
+        button for button in app.button if button.label == "Preserve and import batch"
+    )
+    app = import_button.click().run()
+    assert not app.exception
+    batch_id = active_batch.get_active_batch(data_paths.db_file)["batch_id"]
+
+    # Review: run recognition from the overview, then accept every item.
+    workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
+    app = workspace.set_value("Review").run()
+    run_button = next(
+        button for button in app.button if button.key == "review_overview_run_recognition"
+    )
+    app = run_button.click().run()
+    assert not app.exception
+
+    items = db.list_items(data_paths.db_file, batch_id_value=batch_id)
+    for _ in items:
+        accept_button = next(button for button in app.button if button.label == "Accept")
+        app = accept_button.click().run()
+        assert not app.exception
+
+    # Publish: a simulated dry-run works with no credentials.
+    workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
+    app = workspace.set_value("Publish").run()
+    dry_run_button = next(
+        button for button in app.button if button.label == "Run Shopify dry-run"
+    )
+    app = dry_run_button.click().run()
+
+    assert not app.exception
+    assert any(title.value == "Publish" for title in app.title)
+
+
+def test_no_routine_page_leaks_database_path_or_numeric_result_ids(
+    tmp_path: Path, monkeypatch, data_paths
+) -> None:
+    result = process_batch(create_demo_batch(tmp_path / "camera"), paths=data_paths)
+    run_batch_recognition(data_paths.db_file, result.batch_id, MockRecognizer())
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(data_paths.root))
+
+    app = AppTest.from_file("streamlit_app.py", default_timeout=30).run()
+    workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
+
+    for page in ("Home", "Import", "Review", "Publish"):
+        app = workspace.set_value(page).run()
+        assert not app.exception
+        routine_text = " ".join(
+            str(element.value)
+            for collection in (app.markdown, app.caption, app.text)
+            for element in collection
+        )
+        assert str(data_paths.db_file) not in routine_text
+        assert "recognition_results" not in routine_text
+        if page != "Review":
+            # Review keeps the numeric recognition-result ID inside its
+            # explicit, collapsed "Details" expander (unchanged from the
+            # prior Review-repair phase); every other destination must
+            # never surface it at all.
+            assert "Result ID:" not in routine_text
+        workspace = next(radio for radio in app.radio if radio.key == "workspace_page")

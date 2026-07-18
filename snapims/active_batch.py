@@ -62,15 +62,16 @@ def compute_next_action(db_file: Path, batch_id_value: str) -> NextAction:
     Priority is: recognize anything never attempted, then recover
     failures, then clear the review queues, then fix validation blockers,
     then publish anything ready. This mirrors the existing Import ->
-    Recognition -> Review -> Validation -> Publish journey without adding
-    a new status field.
+    Review -> Publish journey (recognition and validation are contextual
+    steps inside Review) without adding a new status field. ``target_page``
+    is always one of the five consolidated top-level destinations.
     """
     items = db.list_items(db_file, batch_id_value=batch_id_value)
     if not items:
         return NextAction(
             "Import photos for this batch",
             "This batch has no items yet.",
-            "Import batch",
+            "Import",
         )
 
     unattempted = [
@@ -82,7 +83,7 @@ def compute_next_action(db_file: Path, batch_id_value: str) -> NextAction:
         return NextAction(
             f"Run recognition for {len(unattempted)} item(s)",
             "These items have never had a recognition attempt.",
-            "Recognition",
+            "Review",
         )
 
     failed = repository.list_review_queue(db_file, batch_id_value, repository.QUEUE_FAILED)
@@ -109,7 +110,7 @@ def compute_next_action(db_file: Path, batch_id_value: str) -> NextAction:
         return NextAction(
             f"Fix {len(blocked)} item(s) failing validation",
             "These items are missing required fields before they can be published.",
-            "Validation",
+            "Review",
         )
 
     not_ready = [item for item in items if not item["ready"]]
@@ -117,7 +118,7 @@ def compute_next_action(db_file: Path, batch_id_value: str) -> NextAction:
         return NextAction(
             f"Mark {len(not_ready)} item(s) ready for publish",
             "Confirm price, condition, and other fields, then mark these items ready.",
-            "Validation",
+            "Review",
         )
 
     ready_unpublished = [
@@ -131,11 +132,11 @@ def compute_next_action(db_file: Path, batch_id_value: str) -> NextAction:
         return NextAction(
             f"Publish {len(ready_unpublished)} ready item(s)",
             "These items passed validation and are ready for a Shopify draft.",
-            "Shopify dry-run",
+            "Publish",
         )
 
     return NextAction(
         "Batch complete",
         "Every item has been reviewed, validated, and published or is not ready.",
-        "Import batch",
+        "Import",
     )

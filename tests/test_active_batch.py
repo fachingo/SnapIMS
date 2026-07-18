@@ -111,8 +111,10 @@ def test_compute_next_action_progresses_through_the_workflow(tmp_path: Path, dat
     result = process_batch(_distinct_batch(tmp_path, "batch-a"), paths=data_paths)
     items = db.list_items(data_paths.db_file, batch_id_value=result.batch_id)
 
+    # Recognition and validation are contextual steps inside Review now, so
+    # every pre-publish next action targets the consolidated Review page.
     action = active_batch.compute_next_action(data_paths.db_file, result.batch_id)
-    assert action.target_page == "Recognition"
+    assert action.target_page == "Review"
 
     run_batch_recognition(data_paths.db_file, result.batch_id, MockRecognizer())
     action = active_batch.compute_next_action(data_paths.db_file, result.batch_id)
@@ -124,7 +126,7 @@ def test_compute_next_action_progresses_through_the_workflow(tmp_path: Path, dat
         accept_result(data_paths.db_file, latest.recognition_result_id)
 
     action = active_batch.compute_next_action(data_paths.db_file, result.batch_id)
-    assert action.target_page == "Validation"
+    assert action.target_page == "Review"
 
 
 def test_compute_next_action_with_no_items_prompts_import(tmp_path: Path, data_paths) -> None:
@@ -144,4 +146,4 @@ def test_compute_next_action_with_no_items_prompts_import(tmp_path: Path, data_p
         )
 
     action = active_batch.compute_next_action(data_paths.db_file, batch_id)
-    assert action.target_page == "Import batch"
+    assert action.target_page == "Import"
