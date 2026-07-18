@@ -23,12 +23,12 @@ AI recognition and Shopify publishing are downstream services. Neither participa
 | Component | Responsibility |
 |---|---|
 | `snapims/sorter.py` | Discover supported files and order by EXIF original/digitized/general time, subsecond data, filename timestamp, filesystem time, camera sequence, and filename. |
-| `snapims/qr.py` / `protocol.py` | Decode QR pixels and accept only the existing Version 2.0 vocabulary. Unknown QR data returns ordinary-photo behavior and never executes. |
+| `snapims/qr.py` / `protocol.py` | Decode QR pixels and accept only the existing Version 2.0 vocabulary. Unknown `CVHS1` payloads are quarantined/audited and never execute or become product photos. |
 | `snapims/interpreter.py` | Deterministic START/END/NEXT state machine, shelf/flag deferral, CONT no-op, exclusions, and warnings. |
 | `snapims/processor.py` | Fingerprinting, duplicate checks, backup, staging/resume, original copy, safe JPEG generation, manifests, atomic finalization, and database insert. |
 | `snapims/db.py` | Migration runner, schema, foreign-key transactions, inventory events, recognition records, and Shopify checkpoints. |
 | `snapims/inventory.py` | Human-facing CSV mapping, immutable Item ID import, validation, and audit export. |
-| `snapims/recognition/` | Provider-neutral suggestion contract and mock/OpenAI/Gemini/local-OCR adapters. |
+| `snapims/recognition/` | Append-only suggestions, durable batch jobs/cursors, deterministic mock, live optional OpenAI, optional local OCR, and stubbed Gemini boundary. |
 | `snapims/shopify/` | GraphQL transport boundary, remote SKU check, draft creation, variant/inventory/media stages, and retry history. |
 | `streamlit_app.py` | Operator workflow with no routine terminal requirement. |
 
@@ -62,7 +62,9 @@ An import already committed to SQLite is returned as a duplicate. If files were 
 
 ## Recognition boundary
 
-`BaseRecognizer.recognize(item, images) -> RecognitionResult` returns suggested fields, confidence, uncertainty, provider, raw-response reference, and review requirement. Results are append-only suggestions in `recognition_results`. They do not alter authoritative item fields until an operator accepts them, and accepted results still mark the item for review.
+`BaseRecognizer.recognize(item, images) -> RecognitionResult` returns suggested fields, confidence, uncertainty, provider, raw-response reference, and review requirement. Results are append-only suggestions in `recognition_results`; job/item checkpoints make batch work resumable without repeating successful recognition unless Force reprocess is explicit.
+
+Recognition acceptance updates only the accepted catalog/listing fields and recognition review state. It does **not** set or clear `items.review`: that column is the independent physical QR/manual REVIEW flag and remains unchanged through accept, edit, discard, retry, and resume.
 
 ## Shopify boundary
 
@@ -75,3 +77,4 @@ Shopify is simulation-first and draft-only. The service performs local validatio
 - Source paths are operator-selected local directories.
 - SQL table browsing uses a fixed application allowlist.
 - Shopify credentials are never placed in manifests or logs.
+- Release archives are built from validated Git-tracked files and refuse secrets/runtime data before writing the archive.

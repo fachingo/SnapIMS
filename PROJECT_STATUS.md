@@ -3,53 +3,45 @@
 Version: **0.3.0 working prototype**
 Authoritative workflow: **Canada VHS Inventory System Version 2.0 — QR-Delimited Workflow**
 
-## Complete and verified
+## Verified checkpoint
 
-- NEXT-only chronological parser; timestamp-gap grouping is absent
-- Complete fixed command and Q1/A1–J10 location vocabulary
-- Deterministic EXIF/subsecond/fallback sort
-- Duplicate START/END, pre/post batch photos, consecutive/trailing NEXT, CONT, flags, shelf deferral, and unknown-code behavior
-- Hash-preserved originals, GPS-free public copies, stable naming, collisions, duplicate imports, interruption/resume, and file/database recovery path
-- JSON/CSV manifests, warnings, command audit copies, SQLite event schema, work CSV, validation, and audit export
-- Immutable Item ID CSV round-trip independent of row order/title
-- Streamlit operator workflow across all requested pages
-- Provider-neutral recognition with functioning mock recognizer and explicit suggestion acceptance
-- Shopify configuration, simulation, SKU dry-run, draft boundary, staged media, inventory activation, checkpoint/error state, and mocked full upload test
-- Automated database backup before import, CSV import, and Shopify writes
-- Linux Mint virtual-environment installer and desktop launcher
-
-## Verification record
-
-The release was checked with:
+The exact functional checkpoint entering release/documentation verification is commit `21b7a09b20fcbe0d17196e006b2d6d9ff433a355` (`Resume recognition jobs after process restart`). The Phase 9 documentation and release-safety tree was then checked on 2026-07-17 with:
 
 ```text
-pytest: 154 passed
-ruff: All checks passed
-mypy: Success, no issues found in 22 source files
-SQLite integrity: ok; 0 foreign-key violations in end-to-end demo
-Streamlit: dashboard AppTest passed and HTTP health smoke test performed
+pytest -q: 249 passed
+ruff check .: All checks passed
+mypy snapims --ignore-missing-imports: Success, no issues found in 31 source files
+git diff --check: passed
+wheel smoke: snapims-0.3.0-py3-none-any.whl built successfully
 ```
 
-The test suite includes synthetic camera images/QR codes and a realistic decode check using the supplied QR-card PDF. It covers the parser, sorting fallbacks, image preservation, database transaction rollback, CSV identity behavior, recognition suggestions, Shopify simulation/mock upload, and Streamlit startup.
+These values are copied from the actual local gate run, not projected release claims.
 
-## Known limitations
+## Complete and verified
 
-- A real Pixel photo session and every physical printed card have not been camera-tested under production lighting. The supplied QR PDF is decoded in tests and the entire vocabulary is covered synthetically.
-- HEIC/HEIF support is installed through `pillow-heif`, but a real Pixel HEIC metadata sample is still needed for device-specific confirmation.
-- OpenAI and Gemini classes are deliberate provider stubs. They report configuration state but do not make live recognition calls. The mock provider works end to end; local OCR works when Tesseract and `pytesseract` are installed.
-- Shopify GraphQL writes are implemented and tested against a deterministic fake transport, not a merchant store. Real credentials are required for the first draft-only sandbox validation. Publishing remains manual.
-- The prototype is single-operator/local. Multi-user authentication, network hosting, role permissions, and concurrent operator conflict resolution are outside this phase.
-- Media processing is synchronous. A background job queue is advisable before very large batches.
+- NEXT-only parsing, deterministic ordering, approved QR vocabulary, and quarantined unknown `CVHS1` payloads
+- Hash-preserved originals, GPS-free processed copies, stable Item IDs/names, duplicate detection, and import recovery
+- Atomic migration runner with pre-migration backup; current schema includes durable recognition jobs and Item-ID Review cursors
+- Five operator destinations: Home, Import, Review, Publish, Settings & diagnostics
+- Active-batch workflow, keyboard-first Review, automatic validation, CSV-by-Item-ID round trip, and batch Publish queues
+- Deterministic mock recognition; optional live OpenAI vision; optional local Tesseract OCR; stubbed Gemini boundary
+- Recognition suggestions remain non-authoritative until acceptance and never change physical REVIEW
+- Shopify simulation by default, read-only SKU checking, deliberate draft-only writes, and per-item retry checkpoints
+- Tracked-files source release guard plus wheel/archive smoke coverage
 
-## Recommended next milestone
+## Known limitations and manual verification
 
-Run one controlled 20-tape Pixel pilot using the printed cards, review warning quality and QR detection rates, then connect a Shopify development store in draft-only mode. Preserve the resulting manifests, timing, failure notes, and operator corrections as acceptance fixtures before enabling a live recognition provider.
+- A controlled physical Pixel/printed-card pilot is still required for lighting, glare, focus, QR decode rate, and operator timing.
+- HEIC/HEIF support exists, but a real Pixel HEIC metadata sample still needs device-specific confirmation.
+- The OpenAI adapter is implemented but was not called with a production key during this verification. Gemini remains intentionally stubbed. Local OCR requires system Tesseract plus `pytesseract`.
+- Shopify writes were verified with deterministic fake transports, not a merchant store. The first real integration must use a development store and verify drafts only; publishing remains manual.
+- SnapIMS remains a single-operator local workstation. Multi-user/network operation is outside this release.
+- Recognition runs synchronously but commits durable per-item progress and resumes safely after restart.
 
-## Suggested commit sequence
+## Safe release command
 
-1. Core protocol, deterministic ordering, interpreter, and manifests
-2. SQLite schema, event history, CSV workflow, and validation
-3. Image preservation, recovery, recognition, and Shopify boundaries
-4. Streamlit operator interface, demo, documentation, and verification tests
+```bash
+.venv/bin/python -m snapims.release --root . --output dist/snapims-source.tar.gz
+```
 
-The delivered repository may consolidate these into one local release commit; no secrets, production database, or inventory photos belong in Git.
+Only validated Git-tracked source/fixture artifacts are eligible. Real credentials, databases, logs, caches, exports, backups, operator workspaces, and non-synthetic inventory images do not belong in Git or a release archive.

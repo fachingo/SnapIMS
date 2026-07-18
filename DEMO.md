@@ -19,28 +19,29 @@ This demonstrates a two-photo ordinary item and a two-photo rare/review item. It
 
 From the repository root after installation:
 
+The repository already tracks the ten synthetic files under `demo-data/camera-roll/` as reproducible test fixtures. To generate a separate disposable camera roll without changing those fixtures:
+
 ```bash
-rm -rf demo-data
-.venv/bin/snapims demo demo-data/camera-roll
+.venv/bin/snapims demo /tmp/snapims-demo-camera-roll
 ```
 
-`demo-data/` is ignored by Git. The `rm -rf demo-data` line is optional and should only be used for this generated demo directory.
+Generated operator workspaces, databases, exports, logs, backups, and real inventory images are ignored or rejected by the release builder; only the explicitly tracked synthetic camera-roll images belong in Git.
 
 ## Run through the interface
 
 1. Launch with `./scripts/run_snapims.sh`.
-2. Open **Import batch**.
+2. Open **Import**.
 3. Paste the absolute `demo-data/camera-roll` path.
 4. Optionally enter `DEMO` as the batch name.
 5. Choose **Dry-run parser preview**. Confirm 2 items, 4 product images, 6 commands, and no grouping based on time gaps.
 6. Choose **Preserve and import batch**.
-7. Open **Command events** and inspect the six audited command images.
-8. Open **Item grid** and confirm two B2 item cards.
-9. Open **Item editor**, add a title and price, set a valid condition, mark the item READY, and save.
-10. Open **Validation** and confirm the edited item is READY.
-11. Open **Recognition**, use the configured `mock` provider, and generate a suggestion.
-12. Open **Review** and observe that the item remains unchanged until the suggestion is accepted.
-13. Open **Shopify dry-run**. With no credentials, confirm `SIMULATE_CREATE_DRAFT`; no network write is made.
+7. In **Review**, expand batch details and confirm two B2 item cards plus the human-readable command timeline.
+8. Use the deterministic `mock` provider to run recognition for the active batch.
+9. Review suggestions with **Accept & next**, **Edit**, or **Later**. Recognition never changes authoritative fields until acceptance and never changes the physical REVIEW flag.
+10. Complete required listing fields inline, mark valid items ready, and resolve the displayed validation reasons.
+11. Open **Publish** and confirm the active batch is separated into Ready, Blocked, Drafted, and Failed queues.
+12. Run **Simulate selected drafts** without credentials. This performs no network call.
+13. Optionally inspect raw commands, validation, tables, logs, and storage under **Settings & diagnostics**.
 
 ## Expected identifiers and files
 
@@ -88,7 +89,7 @@ sqlite3 demo-data/workspace/database/inventory.sqlite3 \
 
 ## CSV round-trip
 
-The import creates `processed/<batch-id>/inventory_work.csv`. Edit Title, Price, Condition, and Ready status, then use **CSV workflow** to upload it. Reordering rows is safe. Changing Item ID to an unknown value blocks the entire import transaction.
+The import creates `processed/<batch-id>/inventory_work.csv`. Under **Publish → CSV tools**, download the current file, edit Title, Price, Condition, and Ready status, then import it. Reordering rows is safe. Changing Item ID to an unknown value blocks the entire import transaction.
 
 ## Re-run behavior
 

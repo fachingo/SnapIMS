@@ -14,11 +14,13 @@ SQLite is the durable system of record. CSV is the editing surface; Shopify is a
 | `photos` | Product, command, and excluded source records, hashes, ordering, and preserved/processed paths. |
 | `command_events` | Ordered executed command vocabulary with source-photo linkage. |
 | `recognition_results` | Provider suggestions and explicit acceptance timestamp. |
+| `recognition_jobs` | Durable provider/model/policy and completed/remaining/failed batch progress. |
+| `recognition_job_items` | Per-item recognition boundary checkpoints used for safe restart/resume. |
 | `catalog_products` | Future normalized reusable product catalog boundary. |
 | `inventory_events` | Intake, location changes, and quantity deltas with source and time. |
 | `shopify_sync` | Draft IDs, status, retry/error data, media count, and idempotency key. |
 | `upload_attempts` | Per-attempt stage, outcome, error, and response audit. |
-| `settings` | Application settings boundary for future UI-managed configuration. |
+| `settings` | Durable active batch and per-batch/per-queue Review Item-ID cursors. |
 
 Indexes support batch item order, shelf lookup, upload queue, item photos, command stream, recognition history, and inventory history.
 

@@ -12,8 +12,9 @@ This repository is a working prototype based on **Canada VHS Inventory System Ve
 - SHA-256 original preservation, GPS-free processed JPEGs, collision-safe names, resume markers, and duplicate batch detection
 - Required manifests, warnings, command audit copies, work CSV, and SQLite records
 - CSV export/re-import strictly by immutable Item ID
-- Streamlit dashboard, importer/preview, command review, image grid, item editor, validation, recognition, keyboard-first Review, advanced diagnostics, Shopify dry-run, and logs
-- Mock recognition plus provider-neutral OpenAI, Gemini, and local-OCR adapter boundaries
+- Five-page Streamlit workflow: **Home, Import, Review, Publish, Settings & diagnostics**
+- Durable active-batch context, recognition progress/resume, and keyboard-first Review cursor
+- Deterministic mock recognition, live optional OpenAI vision, optional local Tesseract OCR, and a configured-but-stubbed Gemini boundary
 - Shopify draft-product boundary with SKU checks, staged media, inventory activation, checkpoints, dry-run default, and deliberate live confirmation
 - Synthetic QR-delimited demo generation and automated end-to-end tests
 
@@ -54,7 +55,7 @@ Generate a realistic synthetic camera roll:
 .venv/bin/snapims demo demo-data/camera-roll
 ```
 
-Then launch SnapIMS, open **Import batch**, enter the absolute path to `demo-data/camera-roll`, choose **Dry-run parser preview**, and then **Preserve and import batch**. See [DEMO.md](DEMO.md) for the expected files and database checks.
+Then launch SnapIMS, open **Import**, enter the absolute path to `demo-data/camera-roll`, choose **Dry-run parser preview**, and then **Preserve and import batch**. Continue through **Review** and **Publish**; see [DEMO.md](DEMO.md) for the complete five-page walkthrough.
 
 The equivalent command-line smoke path is:
 
@@ -106,6 +107,16 @@ Do not commit `.env`. AI keys and the Shopify token are read only from environme
 .venv/bin/ruff check .
 .venv/bin/mypy snapims --ignore-missing-imports
 ```
+
+## Safe source release
+
+Build a source archive only from Git-tracked artifacts:
+
+```bash
+.venv/bin/python -m snapims.release --root . --output dist/snapims-source.tar.gz
+```
+
+The command validates every member before creating the archive. It refuses environment files, credential-like content, databases, logs, caches, exports, backups, runtime inventory folders, and images outside the tracked synthetic `demo-data/camera-roll/` fixture set.
 
 ## Documentation
 
