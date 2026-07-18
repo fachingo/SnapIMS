@@ -82,7 +82,7 @@ def compute_next_action(db_file: Path, batch_id_value: str) -> NextAction:
     ]
     if unattempted:
         job = recognition_progress.latest_job(db_file, batch_id_value)
-        if job is not None and job.status == "INTERRUPTED":
+        if job is not None and job.status in {"RUNNING", "INTERRUPTED"}:
             return NextAction(
                 f"Resume recognition ({job.remaining} remaining, {job.failed} failed)",
                 f"{job.completed} of {job.total} item boundaries were committed safely.",

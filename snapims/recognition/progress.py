@@ -76,7 +76,7 @@ def start_or_resume_job(
     latest = latest_job(db_file, batch_id)
     can_resume = (
         latest is not None
-        and latest.status == "INTERRUPTED"
+        and latest.status in {"RUNNING", "INTERRUPTED"}
         and latest.provider == provider
         and latest.model_name == model_name
         and latest.only_missing_title == only_missing_title

@@ -96,3 +96,29 @@ def test_progress_is_durable_and_isolated_by_batch(tmp_path, data_paths) -> None
         )
         == "SECOND-ITEM"
     )
+
+
+def test_process_restart_resumes_job_left_running(tmp_path, data_paths) -> None:
+    result = process_batch(create_demo_batch(tmp_path / "camera"), paths=data_paths)
+    items = db.list_items(data_paths.db_file, batch_id_value=result.batch_id)
+    abandoned = progress.start_or_resume_job(
+        data_paths.db_file,
+        result.batch_id,
+        "mock",
+        "deterministic-mock",
+        items,
+        only_missing_title=False,
+        force_reprocess=False,
+    )
+    assert abandoned.status == "RUNNING"
+    assert active_batch.compute_next_action(
+        data_paths.db_file, result.batch_id
+    ).label.startswith("Resume recognition")
+
+    run_batch_recognition(data_paths.db_file, result.batch_id, MockRecognizer())
+
+    resumed = progress.latest_job(data_paths.db_file, result.batch_id)
+    assert resumed is not None
+    assert resumed.job_id == abandoned.job_id
+    assert resumed.status == "COMPLETED"
+    assert resumed.completed == resumed.total == len(items)
