@@ -19,6 +19,11 @@ from snapims.inventory import (
 from snapims.pipeline import parse_batch
 from snapims.processor import process_batch
 from snapims.recognition.review_ui import render_batch_details_section, render_review
+from snapims.shopify.publish import (
+    build_publish_queue,
+    create_selected_drafts,
+    simulate_selected,
+)
 from snapims.shopify.service import ShopifyService
 
 load_dotenv()
@@ -243,54 +248,78 @@ elif page == "Review":
 
 elif page == "Publish":
     st.title("Publish")
-    st.warning("Simulation is the default. SnapIMS never publishes products; live mode creates DRAFTS only.")
+    st.warning(
+        "Simulation is the default. SnapIMS never publishes products; live mode creates DRAFTS only."
+    )
     config = ShopifyConfig.from_env()
     service = ShopifyService(paths.db_file, config)
-    st.json(
-        {
-            "store_domain": config.store_domain or "not configured",
-            "api_version": config.api_version,
-            "inventory_location": config.location_id or "not configured",
-            "token": "configured" if config.access_token and config.access_token != "shpat_replace_me" else "not configured",
-            "mode": "SIMULATION / DRAFT ONLY",
-        }
-    )
     batches = db.list_batches(paths.db_file)
     if not batches:
         st.info("Import a batch first.")
-        items = []
+        batch_id_value = ""
+        queue = []
     else:
         batch_options = [row["batch_id"] for row in batches]
         batch_id_value = st.selectbox(
             "Batch",
             batch_options,
             index=active_batch_default_index(paths.db_file, batch_options),
-            key="shopify_dry_run_batch",
+            key="publish_batch",
         )
-        items = db.list_items(paths.db_file, batch_id_value=batch_id_value)
-    if items:
-        item_id_value = st.selectbox(
-            "Item", [item["item_id"] for item in items], key="shopify_dry_run_item"
+        queue = build_publish_queue(paths.db_file, batch_id_value)
+    if queue:
+        counts = {
+            state: sum(entry.state == state for entry in queue)
+            for state in ("Ready", "Blocked", "Drafted", "Failed")
+        }
+        for column, state in zip(st.columns(4), counts, strict=True):
+            column.metric(state, counts[state])
+        state_filter = st.segmented_control(
+            "Queue", ["Ready", "Blocked", "Drafted", "Failed"], default="Ready"
         )
-        remote_check = st.checkbox("Use credentials for read-only remote SKU check", value=False)
-        if st.button("Run Shopify dry-run", type="primary"):
-            report = service.dry_run(item_id_value, remote_check=remote_check)
-            st.json(
-                {
-                    "item_id": report.item_id, "ready": report.ready, "action": report.action,
-                    "images": report.image_count, "errors": report.errors, "warnings": report.warnings,
-                }
-            )
+        visible = [entry for entry in queue if entry.state == state_filter]
+        for entry in visible:
+            label = f"#{entry.sequence} · {entry.title}"
+            if entry.reasons:
+                label += " — " + "; ".join(entry.reasons)
+            st.write(label)
+            if entry.admin_url:
+                st.link_button("Open in Shopify", entry.admin_url)
+
+        selectable = [entry for entry in queue if entry.state in {"Ready", "Failed"}]
+        selected_ids = st.multiselect(
+            "Items selected for draft preparation",
+            [entry.item_id for entry in selectable],
+            default=[entry.item_id for entry in selectable],
+            format_func=lambda value: next(
+                entry.title for entry in selectable if entry.item_id == value
+            ),
+            key="publish_selected_items",
+        )
+        remote_check = st.checkbox("Check selected SKUs in Shopify (read-only)", value=False)
+        if st.button("Simulate selected drafts", type="primary"):
+            reports = simulate_selected(service, selected_ids, remote_check=remote_check)
+            for report in reports:
+                if report.ready:
+                    st.success(f"{report.item_id}: ready to create a draft")
+                else:
+                    st.error(f"{report.item_id}: {'; '.join(report.errors)}")
         with st.expander("Deliberate live DRAFT creation"):
-            phrase = st.text_input("Type CREATE DRAFT to enable the write button")
-            understand = st.checkbox("I understand this writes a draft product to Shopify")
-            if st.button("Create Shopify DRAFT", disabled=not (understand and phrase == "CREATE DRAFT")):
-                try:
-                    result = service.upload_draft(item_id_value, confirmed=True)
-                    st.success("Draft created. Publishing remains manual.")
-                    st.json(result)
-                except Exception as exc:
-                    st.error(str(exc))
+            phrase = st.text_input("Type CREATE SELECTED DRAFTS to enable the write button")
+            understand = st.checkbox(
+                "I confirm only the selected items will be written as Shopify drafts"
+            )
+            enabled = bool(selected_ids) and understand and phrase == "CREATE SELECTED DRAFTS"
+            if st.button("Create selected Shopify DRAFTS", disabled=not enabled):
+                outcomes = create_selected_drafts(service, selected_ids, confirmed=True)
+                for outcome in outcomes:
+                    if outcome.outcome == "DRAFTED":
+                        st.success(f"{outcome.item_id}: draft created")
+                    elif outcome.outcome == "SKIPPED_DRAFTED":
+                        st.info(f"{outcome.item_id}: existing draft retained")
+                    else:
+                        st.error(f"{outcome.item_id}: {outcome.message}")
+                st.rerun()
     elif batches:
         st.info("No items in this batch.")
 
@@ -299,22 +328,14 @@ elif page == "Publish":
     if not batches:
         st.info("Import a batch first.")
     else:
-        csv_batch_options = [row["batch_id"] for row in batches]
-        csv_selected = st.selectbox(
-            "Batch",
-            csv_batch_options,
-            index=active_batch_default_index(paths.db_file, csv_batch_options),
-            key="csv_workflow_batch",
+        destination = paths.processed / batch_id_value / "inventory_work.csv"
+        export_inventory_csv(paths.db_file, batch_id_value, destination)
+        st.download_button(
+            "Download current inventory_work.csv",
+            destination.read_bytes(),
+            file_name=f"{batch_id_value}-inventory_work.csv",
+            mime="text/csv",
         )
-        destination = paths.processed / csv_selected / "inventory_work.csv"
-        if st.button("Refresh inventory_work.csv"):
-            export_inventory_csv(paths.db_file, csv_selected, destination)
-            st.success(f"Exported {destination}")
-        if destination.exists():
-            st.download_button(
-                "Download inventory_work.csv", destination.read_bytes(),
-                file_name=f"{csv_selected}-inventory_work.csv", mime="text/csv",
-            )
         uploaded = st.file_uploader("Import edited inventory_work.csv", type="csv")
         if uploaded and st.button("Validate and import CSV", type="primary"):
             with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as temp:
@@ -322,7 +343,7 @@ elif page == "Publish":
                 temp_path = Path(temp.name)
             try:
                 count = import_inventory_csv(paths.db_file, temp_path, paths=paths)
-                export_inventory_csv(paths.db_file, csv_selected, destination)
+                export_inventory_csv(paths.db_file, batch_id_value, destination)
                 st.success(f"Updated {count} row(s) by Item ID. Row order was ignored.")
             except Exception as exc:
                 st.error(str(exc))

@@ -494,11 +494,10 @@ def test_review_and_publish_pages_default_to_active_batch_and_exclude_others(
     workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
     app = workspace.set_value("Publish").run()
     assert not app.exception
-    dry_run_batch = next(box for box in app.selectbox if box.key == "shopify_dry_run_batch")
+    dry_run_batch = next(box for box in app.selectbox if box.key == "publish_batch")
     assert dry_run_batch.value == batch_b.batch_id
-    dry_run_item = next(box for box in app.selectbox if box.key == "shopify_dry_run_item")
-    assert set(dry_run_item.options) == {item["item_id"] for item in items_b}
-    assert not set(dry_run_item.options) & {item["item_id"] for item in items_a}
+    publish_items = next(box for box in app.multiselect if box.key == "publish_selected_items")
+    assert not set(publish_items.options) & {item["item_id"] for item in items_a}
 
 
 def test_advanced_settings_keeps_workspace_diagnostics_reachable(
@@ -571,7 +570,7 @@ def test_synthetic_operator_completes_import_review_publish_without_diagnostics(
     workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
     app = workspace.set_value("Publish").run()
     dry_run_button = next(
-        button for button in app.button if button.label == "Run Shopify dry-run"
+        button for button in app.button if button.label == "Simulate selected drafts"
     )
     app = dry_run_button.click().run()
 
