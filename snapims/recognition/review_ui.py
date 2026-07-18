@@ -17,8 +17,8 @@ from snapims.recognition.review import (
     ACTION_ACCEPT,
     ACTION_ACCEPT_EDITED,
     ACTION_CANCEL_EDIT,
+    ACTION_DISCARD,
     ACTION_EDIT,
-    ACTION_MANUAL_REVIEW,
     ACTION_PHOTO_PREFIX,
     ACTION_PREVIOUS,
     ACTION_RETRY,
@@ -31,21 +31,23 @@ from snapims.recognition.review import (
 from snapims.recognition.service import (
     accept_edited_result,
     accept_result,
+    correct_item_location,
     mark_result_for_review,
-    reject_result,
     retry_recognition,
     run_batch_recognition,
     skip_result,
 )
 
-_STATUS_LABELS = {
-    repository.REVIEW_UNREVIEWED: "Unreviewed",
-    repository.REVIEW_REQUIRED: "Review required",
-    repository.REVIEW_ACCEPTED: "Accepted",
-    repository.REVIEW_REJECTED: "Rejected",
-    repository.REVIEW_SKIPPED: "Skipped",
-    repository.REVIEW_FAILED: "Failed",
-}
+
+def _stage_label(result: repository.StoredRecognitionResult) -> str:
+    """One operator-facing recognition stage (never publish/upload language)."""
+    if result.result_status == repository.RESULT_FAILED:
+        return repository.QUEUE_FAILED
+    if result.review_status == repository.REVIEW_ACCEPTED:
+        return repository.QUEUE_DONE
+    if result.review_status in (repository.REVIEW_REQUIRED, repository.REVIEW_REJECTED):
+        return repository.QUEUE_NEEDS_ATTENTION
+    return repository.QUEUE_TO_REVIEW
 
 
 def _provider_name(providers: dict[str, Any]) -> str:
@@ -90,7 +92,7 @@ def _shortcut_strip() -> None:
           <b>Esc</b> Cancel edit
           <b>⌘/Ctrl+Enter</b> Save edit
           <b>1–9</b> Photo
-          <b>F</b> Retry
+          <b>F</b> Retry (failed only)
         </div>
         """,
         unsafe_allow_html=True,
@@ -173,10 +175,8 @@ def _perform_action(
                 }
         elif action == ACTION_SKIP:
             skip_result(db_file, result_id)
-        elif action == ACTION_MANUAL_REVIEW:
+        elif action == ACTION_DISCARD:
             mark_result_for_review(db_file, result_id)
-        elif action == "reject":
-            reject_result(db_file, result_id)
         elif action == ACTION_RETRY:
             providers = recognizer_registry()
             with st.spinner(f"Retrying with {provider_name}…"):
@@ -226,22 +226,12 @@ def _render_photos(db_file: Path, item_id: str) -> None:
 
 def _render_status(entry: repository.ReviewQueueEntry, position: int, total: int) -> None:
     result = entry.result
-    status = (
-        "Failed"
-        if result.result_status == repository.RESULT_FAILED
-        else _STATUS_LABELS.get(result.review_status, result.review_status.title())
-    )
+    status = _stage_label(result)
     status_class = status.lower().replace(" ", "-")
-    review_badge = (
-        '<span class="status-badge review-required">Review required</span>'
-        if result.requires_review and status == "Unreviewed"
-        else ""
-    )
     st.markdown(
         f"""
         <div class="review-heading">
           <span class="status-badge {status_class}">{escape(status)}</span>
-          {review_badge}
           <span class="queue-position">{position} / {total}</span>
         </div>
         <div class="item-context">
@@ -423,9 +413,7 @@ def _overview_status_label(db_file: Path, item_id_value: str) -> str:
     stored = repository.latest_result_for_item(db_file, item_id_value)
     if stored is None:
         return "Not yet recognized"
-    if stored.result_status == repository.RESULT_FAILED:
-        return "Failed"
-    return _STATUS_LABELS.get(stored.review_status, stored.review_status.title())
+    return _stage_label(stored)
 
 
 def _run_batch_recognition_with_progress(
@@ -574,22 +562,47 @@ def _render_recognition_overview(
     return provider_name
 
 
-def _render_more(db_file: Path, item_id_value: str) -> None:
+def _render_more(
+    db_file: Path,
+    entry: repository.ReviewQueueEntry,
+    queue_item_ids: list[str],
+    provider_name: str,
+) -> None:
+    item_id_value = entry.result.item_id
     item = db.get_item(db_file, item_id_value)
     if item is None:
         return
+    can_discard = (
+        entry.result.result_status == repository.RESULT_SUCCEEDED
+        and entry.result.review_status != repository.REVIEW_ACCEPTED
+    )
     with st.expander("More", expanded=False):
+        if can_discard:
+            st.caption(
+                "Discard suggestion leaves this item reachable in Needs attention."
+            )
+            if st.button(
+                "Discard suggestion",
+                key=f"review_discard_{item_id_value}",
+                width="stretch",
+            ):
+                _perform_action(
+                    ACTION_DISCARD,
+                    db_file=db_file,
+                    entry=entry,
+                    queue_item_ids=queue_item_ids,
+                    provider_name=provider_name,
+                )
+            st.divider()
+        st.caption("Advanced item fields, moved here from the former Item editor page.")
         with st.form(f"review_more_{item_id_value}"):
-            st.caption("Advanced item fields, moved here from the former Item editor page.")
             first, second = st.columns(2)
             vendor = first.text_input("Vendor", value=item["vendor"])
             product_type = second.text_input("Product type", value=item["product_type"])
             tags = st.text_input("Tags (comma separated)", value=item["tags"])
             condition_notes = st.text_area("Condition notes", value=item["condition_notes"])
             description = st.text_area("Description", value=item["description"], height=120)
-            third, fourth = st.columns(2)
-            shelf = third.text_input("Shelf", value=item["shelf"])
-            pool_mode = fourth.selectbox(
+            pool_mode = st.selectbox(
                 "Inventory mode",
                 POOL_MODES,
                 index=POOL_MODES.index(item["pool_mode"]) if item["pool_mode"] in POOL_MODES else 0,
@@ -607,7 +620,6 @@ def _render_more(db_file: Path, item_id_value: str) -> None:
                         "tags": tags,
                         "condition_notes": condition_notes,
                         "description": description,
-                        "shelf": shelf.strip().upper(),
                         "pool_mode": pool_mode,
                         "review": int(physical_review),
                     },
@@ -615,6 +627,23 @@ def _render_more(db_file: Path, item_id_value: str) -> None:
                 validate_items(db_file, [item_id_value])
                 st.success("Saved advanced fields.")
                 st.rerun()
+        st.divider()
+        st.caption(
+            "Shelf is display-only above. Correcting the location requires a "
+            "valid shelf (A1-J10 or Q1) and a reason, and always records one "
+            "auditable inventory event."
+        )
+        with st.form(f"review_correct_location_{item_id_value}"):
+            new_shelf = st.text_input("New shelf", value=item["shelf"])
+            reason = st.text_input("Reason for correction")
+            if st.form_submit_button("Correct location"):
+                try:
+                    correct_item_location(db_file, item_id_value, new_shelf, reason)
+                except (ValueError, KeyError) as exc:
+                    st.error(str(exc))
+                else:
+                    st.success(f"Shelf corrected to {new_shelf.strip().upper()}.")
+                    st.rerun()
 
 
 def render_review(paths: DataPaths) -> None:
@@ -665,11 +694,15 @@ def render_review(paths: DataPaths) -> None:
     edit_mode = bool(st.session_state.get("review_edit_mode", False))
     busy = bool(st.session_state.get("review_busy", False))
 
+    is_failed = entry.result.result_status == repository.RESULT_FAILED
+    is_accepted = entry.result.review_status == repository.REVIEW_ACCEPTED
     event = keyboard_shortcut_event(key=f"review_keyboard_{selected_item}")
     decision = keyboard_decision(
         event,
         last_event_id=str(st.session_state.get("review_last_keyboard_event", "")),
         edit_mode=edit_mode,
+        is_failed=is_failed,
+        is_accepted=is_accepted,
     )
     st.session_state["review_last_keyboard_event"] = decision.event_id
     if decision.action:
@@ -711,47 +744,55 @@ def render_review(paths: DataPaths) -> None:
                     provider_name=provider_name,
                 )
         else:
-            failed = entry.result.result_status == repository.RESULT_FAILED
-            accept_col, skip_col, review_col = st.columns(3)
-            if accept_col.button(
-                "Accept",
-                type="primary",
+            if is_failed:
+                if st.button("Retry", type="primary", width="stretch", disabled=busy):
+                    try:
+                        _perform_action(
+                            ACTION_RETRY,
+                            db_file=paths.db_file,
+                            entry=entry,
+                            queue_item_ids=queue_item_ids,
+                            provider_name=provider_name,
+                        )
+                    except Exception as exc:
+                        st.error(str(exc))
+            elif not is_accepted:
+                accept_col, edit_col, later_col = st.columns(3)
+                if accept_col.button(
+                    "Accept & next",
+                    type="primary",
+                    width="stretch",
+                    disabled=busy,
+                ):
+                    _perform_action(
+                        ACTION_ACCEPT,
+                        db_file=paths.db_file,
+                        entry=entry,
+                        queue_item_ids=queue_item_ids,
+                        provider_name=provider_name,
+                    )
+                if edit_col.button("Edit", width="stretch", disabled=busy):
+                    _perform_action(
+                        ACTION_EDIT,
+                        db_file=paths.db_file,
+                        entry=entry,
+                        queue_item_ids=queue_item_ids,
+                        provider_name=provider_name,
+                    )
+                if later_col.button("Later", width="stretch", disabled=busy):
+                    _perform_action(
+                        ACTION_SKIP,
+                        db_file=paths.db_file,
+                        entry=entry,
+                        queue_item_ids=queue_item_ids,
+                        provider_name=provider_name,
+                    )
+            if st.button(
+                "← Previous",
                 width="stretch",
-                disabled=busy or failed,
+                disabled=busy,
+                key=f"review_previous_{entry.result.item_id}",
             ):
-                _perform_action(
-                    ACTION_ACCEPT,
-                    db_file=paths.db_file,
-                    entry=entry,
-                    queue_item_ids=queue_item_ids,
-                    provider_name=provider_name,
-                )
-            if skip_col.button(
-                "Skip",
-                width="stretch",
-                disabled=busy or failed,
-            ):
-                _perform_action(
-                    ACTION_SKIP,
-                    db_file=paths.db_file,
-                    entry=entry,
-                    queue_item_ids=queue_item_ids,
-                    provider_name=provider_name,
-                )
-            if review_col.button(
-                "Manual review",
-                width="stretch",
-                disabled=busy or failed,
-            ):
-                _perform_action(
-                    ACTION_MANUAL_REVIEW,
-                    db_file=paths.db_file,
-                    entry=entry,
-                    queue_item_ids=queue_item_ids,
-                    provider_name=provider_name,
-                )
-            previous_col, edit_col, retry_col, reject_col = st.columns(4)
-            if previous_col.button("← Previous", width="stretch", disabled=busy):
                 _perform_action(
                     ACTION_PREVIOUS,
                     db_file=paths.db_file,
@@ -759,42 +800,7 @@ def render_review(paths: DataPaths) -> None:
                     queue_item_ids=queue_item_ids,
                     provider_name=provider_name,
                 )
-            if edit_col.button(
-                "Edit",
-                width="stretch",
-                disabled=busy or failed,
-            ):
-                _perform_action(
-                    ACTION_EDIT,
-                    db_file=paths.db_file,
-                    entry=entry,
-                    queue_item_ids=queue_item_ids,
-                    provider_name=provider_name,
-                )
-            if retry_col.button("Retry", width="stretch", disabled=busy):
-                try:
-                    _perform_action(
-                        ACTION_RETRY,
-                        db_file=paths.db_file,
-                        entry=entry,
-                        queue_item_ids=queue_item_ids,
-                        provider_name=provider_name,
-                    )
-                except Exception as exc:
-                    st.error(str(exc))
-            if reject_col.button(
-                "Reject",
-                width="stretch",
-                disabled=busy or failed,
-            ):
-                _perform_action(
-                    "reject",
-                    db_file=paths.db_file,
-                    entry=entry,
-                    queue_item_ids=queue_item_ids,
-                    provider_name=provider_name,
-                )
-        _render_more(paths.db_file, entry.result.item_id)
+        _render_more(paths.db_file, entry, queue_item_ids, provider_name)
         with st.expander("Details", expanded=False):
             st.caption(f"Result ID: {entry.result.recognition_result_id}")
             st.caption(

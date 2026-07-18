@@ -6,7 +6,7 @@ from typing import Any
 ACTION_ACCEPT = "accept"
 ACTION_SKIP = "skip"
 ACTION_PREVIOUS = "previous"
-ACTION_MANUAL_REVIEW = "manual_review"
+ACTION_DISCARD = "discard"
 ACTION_EDIT = "edit"
 ACTION_CANCEL_EDIT = "cancel_edit"
 ACTION_ACCEPT_EDITED = "accept_edited"
@@ -36,6 +36,8 @@ def keyboard_decision(
     *,
     last_event_id: str,
     edit_mode: bool,
+    is_failed: bool = False,
+    is_accepted: bool = False,
 ) -> KeyboardDecision:
     if not event:
         return KeyboardDecision(None, last_event_id)
@@ -55,6 +57,12 @@ def keyboard_decision(
     if action == ACTION_ACCEPT and edit_mode:
         action = None
     if action == ACTION_CANCEL_EDIT and not edit_mode:
+        action = None
+    # Retry is only a valid action on a failed attempt; Accept/Edit/Later only
+    # apply to a successful unresolved item.
+    if action == ACTION_RETRY and not is_failed:
+        action = None
+    if action in (ACTION_ACCEPT, ACTION_EDIT, ACTION_SKIP) and (is_failed or is_accepted):
         action = None
     return KeyboardDecision(action, event_id)
 

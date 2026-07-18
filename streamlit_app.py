@@ -39,11 +39,10 @@ st.markdown(
       .queue-position {margin-left:auto;font-weight:700;color:#475569;}
       .status-badge {display:inline-block;border-radius:999px;padding:3px 9px;font-size:.72rem;
         font-weight:800;text-transform:uppercase;letter-spacing:.04em;background:#e2e8f0;color:#334155;}
-      .status-badge.accepted {background:#dcfce7;color:#166534;}
-      .status-badge.rejected,.status-badge.failed {background:#fee2e2;color:#991b1b;}
-      .status-badge.skipped {background:#fef3c7;color:#92400e;}
-      .status-badge.review-required {background:#ffedd5;color:#9a3412;}
-      .status-badge.unreviewed {background:#dbeafe;color:#1e40af;}
+      .status-badge.done {background:#dcfce7;color:#166534;}
+      .status-badge.failed {background:#fee2e2;color:#991b1b;}
+      .status-badge.needs-attention {background:#ffedd5;color:#9a3412;}
+      .status-badge.to-review {background:#dbeafe;color:#1e40af;}
       .item-context {font-size:.77rem;color:#64748b;border-bottom:1px solid #e2e8f0;
         padding-bottom:7px;margin-bottom:8px;}
       .suggestion-title {font-size:1.55rem;font-weight:800;line-height:1.1;margin:4px 0 10px;}

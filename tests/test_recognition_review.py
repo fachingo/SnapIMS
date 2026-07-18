@@ -14,6 +14,10 @@ from snapims.recognition.providers import MockRecognizer
 from snapims.recognition.review import (
     ACTION_ACCEPT,
     ACTION_ACCEPT_EDITED,
+    ACTION_DISCARD,
+    ACTION_EDIT,
+    ACTION_RETRY,
+    ACTION_SKIP,
     current_item_id,
     keyboard_decision,
     next_item_id,
@@ -22,8 +26,10 @@ from snapims.recognition.review import (
 from snapims.recognition.service import (
     accept_edited_result,
     accept_result,
+    correct_item_location,
     mark_result_for_review,
     reject_result,
+    retry_recognition,
     review_flag_reconciliation_report,
     run_batch_recognition,
     run_recognition,
@@ -450,3 +456,172 @@ def test_review_schema_migrates_existing_recognition_rows(tmp_path) -> None:
         assert "release_year" in {
             row["name"] for row in connection.execute("PRAGMA table_info(items)")
         }
+
+
+def _insert_items(batch_id: str, count: int, start_sequence: int, paths) -> list[dict]:
+    return [
+        _insert_item(batch_id, start_sequence + offset, paths) for offset in range(count)
+    ]
+
+
+def test_100_item_queue_completes_without_orphans_or_missing_items(review_batch) -> None:
+    """Simulate a 100-item operator session across every queue outcome and
+    confirm every item is reachable in exactly one queue with no losses."""
+    batch_id, seed_items, paths = review_batch
+    items = seed_items + _insert_items(batch_id, 98, 3, paths)
+    assert len(items) == 100
+
+    for index, item in enumerate(items):
+        outcome = index % 4
+        if outcome == 3:
+            repository.save_failure(
+                paths.db_file,
+                item["item_id"],
+                provider="mock",
+                model_name="deterministic-mock",
+                created_at="2026-07-16T20:00:00",
+                error_message="Unreadable cover",
+            )
+            continue
+        result_id, _ = run_recognition(paths.db_file, item["item_id"], MockRecognizer())
+        if outcome == 0:
+            accept_result(paths.db_file, result_id)
+        elif outcome == 1:
+            skip_result(paths.db_file, result_id)
+        else:
+            mark_result_for_review(paths.db_file, result_id)
+
+    to_review = repository.list_review_queue(paths.db_file, batch_id, repository.QUEUE_TO_REVIEW)
+    needs_attention = repository.list_review_queue(
+        paths.db_file, batch_id, repository.QUEUE_NEEDS_ATTENTION
+    )
+    failed = repository.list_review_queue(paths.db_file, batch_id, repository.QUEUE_FAILED)
+    done = repository.list_review_queue(paths.db_file, batch_id, repository.QUEUE_DONE)
+
+    all_queued_ids = (
+        [entry.result.item_id for entry in to_review]
+        + [entry.result.item_id for entry in needs_attention]
+        + [entry.result.item_id for entry in failed]
+        + [entry.result.item_id for entry in done]
+    )
+    assert len(all_queued_ids) == len(items)
+    assert len(set(all_queued_ids)) == len(items), "no item may appear in more than one queue"
+    assert set(all_queued_ids) == {item["item_id"] for item in items}
+
+    # Walking "next" across the full To review + Needs attention queues must
+    # reach every item deterministically without raising or losing position.
+    combined_ids = [entry.result.item_id for entry in to_review] + [
+        entry.result.item_id for entry in needs_attention
+    ]
+    cursor = current_item_id(combined_ids, None)
+    visited = set()
+    for _ in range(len(combined_ids)):
+        assert cursor is not None
+        visited.add(cursor)
+        cursor = next_item_id(combined_ids, cursor)
+    assert visited == set(combined_ids)
+
+
+def test_physical_review_survives_discard_and_retry(review_batch) -> None:
+    _, items, paths = review_batch
+    item_id = items[1]["item_id"]  # QR-review item; review flag already 1.
+    assert db.get_item(paths.db_file, item_id)["review"] == 1
+
+    result_id, _ = run_recognition(paths.db_file, item_id, MockRecognizer())
+    mark_result_for_review(paths.db_file, result_id)
+    after_discard = db.get_item(paths.db_file, item_id)
+    assert after_discard is not None and after_discard["review"] == 1
+
+    retry_recognition(paths.db_file, item_id, MockRecognizer())
+    after_retry = db.get_item(paths.db_file, item_id)
+    assert after_retry is not None and after_retry["review"] == 1
+
+
+def test_correct_item_location_records_one_event_and_blocks_invalid_input(
+    review_batch,
+) -> None:
+    _, items, paths = review_batch
+    item_id = items[0]["item_id"]
+    original_shelf = db.get_item(paths.db_file, item_id)["shelf"]
+
+    with pytest.raises(ValueError):
+        correct_item_location(paths.db_file, item_id, "Z9", "Bad shelf format")
+    with pytest.raises(ValueError):
+        correct_item_location(paths.db_file, item_id, "B7", "")
+    with pytest.raises(ValueError):
+        correct_item_location(paths.db_file, item_id, original_shelf, "No-op reason")
+
+    unchanged = db.get_item(paths.db_file, item_id)
+    assert unchanged["shelf"] == original_shelf
+    with db.connect(paths.db_file) as connection:
+        corrected_before = connection.execute(
+            "SELECT * FROM inventory_events WHERE item_id = ? AND event_type = 'LOCATION_CORRECTED'",
+            (item_id,),
+        ).fetchall()
+    assert len(corrected_before) == 0
+
+    correct_item_location(paths.db_file, item_id, "Q1", "Moved to quarantine shelf")
+
+    corrected = db.get_item(paths.db_file, item_id)
+    assert corrected["shelf"] == "Q1"
+    with db.connect(paths.db_file) as connection:
+        events = connection.execute(
+            "SELECT * FROM inventory_events WHERE item_id = ? AND event_type = 'LOCATION_CORRECTED'",
+            (item_id,),
+        ).fetchall()
+    assert len(events) == 1
+    assert events[0]["from_location"] == original_shelf
+    assert events[0]["to_location"] == "Q1"
+    assert events[0]["notes"] == "Moved to quarantine shelf"
+
+
+def test_keyboard_retry_is_ignored_unless_item_has_failed() -> None:
+    not_failed = keyboard_decision(
+        {"id": "evt-1", "key": "f", "typing": False},
+        last_event_id="",
+        edit_mode=False,
+        is_failed=False,
+    )
+    failed = keyboard_decision(
+        {"id": "evt-2", "key": "f", "typing": False},
+        last_event_id="evt-1",
+        edit_mode=False,
+        is_failed=True,
+    )
+    assert not_failed.action is None
+    assert failed.action == ACTION_RETRY
+
+
+def test_keyboard_accept_edit_later_are_ignored_once_item_has_failed() -> None:
+    for key, expected_action in (("Enter", ACTION_ACCEPT), ("e", ACTION_EDIT), ("ArrowRight", ACTION_SKIP)):
+        not_failed = keyboard_decision(
+            {"id": f"evt-{key}-1", "key": key, "typing": False},
+            last_event_id="",
+            edit_mode=False,
+            is_failed=False,
+        )
+        failed = keyboard_decision(
+            {"id": f"evt-{key}-2", "key": key, "typing": False},
+            last_event_id=f"evt-{key}-1",
+            edit_mode=False,
+            is_failed=True,
+        )
+        assert not_failed.action == expected_action
+        assert failed.action is None
+
+
+def test_discard_action_constant_maps_to_manual_review_status(review_batch) -> None:
+    """The single UI-facing Discard suggestion action leaves the item
+    reachable in Needs attention (REVIEW_REQUIRED), never rejected/lost."""
+    _, items, paths = review_batch
+    result_id, _ = run_recognition(paths.db_file, items[0]["item_id"], MockRecognizer())
+    assert ACTION_DISCARD == "discard"
+
+    mark_result_for_review(paths.db_file, result_id)
+
+    stored = repository.get_result(paths.db_file, result_id)
+    assert stored is not None and stored.review_status == repository.REVIEW_REQUIRED
+    needs_attention = repository.list_review_queue(
+        paths.db_file, items[0]["batch_id"], repository.QUEUE_NEEDS_ATTENTION
+    )
+    assert items[0]["item_id"] in {entry.result.item_id for entry in needs_attention}

@@ -93,7 +93,7 @@ def test_review_accept_advances_to_next_item_by_item_id(
     app = _run_review_app(data_paths, monkeypatch)
     assert items[0]["item_id"] in _item_context_text(app)
 
-    app = next(button for button in app.button if button.label == "Accept").click().run()
+    app = next(button for button in app.button if button.label == "Accept & next").click().run()
 
     assert not app.exception
     accepted = repository.latest_result_for_item(data_paths.db_file, items[0]["item_id"])
@@ -129,6 +129,182 @@ def test_review_edit_and_save_updates_item_and_advances(
     assert items[1]["item_id"] in _item_context_text(app)
 
 
+def test_review_primary_actions_are_exactly_accept_edit_later_with_no_retry(
+    tmp_path: Path, monkeypatch, data_paths
+) -> None:
+    """A successful unresolved item shows exactly the three primary actions
+    plus Previous; Retry must not appear until the item has failed."""
+    result = process_batch(create_demo_batch(tmp_path / "camera"), paths=data_paths)
+    run_batch_recognition(data_paths.db_file, result.batch_id, MockRecognizer())
+
+    app = _run_review_app(data_paths, monkeypatch)
+
+    labels = [button.label for button in app.button]
+    assert labels.count("Accept & next") == 1
+    assert labels.count("Edit") == 1
+    assert labels.count("Later") == 1
+    assert labels.count("← Previous") == 1
+    assert "Retry" not in labels
+    assert "Manual review" not in labels
+    assert "Reject" not in labels
+
+
+def test_review_status_shows_single_stage_badge_not_duplicated(
+    tmp_path: Path, monkeypatch, data_paths
+) -> None:
+    """One stage badge (queue name) plus uncertainty — never Unreviewed +
+    Review required together, and never publish language."""
+    result = process_batch(create_demo_batch(tmp_path / "camera"), paths=data_paths)
+    items = db.list_items(data_paths.db_file, batch_id_value=result.batch_id)
+
+    class _RequiresReviewRecognizer(MockRecognizer):
+        def recognize(self, item, images):
+            base = super().recognize(item, images)
+            return base.__class__(
+                suggested_title=base.suggested_title,
+                edition=base.edition,
+                distributor=base.distributor,
+                year=base.year,
+                barcode_candidates=base.barcode_candidates,
+                confidence=0.2,
+                provider_name=base.provider_name,
+                requires_review=True,
+                uncertainty_reasons=("Low confidence cover match",),
+            )
+
+    run_recognition(data_paths.db_file, items[0]["item_id"], _RequiresReviewRecognizer())
+
+    app = _run_review_app(data_paths, monkeypatch)
+    heading_markup = next(
+        str(element.value)
+        for element in app.markdown
+        if 'class="review-heading"' in str(element.value)
+    )
+    assert heading_markup.count("status-badge") == 1
+    assert "To review" in heading_markup
+    assert "Review required" not in heading_markup
+    assert "Unreviewed" not in heading_markup
+    assert "Published" not in heading_markup
+    warning_text = " ".join(str(element.value) for element in app.warning)
+    assert "Low confidence cover match" in warning_text
+
+
+def test_review_done_stage_is_not_mislabeled_published_and_shows_validation(
+    tmp_path: Path, monkeypatch, data_paths
+) -> None:
+    """Accepting recognition marks Done, not Published; incomplete listing
+    validation errors remain visible and fields stay editable under More."""
+    result = process_batch(create_demo_batch(tmp_path / "camera"), paths=data_paths)
+    items = db.list_items(data_paths.db_file, batch_id_value=result.batch_id)
+    run_batch_recognition(data_paths.db_file, result.batch_id, MockRecognizer())
+    stored = repository.latest_result_for_item(data_paths.db_file, items[0]["item_id"])
+    assert stored is not None
+    accept_result(data_paths.db_file, stored.recognition_result_id)
+
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(data_paths.root))
+    app = AppTest.from_file("streamlit_app.py", default_timeout=30).run()
+    workspace = next(radio for radio in app.radio if radio.key == "workspace_page")
+    workspace.set_value("Review").run()
+    queue = next(select for select in app.selectbox if select.label == "Queue")
+    app = queue.set_value(repository.QUEUE_DONE).run()
+
+    assert not app.exception
+    heading_markup = " ".join(
+        str(element.value) for element in app.markdown if "review-heading" in str(element.value)
+    )
+    assert "Done" in heading_markup
+    assert "Published" not in heading_markup
+    assert "Accept & next" not in [button.label for button in app.button]
+    page_text = " ".join(
+        str(element.value)
+        for collection in (app.markdown, app.error, app.caption, app.warning)
+        for element in collection
+    ).lower()
+    assert "published" not in page_text
+    # Incomplete accepted items still surface validation problems inline.
+    assert app.error
+    assert any(expander.label == "More" for expander in app.expander)
+
+
+def test_review_discard_suggestion_lives_under_more_and_keeps_physical_review(
+    tmp_path: Path, monkeypatch, data_paths
+) -> None:
+    result = process_batch(create_demo_batch(tmp_path / "camera"), paths=data_paths)
+    items = db.list_items(data_paths.db_file, batch_id_value=result.batch_id)
+    db.update_item(data_paths.db_file, items[0]["item_id"], {"review": 1})
+    run_batch_recognition(data_paths.db_file, result.batch_id, MockRecognizer())
+
+    app = _run_review_app(data_paths, monkeypatch)
+    assert any(expander.label == "More" for expander in app.expander)
+    discard_button = next(
+        button for button in app.button if button.label == "Discard suggestion"
+    )
+    app = discard_button.click().run()
+
+    assert not app.exception
+    latest = repository.latest_result_for_item(data_paths.db_file, items[0]["item_id"])
+    assert latest is not None
+    assert latest.review_status == repository.REVIEW_REQUIRED
+    needs_attention = repository.list_review_queue(
+        data_paths.db_file, result.batch_id, repository.QUEUE_NEEDS_ATTENTION
+    )
+    assert items[0]["item_id"] in {entry.result.item_id for entry in needs_attention}
+    item_after = db.get_item(data_paths.db_file, items[0]["item_id"])
+    assert item_after is not None
+    assert item_after["review"] == 1
+
+
+def test_review_shelf_is_display_only_and_correction_requires_reason(
+    tmp_path: Path, monkeypatch, data_paths
+) -> None:
+    result = process_batch(create_demo_batch(tmp_path / "camera"), paths=data_paths)
+    items = db.list_items(data_paths.db_file, batch_id_value=result.batch_id)
+    run_batch_recognition(data_paths.db_file, result.batch_id, MockRecognizer())
+
+    app = _run_review_app(data_paths, monkeypatch)
+    assert not any(text_input.label == "Shelf" for text_input in app.text_input)
+    new_shelf_input = next(
+        text_input for text_input in app.text_input if text_input.label == "New shelf"
+    )
+
+    # Blocked: a reason is required even for an otherwise-valid shelf.
+    app = new_shelf_input.set_value("B7").run()
+    correct_button = next(
+        button for button in app.button if button.label == "Correct location"
+    )
+    app = correct_button.click().run()
+    assert not app.exception
+    unchanged_item = db.get_item(data_paths.db_file, items[0]["item_id"])
+    assert unchanged_item is not None
+    assert unchanged_item["shelf"] != "B7"
+
+    # Allowed: a valid shelf plus a reason records one inventory event.
+    reason_input = next(
+        text_input for text_input in app.text_input if text_input.label == "Reason for correction"
+    )
+    app = reason_input.set_value("Relocated during shelf audit").run()
+    new_shelf_input = next(
+        text_input for text_input in app.text_input if text_input.label == "New shelf"
+    )
+    app = new_shelf_input.set_value("B7").run()
+    correct_button = next(
+        button for button in app.button if button.label == "Correct location"
+    )
+    app = correct_button.click().run()
+
+    assert not app.exception
+    corrected_item = db.get_item(data_paths.db_file, items[0]["item_id"])
+    assert corrected_item is not None
+    assert corrected_item["shelf"] == "B7"
+    with db.connect(data_paths.db_file) as connection:
+        events = connection.execute(
+            "SELECT * FROM inventory_events WHERE item_id = ? AND event_type = 'LOCATION_CORRECTED'",
+            (items[0]["item_id"],),
+        ).fetchall()
+    assert len(events) == 1
+    assert events[0]["notes"] == "Relocated during shelf audit"
+
+
 def test_review_later_keeps_item_reachable_in_to_review(
     tmp_path: Path, monkeypatch, data_paths
 ) -> None:
@@ -137,7 +313,7 @@ def test_review_later_keeps_item_reachable_in_to_review(
     run_batch_recognition(data_paths.db_file, result.batch_id, MockRecognizer())
 
     app = _run_review_app(data_paths, monkeypatch)
-    app = next(button for button in app.button if button.label == "Skip").click().run()
+    app = next(button for button in app.button if button.label == "Later").click().run()
 
     assert not app.exception
     to_review = repository.list_review_queue(
@@ -385,7 +561,9 @@ def test_synthetic_operator_completes_import_review_publish_without_diagnostics(
 
     items = db.list_items(data_paths.db_file, batch_id_value=batch_id)
     for _ in items:
-        accept_button = next(button for button in app.button if button.label == "Accept")
+        accept_button = next(
+            button for button in app.button if button.label == "Accept & next"
+        )
         app = accept_button.click().run()
         assert not app.exception
 
