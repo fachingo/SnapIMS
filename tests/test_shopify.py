@@ -15,12 +15,24 @@ from snapims.shopify.service import ShopifyService
 
 
 class FakeShopifyTransport:
-    def __init__(self, *, duplicate_sku: bool = False) -> None:
+    def __init__(
+        self, *, duplicate_sku: bool = False, fail_attach_once: bool = False
+    ) -> None:
         self.duplicate_sku = duplicate_sku
+        self.fail_attach_once = fail_attach_once
         self.operations: list[str] = []
         self.uploads: list[Path] = []
+        self.variables: dict[str, list[dict[str, Any]]] = {}
 
     def graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        operation = next(
+            (name for name in (
+                "VariantBySku", "CreateDraft", "ConfigureVariant", "ActivateInventory",
+                "StageImages", "AttachMedia",
+            ) if name in query),
+            "unknown",
+        )
+        self.variables.setdefault(operation, []).append(variables)
         if "VariantBySku" in query:
             self.operations.append("sku_check")
             nodes = []
@@ -101,6 +113,9 @@ class FakeShopifyTransport:
             }
         if "AttachMedia" in query:
             self.operations.append("attach_media")
+            if self.fail_attach_once:
+                self.fail_attach_once = False
+                raise RuntimeError("simulated media failure")
             return {
                 "data": {
                     "productUpdate": {
@@ -209,3 +224,67 @@ def test_shopify_mock_upload_checkpoints_and_finishes_as_draft(tmp_path, data_pa
             "SELECT status, step FROM upload_attempts WHERE item_id=?", (item_id,)
         ).fetchone()
         assert tuple(attempt) == ("SUCCESS", "attach_media")
+
+
+def test_shopify_payload_is_draft_and_contains_reviewed_inventory_data(
+    tmp_path, data_paths
+) -> None:
+    item_id = _ready_item(tmp_path, data_paths)
+    db.update_item(
+        data_paths.db_file,
+        item_id,
+        {
+            "description": "Test description",
+            "vendor": "Canada VHS",
+            "product_type": "VHS Tape",
+            "tags": "horror, vintage",
+            "barcode": "123456789012",
+            "quantity": 3,
+        },
+    )
+    transport = FakeShopifyTransport()
+    service = ShopifyService(
+        data_paths.db_file, _config(), ShopifyClient(_config(), transport=transport)
+    )
+
+    service.upload_draft(item_id, confirmed=True)
+
+    product = transport.variables["CreateDraft"][0]["product"]
+    assert product == {
+        "title": "Synthetic VHS Test Tape",
+        "descriptionHtml": "Test description",
+        "vendor": "Canada VHS",
+        "productType": "VHS Tape",
+        "tags": ["horror", "vintage"],
+        "status": "DRAFT",
+    }
+    variant = transport.variables["ConfigureVariant"][0]["variants"][0]
+    assert variant["price"] == "12.99"
+    assert variant["barcode"] == "123456789012"
+    assert variant["inventoryItem"]["sku"] == item_id
+    inventory = transport.variables["ActivateInventory"][0]
+    assert inventory["available"] == 3
+    assert inventory["locationId"] == _config().location_id
+    assert inventory["key"]
+
+
+def test_shopify_retry_after_partial_failure_does_not_create_duplicate_product(
+    tmp_path, data_paths
+) -> None:
+    item_id = _ready_item(tmp_path, data_paths)
+    transport = FakeShopifyTransport(fail_attach_once=True)
+    service = ShopifyService(
+        data_paths.db_file, _config(), ShopifyClient(_config(), transport=transport)
+    )
+
+    with pytest.raises(RuntimeError, match="simulated media failure"):
+        service.upload_draft(item_id, confirmed=True)
+    failed = db.get_item(data_paths.db_file, item_id)
+    assert failed["upload_status"] == "FAILED"
+    assert failed["shopify_product_id"] == "gid://shopify/Product/1"
+
+    result = service.upload_draft(item_id, confirmed=True)
+
+    assert result["status"] == "UPLOADED_AS_DRAFT"
+    assert transport.operations.count("create_product") == 1
+    assert db.get_item(data_paths.db_file, item_id)["upload_status"] == "UPLOADED"

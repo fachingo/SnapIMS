@@ -350,7 +350,12 @@ elif page == "Publish":
                 temp.write(uploaded.getvalue())
                 temp_path = Path(temp.name)
             try:
-                count = import_inventory_csv(paths.db_file, temp_path, paths=paths)
+                count = import_inventory_csv(
+                    paths.db_file,
+                    temp_path,
+                    paths=paths,
+                    expected_batch_id=batch_id_value,
+                )
                 export_inventory_csv(paths.db_file, batch_id_value, destination)
                 st.success(f"Updated {count} row(s) by Item ID. Row order was ignored.")
             except Exception as exc:

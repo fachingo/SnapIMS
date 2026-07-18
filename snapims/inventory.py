@@ -100,7 +100,13 @@ def export_inventory_csv(db_file: Path, batch_id: str, destination: Path) -> Pat
     return destination
 
 
-def import_inventory_csv(db_file: Path, csv_path: Path, *, paths: DataPaths | None = None) -> int:
+def import_inventory_csv(
+    db_file: Path,
+    csv_path: Path,
+    *,
+    paths: DataPaths | None = None,
+    expected_batch_id: str | None = None,
+) -> int:
     if paths:
         db.backup_database(paths, "before-csv-import")
     with csv_path.open("r", newline="", encoding="utf-8-sig") as handle:
@@ -121,6 +127,17 @@ def import_inventory_csv(db_file: Path, csv_path: Path, *, paths: DataPaths | No
     unknown = [identifier for identifier in identifiers if identifier not in current]
     if unknown:
         raise CSVImportError(f"Unknown Item ID: {unknown[0]}")
+    if expected_batch_id is not None:
+        wrong_batch = [
+            identifier
+            for identifier in identifiers
+            if current[identifier]["batch_id"] != expected_batch_id
+        ]
+        if wrong_batch:
+            raise CSVImportError(
+                f"Item ID does not belong to selected batch {expected_batch_id}: "
+                f"{wrong_batch[0]}"
+            )
 
     prepared: list[tuple[dict[str, Any], str, dict[str, Any]]] = []
     for row in rows:

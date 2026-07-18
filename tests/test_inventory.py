@@ -72,6 +72,29 @@ def test_duplicate_item_id_is_rejected(tmp_path, data_paths) -> None:
         import_inventory_csv(data_paths.db_file, edited)
 
 
+def test_csv_import_cannot_modify_an_item_outside_selected_batch(tmp_path, data_paths) -> None:
+    first = process_batch(create_demo_batch(tmp_path / "first"), paths=data_paths)
+    second_source = create_demo_batch(tmp_path / "second")
+    product = sorted(second_source.glob("*.jpg"))[2]
+    product.write_bytes(product.read_bytes() + b"distinct-batch")
+    second = process_batch(second_source, paths=data_paths)
+    rows = _read_csv(first.work_csv)
+    foreign_item = db.list_items(data_paths.db_file, batch_id_value=second.batch_id)[0]
+    rows[0]["Item ID"] = foreign_item["item_id"]
+    rows[0]["Title"] = "Must not cross batch boundary"
+    edited = tmp_path / "cross-batch.csv"
+    _write_csv(edited, rows)
+
+    with pytest.raises(CSVImportError, match="does not belong to selected batch"):
+        import_inventory_csv(
+            data_paths.db_file,
+            edited,
+            expected_batch_id=first.batch_id,
+        )
+
+    assert db.get_item(data_paths.db_file, foreign_item["item_id"])["title"] != rows[0]["Title"]
+
+
 def test_validation_catches_bad_title_price_quantity_barcode_and_shelf(tmp_path, data_paths) -> None:
     _import_demo(tmp_path, data_paths)
     item = db.list_items(data_paths.db_file)[0]
