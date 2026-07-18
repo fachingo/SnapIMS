@@ -10,6 +10,7 @@ import streamlit as st
 from snapims import active_batch, db
 from snapims.config import DataPaths
 from snapims.inventory import CONDITIONS, POOL_MODES, validate_items
+from snapims.recognition import progress as durable_progress
 from snapims.recognition import repository
 from snapims.recognition.keyboard import keyboard_shortcut_event
 from snapims.recognition.providers import recognizer_registry
@@ -493,13 +494,12 @@ def _render_recognition_overview(
         st.info("This batch has no items yet.")
         return _provider_name(providers)
 
-    options_col, provider_col = st.columns([3, 1])
-    with options_col:
-        skip_existing = st.checkbox(
-            "Skip items that already have a recognition result",
-            value=True,
-            key="review_overview_skip_existing",
-        )
+    provider_col, options_col = st.columns([1, 3])
+    with provider_col:
+        provider_name = _compact_provider(providers)
+    with options_col, st.expander("Advanced", expanded=False):
+        st.caption("Safe resume always skips items with a successful recognition result.")
+        skip_existing = True
         only_missing_title = st.checkbox(
             "Only process items with no title",
             value=False,
@@ -510,14 +510,12 @@ def _render_recognition_overview(
             value=False,
             key="review_overview_force_reprocess",
         )
-    with provider_col:
-        provider_name = _compact_provider(providers)
-
     unattempted = sum(
         1
         for item in items
         if repository.latest_result_for_item(paths.db_file, item["item_id"]) is None
     )
+    durable_job = durable_progress.latest_job(paths.db_file, batch_id_value)
     action_label = "Start recognition" if unattempted == len(items) else "Resume recognition"
     if st.button(action_label, type="primary", key="review_overview_run_recognition"):
         _run_batch_recognition_with_progress(
@@ -530,6 +528,11 @@ def _render_recognition_overview(
         )
 
     summary = st.session_state.get("review_recognition_summary")
+    if durable_job is not None:
+        st.info(
+            f"Resume: {durable_job.completed}/{durable_job.total} completed · "
+            f"{durable_job.remaining} remaining · {durable_job.failed} failed"
+        )
     if summary and summary["batch_id"] == batch_id_value:
         metric_columns = st.columns(4)
         for column, label, key in zip(
@@ -684,11 +687,13 @@ def render_review(paths: DataPaths) -> None:
 
     queue_item_ids = [entry.result.item_id for entry in queue]
     requested = st.session_state.pop("review_open_item_id", None)
-    preferred = requested or st.session_state.get("review_preferred_item_id")
+    persisted = durable_progress.get_review_cursor(paths.db_file, batch_id, queue_filter)
+    preferred = requested or st.session_state.get("review_preferred_item_id") or persisted
     selected_item = current_item_id(queue_item_ids, preferred)
     if selected_item is None:
         return
     st.session_state["review_preferred_item_id"] = selected_item
+    durable_progress.set_review_cursor(paths.db_file, batch_id, queue_filter, selected_item)
     entry = next(item for item in queue if item.result.item_id == selected_item)
     position = queue_item_ids.index(selected_item) + 1
     edit_mode = bool(st.session_state.get("review_edit_mode", False))

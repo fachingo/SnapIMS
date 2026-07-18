@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from snapims import db
+from snapims.recognition import progress as recognition_progress
 from snapims.recognition import repository
 
 ACTIVE_BATCH_SETTING = "active_batch_id"
@@ -80,6 +81,13 @@ def compute_next_action(db_file: Path, batch_id_value: str) -> NextAction:
         if repository.latest_result_for_item(db_file, item["item_id"]) is None
     ]
     if unattempted:
+        job = recognition_progress.latest_job(db_file, batch_id_value)
+        if job is not None and job.status == "INTERRUPTED":
+            return NextAction(
+                f"Resume recognition ({job.remaining} remaining, {job.failed} failed)",
+                f"{job.completed} of {job.total} item boundaries were committed safely.",
+                "Review",
+            )
         return NextAction(
             f"Run recognition for {len(unattempted)} item(s)",
             "These items have never had a recognition attempt.",

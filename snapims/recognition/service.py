@@ -8,6 +8,7 @@ from pathlib import Path
 from snapims import db
 from snapims.inventory import validate_items
 from snapims.protocol import LOCATION_RE
+from snapims.recognition import progress as durable_progress
 from snapims.recognition import reconciliation, repository
 from snapims.recognition.base import BaseRecognizer, RecognitionResult
 
@@ -69,7 +70,7 @@ def _skip_reason(
 ) -> str | None:
     if only_missing_title and (item.get("title") or "").strip():
         return "Item already has a title"
-    if not force_reprocess and skip_existing and has_existing_result:
+    if not force_reprocess and has_existing_result:
         return "Item already has a recognition result"
     return None
 
@@ -231,86 +232,113 @@ def run_batch_recognition(
         raise KeyError(f"Unknown batch: {batch_id_value}")
 
     items = db.list_items(db_file, batch_id_value=batch_id_value)
-    progress = BatchRecognitionProgress(batch_id=batch_id_value, total=len(items))
+    job = durable_progress.start_or_resume_job(
+        db_file,
+        batch_id_value,
+        recognizer.name,
+        recognizer.persistence_model_name(),
+        items,
+        only_missing_title=only_missing_title,
+        force_reprocess=force_reprocess,
+    )
+    pending = durable_progress.pending_item_ids(db_file, job.job_id)
+    progress = BatchRecognitionProgress(
+        batch_id=batch_id_value,
+        total=job.total,
+        completed=job.completed,
+        recognized=max(0, job.completed - job.skipped - job.failed),
+        skipped=job.skipped,
+        failed=job.failed,
+    )
 
     def publish(current_item_id: str = "") -> None:
         progress.current_item_id = current_item_id
         if progress_callback is not None:
             progress_callback(progress)
 
-    publish()
-    for item in items:
-        item_id_value = item["item_id"]
-        publish(item_id_value)
-        skip_message = _skip_reason(
-            item,
-            has_existing_result=_item_has_recognition_results(db_file, item_id_value),
-            skip_existing=skip_existing,
-            only_missing_title=only_missing_title,
-            force_reprocess=force_reprocess,
-        )
-        if skip_message is not None:
-            existing = repository.latest_result_for_item(db_file, item_id_value)
-            progress.skipped += 1
-            progress.outcomes.append(
-                BatchRecognitionOutcome(
-                    item_id=item_id_value,
-                    status="SKIPPED",
-                    result_id=existing.recognition_result_id if existing else None,
-                    suggested_title=existing.suggested_title if existing else "",
-                    confidence=existing.confidence if existing else 0.0,
-                    message=skip_message,
-                )
-            )
-            progress.completed += 1
+    try:
+        publish()
+        for item in items:
+            item_id_value = item["item_id"]
+            if item_id_value not in pending:
+                continue
             publish(item_id_value)
-            continue
-        try:
-            result_id, result = run_recognition(db_file, item_id_value, recognizer)
-        except Exception as exc:
-            failure_message = str(exc)
-            try:
-                failed_record = repository.save_failure(
-                    db_file,
-                    item_id_value,
-                    provider=recognizer.name,
-                    model_name=recognizer.persistence_model_name(),
-                    created_at=datetime.now().isoformat(timespec="seconds"),
-                    error_message=failure_message,
-                )
-                failed_result_id: int | None = failed_record.recognition_result_id
-            except Exception as persistence_exc:
-                failed_result_id = None
-                failure_message = (
-                    f"{failure_message} (failure record could not be saved: {persistence_exc})"
-                )
-            progress.failed += 1
-            progress.failures.append(
-                BatchRecognitionFailure(item_id=item_id_value, message=failure_message)
+            skip_message = _skip_reason(
+                item,
+                has_existing_result=_item_has_recognition_results(db_file, item_id_value),
+                skip_existing=skip_existing,
+                only_missing_title=only_missing_title,
+                force_reprocess=force_reprocess,
             )
-            progress.outcomes.append(
-                BatchRecognitionOutcome(
-                    item_id=item_id_value,
-                    status="FAILED",
-                    result_id=failed_result_id,
+            if skip_message is not None:
+                existing = repository.latest_result_for_item(db_file, item_id_value)
+                progress.skipped += 1
+                progress.outcomes.append(
+                    BatchRecognitionOutcome(
+                        item_id=item_id_value,
+                        status="SKIPPED",
+                        result_id=existing.recognition_result_id if existing else None,
+                        suggested_title=existing.suggested_title if existing else "",
+                        confidence=existing.confidence if existing else 0.0,
+                        message=skip_message,
+                    )
+                )
+            try:
+                if skip_message is None:
+                    result_id, result = run_recognition(db_file, item_id_value, recognizer)
+            except Exception as exc:
+                failure_message = str(exc)
+                try:
+                    failed_record = repository.save_failure(
+                        db_file,
+                        item_id_value,
+                        provider=recognizer.name,
+                        model_name=recognizer.persistence_model_name(),
+                        created_at=datetime.now().isoformat(timespec="seconds"),
+                        error_message=failure_message,
+                    )
+                    failed_result_id: int | None = failed_record.recognition_result_id
+                except Exception as persistence_exc:
+                    failed_result_id = None
+                    failure_message = f"{failure_message} (failure record could not be saved: {persistence_exc})"
+                progress.failed += 1
+                progress.failures.append(BatchRecognitionFailure(item_id_value, failure_message))
+                progress.outcomes.append(
+                    BatchRecognitionOutcome(item_id_value, "FAILED", failed_result_id, message=failure_message)
+                )
+                durable_progress.record_boundary(
+                    db_file, job.job_id, item_id_value, "FAILED", result_id=failed_result_id,
                     message=failure_message,
                 )
-            )
-        else:
-            progress.recognized += 1
-            progress.outcomes.append(
-                BatchRecognitionOutcome(
-                    item_id=item_id_value,
-                    status="REVIEW_REQUIRED" if result.requires_review else "UNREVIEWED",
-                    result_id=result_id,
-                    suggested_title=result.suggested_title,
-                    confidence=result.confidence,
-                )
-            )
-            if result.requires_review:
-                progress.review_required += 1
-        progress.completed += 1
-        publish(item_id_value)
+            else:
+                if skip_message is not None:
+                    durable_progress.record_boundary(
+                        db_file, job.job_id, item_id_value, "SKIPPED",
+                        result_id=existing.recognition_result_id if existing else None,
+                        message=skip_message,
+                    )
+                else:
+                    progress.recognized += 1
+                    progress.outcomes.append(
+                        BatchRecognitionOutcome(
+                            item_id_value,
+                            "REVIEW_REQUIRED" if result.requires_review else "UNREVIEWED",
+                            result_id,
+                            result.suggested_title,
+                            result.confidence,
+                        )
+                    )
+                    if result.requires_review:
+                        progress.review_required += 1
+                    durable_progress.record_boundary(
+                        db_file, job.job_id, item_id_value, "RECOGNIZED", result_id=result_id
+                    )
+            progress.completed += 1
+            publish(item_id_value)
+    except BaseException:
+        durable_progress.finish_job(db_file, job.job_id, "INTERRUPTED")
+        raise
+    durable_progress.finish_job(db_file, job.job_id)
 
     return BatchRecognitionSummary(
         batch_id=batch_id_value,

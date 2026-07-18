@@ -18,6 +18,7 @@ from snapims.inventory import (
 )
 from snapims.pipeline import parse_batch
 from snapims.processor import process_batch
+from snapims.recognition.progress import latest_job
 from snapims.recognition.review_ui import render_batch_details_section, render_review
 from snapims.shopify.publish import (
     build_publish_queue,
@@ -124,6 +125,13 @@ if page == "Home":
                 st.markdown(f"**{active['batch_id']}**")
                 st.caption(f"Imported {active['imported_at']} · {active['item_count']} item(s)")
                 st.info(f"**Next:** {next_action.label}. {next_action.detail}")
+                recognition_job = latest_job(paths.db_file, active["batch_id"])
+                if recognition_job is not None:
+                    st.caption(
+                        f"Recognition resume: {recognition_job.completed}/{recognition_job.total} "
+                        f"completed · {recognition_job.remaining} remaining · "
+                        f"{recognition_job.failed} failed"
+                    )
             with action_col:
                 if st.button(
                     "Continue", type="primary", key="dashboard_continue", width="stretch"

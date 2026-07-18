@@ -7,6 +7,7 @@ from streamlit.testing.v1 import AppTest
 from snapims import active_batch, db
 from snapims.demo import create_demo_batch
 from snapims.processor import process_batch
+from snapims.recognition import progress as durable_progress
 from snapims.recognition import repository
 from snapims.recognition.providers import MockRecognizer
 from snapims.recognition.service import accept_result, run_batch_recognition, run_recognition
@@ -423,6 +424,30 @@ def test_review_resume_falls_back_to_valid_item_when_preferred_left_queue(
     assert not app.exception
     assert items[1]["item_id"] in _item_context_text(app)
     assert items[0]["item_id"] not in _item_context_text(app)
+
+
+def test_browser_restart_restores_durable_review_cursor_and_progress(
+    tmp_path: Path, monkeypatch, data_paths
+) -> None:
+    result = process_batch(create_demo_batch(tmp_path / "camera"), paths=data_paths)
+    items = db.list_items(data_paths.db_file, batch_id_value=result.batch_id)
+    run_batch_recognition(data_paths.db_file, result.batch_id, MockRecognizer())
+    durable_progress.set_review_cursor(
+        data_paths.db_file,
+        result.batch_id,
+        repository.QUEUE_TO_REVIEW,
+        items[1]["item_id"],
+    )
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(data_paths.root))
+
+    restarted = AppTest.from_file("streamlit_app.py", default_timeout=30).run()
+    home_text = " ".join(str(element.value) for element in restarted.caption)
+    assert "Recognition resume: 2/2 completed" in home_text
+    workspace = next(radio for radio in restarted.radio if radio.key == "workspace_page")
+    restarted = workspace.set_value("Review").run()
+
+    assert not restarted.exception
+    assert items[1]["item_id"] in _item_context_text(restarted)
 
 
 def test_dashboard_shows_active_batch_and_continue_action(

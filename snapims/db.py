@@ -234,6 +234,43 @@ MIGRATIONS = (
             ON recognition_results(batch_id, review_status, result_status, confidence);
         """,
     ),
+    (
+        4,
+        "Persist batch recognition progress and Review cursors",
+        """
+        CREATE TABLE recognition_jobs (
+            recognition_job_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id TEXT NOT NULL REFERENCES batches(batch_id) ON DELETE RESTRICT,
+            provider TEXT NOT NULL,
+            model_name TEXT NOT NULL DEFAULT '',
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            total INTEGER NOT NULL DEFAULT 0,
+            completed INTEGER NOT NULL DEFAULT 0,
+            skipped INTEGER NOT NULL DEFAULT 0,
+            failed INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'RUNNING',
+            last_item_id TEXT,
+            only_missing_title INTEGER NOT NULL DEFAULT 0,
+            force_reprocess INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE recognition_job_items (
+            recognition_job_id INTEGER NOT NULL
+                REFERENCES recognition_jobs(recognition_job_id) ON DELETE RESTRICT,
+            item_id TEXT NOT NULL REFERENCES items(item_id) ON DELETE RESTRICT,
+            sequence INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            result_id INTEGER REFERENCES recognition_results(recognition_result_id)
+                ON DELETE RESTRICT,
+            message TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY(recognition_job_id, item_id)
+        );
+        CREATE INDEX idx_recognition_jobs_batch
+            ON recognition_jobs(batch_id, recognition_job_id DESC);
+        CREATE INDEX idx_recognition_job_items_status
+            ON recognition_job_items(recognition_job_id, status, sequence);
+        """,
+    ),
 )
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
