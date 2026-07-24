@@ -4,7 +4,7 @@
 
 | Gate | Exact result |
 |---|---|
-| `pytest -q` | **110 passed**; elapsed 00:27.55; max RSS 301,104 KB |
+| `pytest -q` | **110 passed**; elapsed 00:29.26; max RSS 295,116 KB |
 | `python -m compileall -q snapims` | Passed |
 | Native Chromium -> uvicorn audit | Passed; 31 screenshots; genuine process interruption passed |
 | Wheel build | Passed with `pip wheel . --no-deps --no-build-isolation` |
