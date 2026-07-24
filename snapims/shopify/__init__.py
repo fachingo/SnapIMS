@@ -1,0 +1,1 @@
+"""Shopify draft integration."""

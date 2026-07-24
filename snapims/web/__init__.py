@@ -1,0 +1,1 @@
+"""SnapIMS browser application."""
