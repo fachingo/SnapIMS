@@ -18,7 +18,7 @@
 - browser-downloaded CSV and machine-readable metrics;
 - Phase 1-5 reports;
 - synchronized operator and readiness documentation;
-- DOCX/PDF Operator Guide;
+- DOCX/PDF Operator Guide and page-by-page render verification;
 - local Git history, Git bundle, patch series, source-only ZIP, and checksums.
 
 ## Excluded

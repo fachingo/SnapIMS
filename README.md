@@ -47,6 +47,7 @@ The restricted reconstruction environment could not install Ruff, MyPy, or the `
 - `FINAL_OPERATOR_AUDIT.md`
 - `FINAL_PRODUCTION_READINESS.md`
 - `V0.5.1_DISCREPANCY_CLOSURE_REPORT.md`
+- `DOCUMENTATION_VERIFICATION.md`
 - Phase 1-5 verification reports
 
 ## Version policy
