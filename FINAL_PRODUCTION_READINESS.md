@@ -1,29 +1,24 @@
-# SnapIMS 0.5.0 Final Production Readiness
+# SnapIMS 0.5.1 Final Production Readiness
 
 ## Verdict
 
-**Ready for a controlled real 20-tape Pixel pilot. Not ready for 1.0.0.**
+**Ready with listed non-blocking limitations.**
 
-## Acceptance questions
+## Readiness questions
 
-1. **Can an inventory specialist operate without terminal commands?** Yes after installation and first folder configuration.
-2. **Can a batch be imported, recognized, reviewed, corrected, resumed, and exported?** Yes in the reconstructed local workflow.
-3. **Can a completed item be corrected safely?** Yes, using the same Item ID and optimistic revision.
-4. **Does state survive restart?** SQLite state, corrections, recognition jobs, and cursors do.
-5. **Are images, shelf, flags, and metadata linked?** Yes in database, Review, Publish simulation, and CSV.
+1. **Can an inventory specialist operate without terminal commands?** Yes, in the audited local browser workflow after folder configuration.
+2. **Can a batch be imported, identified, reviewed, corrected, resumed, and exported?** Yes, through visible controls.
+3. **Can a completed item be corrected safely?** Yes, with the same immutable Item ID, validation, Cancel, restart, CSV, and simulation consistency.
+4. **Does state survive restart?** Yes. Saved records and a genuinely interrupted recognition job survived a full process stop/start.
+5. **Are image, shelf, flags, metadata, and IDs linked?** Yes for the tested fixtures and browser-downloaded CSV.
 6. **Does a 20-item batch remain understandable?** Yes at 1440 x 1000.
-7. **Are recognition interruption and failure recoverable?** Yes through Paused/Continue and Failed/Retry states.
-8. **Does import avoid routine absolute-path typing?** Yes through configured/recent folders.
-9. **Is Preview identity clear?** Yes: non-durable preview, one durable imported ID.
-10. **Does Publish use the same saved data?** Yes in the field-level simulation payload and CSV.
+7. **Are interruption and failure recoverable?** Yes through visible Continue and Retry actions.
+8. **Does Import avoid routine path entry?** Yes after first-run setup; recent folders persist.
+9. **Is Preview identity clear?** Yes: Preview is explicitly not imported and shows no durable ID.
+10. **Does Publish simulation use saved data?** Yes for the tested records and payload preview.
+11. **What remains unproven?** Real Pixel, live AI, live Shopify, independent first-time human, multi-user/remote deployment.
+12. **Is it ready for the controlled real pilot?** Yes, with Shopify kept in simulation for the first batch.
 
-## Remaining 1.0 gates
+## 1.0 gate
 
-- Real 20-tape Pixel pilot.
-- Live AI test.
-- One live Shopify draft.
-- CSV-to-physical reconciliation.
-- Native deployed browser walkthrough.
-- Operator Guide followed by a first-time operator.
-- Green GitHub Actions Ruff/MyPy/test run.
-- No known production blockers.
+Do not label 1.0.0 until the real Pixel pilot, live AI, one live Shopify draft, physical CSV verification, restart durability, final guide walkthrough, browser verification, and blocker review all pass.

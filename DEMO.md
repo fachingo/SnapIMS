@@ -1,20 +1,26 @@
-# SnapIMS demonstration
+# SnapIMS 0.5.1 Demonstration
 
-Generate a QR-command fixture with 20 VHS records:
+## Generate a QR-delimited camera roll
 
 ```bash
-snapims demo demo-data/camera-roll --items 20
-snapims serve
+snapims demo demo-data/camera-roll
 ```
 
-In the browser:
+## Start the browser application
 
-1. Open **Import**.
-2. Under **Advanced**, choose `demo-data/camera-roll` and save it as the incoming folder.
-3. Preview. Confirm 20 items, 40 product photographs, and deterministic command counts.
-4. Import and continue to Review.
-5. Select Mock and identify the batch.
-6. Process the fast path with **✓ Approve & Next**.
-7. Open Publish, simulate drafts, and download the CSV.
+```bash
+snapims --data-dir demo-data/workspace serve
+```
 
-The fixture uses `.qr.txt` sidecars for deterministic automated testing. Real camera photographs continue to use visible QR decoding.
+Then use only the browser:
+
+1. Import -> Advanced -> choose `demo-data/camera-roll`.
+2. Preview and confirm the non-durable identity and grouping counts.
+3. Preserve and import.
+4. Continue to Review.
+5. Select Mock and Identify items.
+6. Confirm title; optionally adjust Price or Discount; select **Approve & Next**.
+7. Use Later for a postponed tape or Edit for an exception.
+8. Open Publish, simulate drafts, and download the CSV.
+
+Mock is deterministic test data. It does not prove live AI quality.

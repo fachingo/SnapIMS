@@ -1,32 +1,33 @@
-# SnapIMS database - schema version 5
+# SnapIMS 0.5.1 Database
 
-SQLite is the durable system of record. The database defaults to `~/SnapIMS-data/database/inventory.sqlite3`.
+SQLite schema version: **5**.
 
-## Important tables
+## Safety properties
 
-- `batches`: durable batch identity and source fingerprint.
-- `items`: current authoritative inventory record and immutable Item ID/SKU.
-- `photos`: product, command, and excluded images.
-- `recognition_results`: append-only AI suggestions and acceptance timestamp.
-- `recognition_jobs`: durable running, paused, complete, failed, and review-complete state.
-- `review_cursors`: persistent selected item per batch and queue.
-- `inventory_events`: intake, location changes, and quantity adjustments.
-- `shopify_sync`: resumable external IDs and last completed stage.
-- `upload_attempts`: Shopify attempt history.
-- `settings`: incoming folder and bounded recent-folder history.
+- immutable `item_id` and matching SKU;
+- foreign keys enabled on every application connection;
+- WAL mode for local durability;
+- explicit write transactions;
+- backup before import, CSV import, Shopify live attempt, and legacy migration;
+- post-migration integrity and foreign-key checks;
+- unsupported future schema refused without modification;
+- partial CSV import preserves absent columns;
+- optimistic `record_revision` protects concurrent/stale edits;
+- publish checkpoints and attempt history support reconciliation.
 
-## Migration safety
+## Verified migration path
 
-Before an existing database is upgraded, SnapIMS creates an online SQLite backup. Migration runs in an explicit transaction and is followed by `PRAGMA integrity_check` and `PRAGMA foreign_key_check`.
+The test suite creates a real legacy v0.3-format fixture, upgrades it to schema 5, and verifies retained Item IDs, SKU, items, photos, recognition history, backup creation, and integrity. Failure injection verifies restoration of the original database. Future schema versions are refused safely.
 
-## Identity
+## Integrity command
 
-- Batch: `YYYYMMDD-HHMMSS[-NAME]`
-- Item and SKU: `<BATCH-ID>-<SHELF>-<SEQUENCE>`
-- Images: `<ITEM-ID>-F.jpg`, `<ITEM-ID>-02.jpg`, and so on
+```bash
+snapims --data-dir /path/to/workspace integrity
+```
 
-Titles never determine identity or filenames.
+Expected:
 
-## CSV safety
-
-CSV lookup uses only Item ID. Missing columns preserve existing values. A partial CSV cannot silently blank unrelated fields. Unknown or duplicate Item IDs reject the import before writes begin.
+```text
+integrity_check=ok
+foreign_key_violations=0
+```

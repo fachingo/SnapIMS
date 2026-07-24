@@ -1,31 +1,31 @@
-# Phase 4 Reconstruction Browser Verification
+# Phase 4 Browser Verification - Recognition and queue clarity
 
-Version: **0.5.0**
+Version: **0.5.1**  
+Browser-tested code commit: `411b51d9f72c8da1fd7f71eb5a42ae53fdfba026`  
+Browser: local Chromium over real HTTP to a separate uvicorn process.
 
 ## Result
 
-- Recognition control/status clarity: **Passed**
-- Physical batch position and unfinished-count clarity: **Passed**
+- Recognition state clarity: **Passed**.
+- Physical position and unfinished-count clarity: **Passed**.
+- Genuine interrupted recognition recovery: **Passed**.
 
-## Rendered observations
+## Native interruption proof
 
-- Before attempts: `20 items ready to identify` with one Identify action.
-- Complete: `Recognition complete · 20 items ready to review` with no duplicate start action.
-- Paused after application restart marker: `Identification paused · 6 of 20 complete · 14 remaining` with one Continue action.
-- Failure: `Recognition complete · 0 ready · 1 failed` with a Failed queue and Retry.
-- Recovery with Mock retained the same physical item and restored a reviewable suggestion.
-- Physical headers used `Batch item X of Y · Z unfinished`.
-- Later left the item unfinished and displayed explicit postponement feedback.
+1. Imported a 40-item fixture through visible controls.
+2. Started Mock recognition through the browser.
+3. Observed `Identifying - 6 of 40 complete` before interruption.
+4. Killed the actual application process; no database state was injected or edited.
+5. Restarted the application against the same workspace.
+6. Observed `Identification paused - 7 of 40 complete - 33 remaining` and exactly one **Continue identification** action.
+7. Clicked Continue through the browser.
+8. Observed `Recognition complete - 40 items ready to review`.
+9. Post-audit reconciliation found 40 items, 40 recognition results, and zero items with duplicate recognition attempts.
 
-## Durability
+Evidence: `operator-audit-assets/v0.5.1-browser/screenshots/26-recognition-running-before-kill.png`, `operator-audit-assets/v0.5.1-browser/screenshots/27-recognition-paused-after-restart.png`, `operator-audit-assets/v0.5.1-browser/screenshots/28-recognition-resumed-complete.png`.
 
-Recognition jobs and Review cursors are SQLite records. Application startup converts any abandoned RUNNING job to PAUSED.
+## Failure path
 
-## Evidence
+Gemini's intentionally disabled adapter produced one visible failed item. The operator opened the failed queue and retried with Mock, restoring a reviewable suggestion for the same physical item.
 
-- `04-review-ready-to-identify.png`
-- `05-recognition-complete.png`
-- `16-later-preserves-unfinished.png`
-- `17-recognition-paused-after-restart.png`
-- `18-recognition-failure.png`
-- `19-recognition-failure-recovered.png`
+Evidence: `operator-audit-assets/v0.5.1-browser/screenshots/22-recognition-failure.png`, `operator-audit-assets/v0.5.1-browser/screenshots/23-recognition-failure-recovered.png`.

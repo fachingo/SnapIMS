@@ -1,64 +1,67 @@
-# SnapIMS 0.5.0 Final Operator Audit
+# SnapIMS 0.5.1 Final Operator Audit
 
 ## Verdict
 
-**Ready for a controlled real 20-tape Pixel pilot, with external boundaries listed below.**
+**Ready with listed non-blocking limitations.** The local operator workflow passed a real browser-through-server audit. External production boundaries remain untested.
 
-## Build under test
+## Build and environment
 
-- Version: 0.5.0
-- Browser: Chromium, 1440 x 1000
-- UI: FastAPI/Jinja browser workstation
-- Data: fresh SQLite schema v5 workspace
-- Recognition: deterministic Mock for throughput; disabled Gemini boundary for failure recovery
+- Version: 0.5.1
+- Browser-tested code commit: `411b51d9f72c8da1fd7f71eb5a42ae53fdfba026`
+- Browser: local Chromium, 1440 x 1000
+- Server: separate uvicorn process over real loopback HTTP
+- Workspace: fresh SQLite schema v5
+- Recognition: deterministic Mock for normal throughput; disabled Gemini boundary for failure handling
 - Publish: simulation only
 
-## Browser transport disclosure
+## 1. Browser-observed operator actions
 
-Chromium in this execution environment is administratively blocked from opening loopback URLs. The audit used Chromium to render the actual generated HTML/CSS and interact with visible controls. A Playwright harness captured browser form submissions and delivered them to the same FastAPI application using an in-process ASGI client. This is browser rendering and control verification, but it does not prove the environment's blocked TCP loopback path.
+The operator portion used visible browser controls only:
 
-## Directly observed workflows
+1. Fresh Home and first-run Import.
+2. Advanced folder configuration.
+3. Non-durable Preview and durable import.
+4. Continue to Review and Identify.
+5. Twenty-tape fast Review: 17 one-click approvals plus Price, Discount, and combined quick edits.
+6. Later, return to postponed item, and completion.
+7. Done correction, invalid save, and Cancel.
+8. Full application-process restart and durable correction.
+9. Publish simulation and browser CSV download.
+10. Missing-folder fail-closed recovery.
+11. Recognition failure, failed queue, Retry, and recovery.
+12. Real recognition interruption, process kill, restart, Paused state, Continue, and completion.
+13. Settings and Diagnostics.
 
-1. First-run Import and Advanced folder selection.
-2. Non-durable preview of 20 QR-delimited items.
-3. Preservation/import with one durable Batch ID.
-4. Continue to Review.
-5. One Identify action and persisted recognition completion.
-6. 20-item physical orientation.
-7. 17 one-click approvals.
-8. Price-only, Discount-only, and combined quick edits.
-9. Automatic next-item opening and unfinished-count decrement.
-10. Review completion.
-11. Completed-item correction against the same Item ID.
-12. Invalid edit blocked with the editor retained.
-13. Correction visible after a new application lifespan.
-14. Later preserving unfinished state.
-15. Missing-folder fail-closed behavior.
-16. Paused recognition wording after restart conversion.
-17. Recognition failure and same-item recovery.
-18. Publish simulation and browser-generated CSV.
+## 2. Post-audit database reconciliation
 
-## Metrics
+After the operator portion ended, independent database/CSV reconciliation confirmed:
 
-- 20 tapes
-- 24 total counted clicks
-- 1.20 average clicks per tape
-- 17/20 true one-click approvals
-- 0.100 seconds average rendered control cycle
+- 20 main items and 20 browser-downloaded CSV rows.
+- all main items Done;
+- 40 interrupted-batch items and 40 recognition results;
+- zero duplicate-attempt items;
+- SQLite integrity `ok`;
+- zero foreign-key violations.
 
-Human photograph-inspection time is excluded.
+## 3. Automated regression verification
 
-## Automated verification
+The repository contains **110 collected pytest tests** across protocol/import, CSV, migrations, recognition, Review, Shopify, web routes, and packaging-adjacent smoke behavior. Exact final command output is retained in `TEST_RESULTS.md`.
 
-- `pytest`: 17 passed
-- `python -m compileall -q snapims`: passed
-- GitHub Actions is configured to run pytest, Ruff, MyPy, and compileall after push.
+## 4. Fixture setup
 
-Ruff and MyPy executables were unavailable in the isolated local environment, so their results must come from the pushed GitHub Actions run before the branch is merged.
+Synthetic QR-delimited camera rolls were generated before the operator portion. Fixture generation did not complete any operator step and is not counted as browser proof.
 
-## External boundaries not tested
+## 5. External boundaries not tested
 
-- Real Pixel QR performance, glare, focus, and photo transfer.
-- Live OpenAI accuracy, latency, rate limits, billing, and credential recovery.
-- Live Shopify authentication, staged uploads, media processing, and one real draft.
-- Multi-user concurrency and remote hosting.
+- real Pixel glare/focus/QR transfer;
+- live OpenAI recognition accuracy, latency, rate limits, billing, or credential recovery;
+- live Shopify authentication, media transfer, and one real draft;
+- independent first-time human operator walkthrough;
+- multi-user or remote deployment.
+
+## Interaction metrics
+
+- Average clicks per correctly recognized tape: **1.20**.
+- True one-click approvals: **17/20 (85%)**.
+- Average application approval-to-next render time: **0.091 seconds**.
+- Real operator time per tape: **unmeasured; remains a live-pilot measurement**.

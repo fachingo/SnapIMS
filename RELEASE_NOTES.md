@@ -1,35 +1,26 @@
-# Release notes
+# SnapIMS Release Notes
 
-## 0.5.0 - Reconstruction and application boundary
+## 0.5.1 - Verification hardening patch
 
-This minor release reconstructs the lost 0.4 workflow from accepted browser reports and advances the architecture.
+This patch repairs the verification and delivery gaps in the 0.5.0 reconstruction candidate without introducing a new operator workflow.
 
-### Added
+### Fixed and verified
 
-- FastAPI browser application with Home, Import, Review, Publish, Settings, and Diagnostics.
-- One-click **✓ Approve & Next** review flow.
-- Inline Price and Discount quick edits.
-- Durable recognition jobs and review cursors.
-- Completed-item exception editor and optimistic record revision.
-- Configured and recent import folders.
-- Non-durable Preview identity and one durable imported Batch ID.
-- Release year and discount in CSV.
-- Shopify payload preview and resumable stage checkpoints.
-- GitHub Actions quality workflow.
+- created real local Git history and recovery artifacts;
+- expanded regression coverage from 17 to 110 collected pytest tests;
+- added migration backup/rollback/future-schema tests;
+- added Shopify checkpoint, reconciliation, failure, media, and retry tests;
+- replaced the hybrid audit with Chromium navigating a separately running uvicorn server;
+- proved genuine recognition interruption by killing and restarting the process;
+- regenerated Phase 1-5 browser reports;
+- corrected timing terminology and audit evidence categories;
+- regenerated and completely indexed 31 screenshots;
+- synchronized application and documentation version references to 0.5.1.
 
-### Fixed
+### Historical note: 0.5.0
 
-- Partial CSV files no longer blank columns that are absent.
-- Ordinary AI acceptance no longer overwrites existing manual values.
-- Interrupted recognition returns as Paused.
-- Failed recognition has one clear recovery route.
-- Physical batch position no longer resets with a filtered queue.
+Version 0.5.0 reconstructed the missing fast Review, Import, recognition, CSV, and Shopify boundaries. Its audit used a hybrid TestClient transport and had only 17 tests; 0.5.1 supersedes it as the verification-hardened candidate.
 
-### Compatibility
+### Still required before 1.0
 
-- Existing 0.3 SQLite databases are upgraded to schema version 5 with a pre-migration backup.
-- QR vocabulary, NEXT-only item boundaries, immutable Item IDs, and source-photo preservation are unchanged.
-
-### Not 1.0
-
-Live Pixel, AI, and Shopify acceptance criteria remain outstanding.
+Real Pixel pilot, live AI, one live Shopify draft, physical CSV verification, and independent guide walkthrough.

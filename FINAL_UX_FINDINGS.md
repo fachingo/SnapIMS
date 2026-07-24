@@ -1,33 +1,24 @@
-# SnapIMS 0.5.0 Final UX Findings
+# SnapIMS 0.5.1 Final UX Findings
 
 ## Outcome
 
-The reconstructed browser workflow matches or improves the nine accepted operator findings.
+All nine original operator findings were observed as corrected in the native browser workflow:
 
-| Finding | Status in 0.5.0 |
-|---|---|
-| Recognized cards remain Untitled | Fixed: unfinished workstation shows the latest suggestion. |
-| Done items show stale AI suggestions | Fixed: saved metadata is primary; AI is collapsed history. |
-| Done items cannot be corrected | Fixed: same-ID exception editor, validation, Cancel, and restart durability. |
-| Edit opens outside viewport | Fixed: active workstation remains first and visible. |
-| Preview/import identifiers conflict | Fixed: Preview is explicitly non-durable; import shows one ID. |
-| Recognition action/status unclear | Fixed: Ready, Running, Paused, Complete, Failure, and Review complete are distinct. |
-| Queue numbering resets | Fixed: physical sequence is always primary. |
-| Routine import requires a path | Fixed: configured and recent folders are normal; manual path is Advanced. |
-| Review requires excessive scrolling | Fixed at 1440 x 1000: photo, identity, quick edits, and primary action fit together. |
+| Finding | Status | Evidence |
+|---|---|---|
+| OA-01 recognized records remain Untitled | Fixed | Suggested title appears after identification. |
+| OA-02 Done records show stale suggestion | Fixed | Saved/corrected title remains primary after restart. |
+| OA-03 Done correction | Fixed | Edit, validation, Cancel, restart, CSV, and simulation use same Item ID. |
+| OA-04 editor orientation | Fixed | Complete editor remains usable in workstation layout. |
+| OA-05 preview/import identity | Fixed | Preview is non-durable; one ID appears after import. |
+| OA-06 recognition state clarity | Fixed | Ready, Running, Paused, Complete, Failed, Review complete observed. |
+| OA-07 physical queue position | Fixed | Physical item and unfinished count remain independent of queue filter. |
+| OA-08 routine folder workflow | Fixed | Configured/recent choices plus Advanced recovery. |
+| OA-09 excessive Review scrolling | Fixed at 1440 x 1000 | Photo, quick fields, and primary action remain together. |
 
-## v0.5 improvements beyond the lost build
+## Remaining friction
 
-- CSV adds Release year and Discount percent.
-- Partial CSV files preserve absent fields.
-- Publish simulation exposes a field-level payload preview.
-- HTTP application boundary reduces UI coupling.
-- Optimistic record revision detects stale edits.
-- Shopify stage checkpoints are consulted during retry.
-
-## Remaining limitations
-
-- Real AI quality was not measured.
-- Live Shopify draft creation was not performed.
-- Native TCP browser navigation was blocked by the execution environment; rendered-control verification used an in-process application transport.
-- Multi-operator locking and authentication remain post-1.0 work.
+- File-system folder concepts remain visible during first-run setup.
+- Random access in large batches remains under the secondary All items disclosure.
+- The automated audit cannot measure human photograph inspection time.
+- Live external integrations remain acceptance boundaries.

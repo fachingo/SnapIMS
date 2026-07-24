@@ -1,33 +1,27 @@
-# SnapIMS project status
+# SnapIMS Project Status
 
-Version: **0.5.0 reconstruction release**
+Version: **0.5.1 verification-hardening release candidate**
 
-Classification: **functional beta candidate**
+## Completed
 
-## Verified in this build
+- deterministic QR/event parser and original preservation;
+- immutable Batch/Item identity and SQLite schema v5;
+- configured/recent Import workflow;
+- persisted recognition jobs with real interruption recovery;
+- one-click Review with inline Price and Discount;
+- Later and completed-item correction;
+- safe partial CSV round-trip with year and discount;
+- Shopify simulation and checkpoint/retry service tests;
+- legacy migration backup/rollback tests;
+- 110 pytest tests;
+- real Chromium-to-uvicorn operator audit;
+- synchronized phase reports, final audit, screenshots, and Operator Guide.
 
-- Deterministic NEXT-only parser and QR vocabulary.
-- Original preservation, safe JPEG generation, immutable Item IDs, and duplicate imports.
-- Unified workstation with saved-value precedence.
-- Completed-item correction, cancellation, validation, and restart durability.
-- Durable recognition states and physical queue position.
-- Configured/recent import folders and non-durable Preview identity.
-- One-click approval with inline Price and Discount.
-- Safe partial CSV import; Release year and Discount export.
-- Shopify simulation and hardened resumable stage design.
-- 17/20 one-click browser approvals; 1.20 average clicks per tape.
-- 17 automated tests passing locally.
+## Pending before 1.0
 
-## Environment limitation
-
-The execution environment blocks direct Chromium access to loopback servers. Browser verification used real Chromium rendering and visible controls, with form submissions transported to the FastAPI application through an in-process ASGI harness. This verifies rendered UI, controls, application responses, and durable state, but not the environment's blocked TCP loopback path.
-
-## Required before 1.0.0
-
-- Real 20-tape Pixel pilot.
-- Live AI tested with real tape images.
-- One live Shopify draft created and reconciled.
-- CSV reconciled against the physical batch.
-- Final native deployment browser walkthrough.
-- Operator Guide followed by a first-time operator.
-- No remaining production blockers.
+- real 20-tape Pixel pilot;
+- live AI acceptance;
+- one live Shopify draft;
+- physical CSV reconciliation;
+- independent first-time operator guide walkthrough;
+- successful Ruff/MyPy/build-frontend execution in an environment where those tools are available.

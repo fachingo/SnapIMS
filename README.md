@@ -1,74 +1,54 @@
-# SnapIMS 0.5.0
+# SnapIMS 0.5.1
 
-SnapIMS is a photo-first, exception-driven inventory ingestion system. It turns a QR-delimited camera roll into durable inventory records, AI-assisted review, CSV output, and Shopify draft simulations.
+SnapIMS is a photo-first inventory ingestion system built around deterministic QR event capture, AI-assisted recognition, exception-only Review, immutable inventory identity, CSV reconciliation, and Shopify draft output.
 
-## Operator workflow
+## Routine workflow
 
-1. Photograph `START`, a shelf card, each VHS, and `NEXT` between products.
-2. Open **Import**, select the incoming folder, and preview grouping.
-3. Preserve and import the batch.
-4. Open **Review** and identify the batch.
-5. For a correct tape, optionally adjust **Price** or **Discount**, then press **✓ Approve & Next**.
-6. Use **Edit** only for exceptions. Use **Later** to leave a tape unfinished.
-7. Open **Publish** to simulate drafts and download the versioned inventory CSV.
+```text
+Photograph -> Preview/Import -> Identify -> Approve exceptions -> Simulate/Export
+```
 
-## v0.5.0 highlights
-
-- One-click fast approval for correctly recognized tapes.
-- Price and Discount remain editable in the fast path.
-- Completed records reopen and save against the same immutable Item ID.
-- Recognition progress is durable across application restarts.
-- Physical batch position stays distinct from filtered queue position.
-- Import uses configured and recent folders; manual paths are Advanced recovery.
-- Preview is explicitly non-durable; import shows one durable Batch ID.
-- CSV partial imports update only columns actually present.
-- CSV now includes Release year and Discount percent.
-- Shopify stages resume from durable checkpoints and verify media readiness.
-- Browser UI is separated from domain services through a FastAPI application boundary.
+Correctly recognized tapes normally require one action: **Approve & Next**. Price and Discount remain inline; Edit is reserved for exceptions.
 
 ## Install
 
 ```bash
-python3 -m venv .venv
+python -m venv .venv
 . .venv/bin/activate
-python -m pip install -e '.[dev]'
-cp .env.example .env
+pip install -e '.[dev]'
+snapims --data-dir ~/SnapIMS-data serve
 ```
 
-## Run
+## Quality commands
 
 ```bash
-.venv/bin/snapims serve --host 127.0.0.1 --port 8767
-```
-
-Then open `http://127.0.0.1:8767`.
-
-## Generate a demonstration camera roll
-
-```bash
-.venv/bin/snapims demo demo-data/camera-roll --items 20
-```
-
-## Quality gates
-
-```bash
-pytest
+pytest -q
 ruff check .
 mypy snapims --ignore-missing-imports
 python -m compileall -q snapims
+python -m build
+pip check
 ```
 
-The repository includes GitHub Actions that runs the same gates on reconstruction and feature branches.
+## Verification record
 
-## Current release status
+- 110 collected pytest tests pass locally.
+- Native Chromium-to-uvicorn audit passes.
+- 20-item fast path: 1.20 clicks/tape; 85% one-click.
+- Average application approval-to-next render: 0.091s.
+- Real operator time remains a live-pilot measurement.
 
-SnapIMS 0.5.0 is a functional beta candidate ready for a controlled real 20-tape Pixel pilot. It is not 1.0.0. Live AI quality, one real Shopify draft, physical QR performance, and the final production acceptance checklist remain unproven.
+The restricted reconstruction environment could not install Ruff, MyPy, or the `build` frontend. Their exact commands remain in GitHub Actions and are not falsely marked passed.
 
-See:
+## Documentation
 
-- `SnapIMS_Operator_Guide.pdf`
+- `SnapIMS_Operator_Guide.pdf` / `.docx`
+- `NATIVE_BROWSER_VERIFICATION.md`
 - `FINAL_OPERATOR_AUDIT.md`
 - `FINAL_PRODUCTION_READINESS.md`
-- `RELEASE_NOTES.md`
-- `RECONSTRUCTION_MANIFEST.md`
-- `GITHUB_PUSH_STATUS.md`
+- `V0.5.1_DISCREPANCY_CLOSURE_REPORT.md`
+- Phase 1-5 verification reports
+
+## Version policy
+
+0.5.1 is a patch release. 1.0.0 remains forbidden until all real production acceptance gates pass.
