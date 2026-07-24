@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -253,47 +254,159 @@ def _base_schema(connection: sqlite3.Connection) -> None:
     )
 
 
+def _table_names(connection: sqlite3.Connection) -> set[str]:
+    return {
+        str(row[0])
+        for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+
+
+LEGACY_ITEM_ADDITIONS = [
+    "release_year INTEGER",
+    "edition TEXT NOT NULL DEFAULT ''",
+    "distributor TEXT NOT NULL DEFAULT ''",
+    "price_cents INTEGER",
+    "discount_percent REAL NOT NULL DEFAULT 0",
+    "description TEXT NOT NULL DEFAULT ''",
+    "vendor TEXT NOT NULL DEFAULT 'Canada VHS'",
+    "product_type TEXT NOT NULL DEFAULT 'VHS Tape'",
+    "tags TEXT NOT NULL DEFAULT ''",
+    "barcode TEXT NOT NULL DEFAULT ''",
+    "condition TEXT NOT NULL DEFAULT 'Not Graded'",
+    "condition_notes TEXT NOT NULL DEFAULT ''",
+    "pool_mode TEXT NOT NULL DEFAULT 'POOLED'",
+    "quantity INTEGER NOT NULL DEFAULT 1",
+    "ready INTEGER NOT NULL DEFAULT 0",
+    "validation_status TEXT NOT NULL DEFAULT 'INCOMPLETE'",
+    "validation_errors TEXT NOT NULL DEFAULT '[]'",
+    "review_status TEXT NOT NULL DEFAULT 'UNFINISHED'",
+    "postponed_at TEXT",
+    "recognition_provider TEXT NOT NULL DEFAULT ''",
+    "recognition_confidence REAL",
+    "recognition_status TEXT NOT NULL DEFAULT 'PENDING'",
+    "recognition_error TEXT NOT NULL DEFAULT ''",
+    "upload_status TEXT NOT NULL DEFAULT 'NOT_UPLOADED'",
+    "shopify_product_id TEXT NOT NULL DEFAULT ''",
+    "shopify_variant_id TEXT NOT NULL DEFAULT ''",
+    "shopify_inventory_item_id TEXT NOT NULL DEFAULT ''",
+    "shopify_admin_url TEXT NOT NULL DEFAULT ''",
+    "last_error TEXT NOT NULL DEFAULT ''",
+    "retry_count INTEGER NOT NULL DEFAULT 0",
+    "record_revision INTEGER NOT NULL DEFAULT 0",
+    "created_at TEXT NOT NULL DEFAULT ''",
+    "updated_at TEXT NOT NULL DEFAULT ''",
+]
+
+
 def _upgrade_legacy(connection: sqlite3.Connection) -> None:
-    if "items" not in {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}:
-        return
-    additions = [
-        "release_year INTEGER",
-        "discount_percent REAL NOT NULL DEFAULT 0",
-        "review_status TEXT NOT NULL DEFAULT 'UNFINISHED'",
-        "postponed_at TEXT",
-        "recognition_status TEXT NOT NULL DEFAULT 'PENDING'",
-        "recognition_error TEXT NOT NULL DEFAULT ''",
-        "record_revision INTEGER NOT NULL DEFAULT 0",
-    ]
-    for definition in additions:
-        _add_column(connection, "items", definition)
-    if "recognition_results" in {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}:
-        _add_column(connection, "recognition_results", "suggested_price_cents INTEGER")
-        _add_column(connection, "recognition_results", "suggested_discount_percent REAL NOT NULL DEFAULT 0")
-    if "shopify_sync" in {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}:
-        _add_column(connection, "shopify_sync", "last_completed_step TEXT NOT NULL DEFAULT ''")
+    tables = _table_names(connection)
+    if "items" in tables:
+        for definition in LEGACY_ITEM_ADDITIONS:
+            _add_column(connection, "items", definition)
+    if "recognition_results" in tables:
+        for definition in (
+            "release_year INTEGER",
+            "barcode_candidates_json TEXT NOT NULL DEFAULT '[]'",
+            "suggested_price_cents INTEGER",
+            "suggested_discount_percent REAL NOT NULL DEFAULT 0",
+            "confidence REAL NOT NULL DEFAULT 0",
+            "uncertainty_reasons_json TEXT NOT NULL DEFAULT '[]'",
+            "raw_response_reference TEXT NOT NULL DEFAULT ''",
+            "requires_review INTEGER NOT NULL DEFAULT 1",
+            "accepted_at TEXT",
+        ):
+            _add_column(connection, "recognition_results", definition)
+    if "shopify_sync" in tables:
+        for definition in (
+            "variant_id TEXT NOT NULL DEFAULT ''",
+            "inventory_item_id TEXT NOT NULL DEFAULT ''",
+            "admin_url TEXT NOT NULL DEFAULT ''",
+            "media_count INTEGER NOT NULL DEFAULT 0",
+            "last_synced_at TEXT",
+            "last_error TEXT NOT NULL DEFAULT ''",
+            "retry_count INTEGER NOT NULL DEFAULT 0",
+            "idempotency_key TEXT NOT NULL DEFAULT ''",
+            "last_completed_step TEXT NOT NULL DEFAULT ''",
+        ):
+            _add_column(connection, "shopify_sync", definition)
+
+
+def _restore_database(db_file: Path, backup: Path) -> None:
+    for suffix in ("-wal", "-shm", "-journal"):
+        Path(f"{db_file}{suffix}").unlink(missing_ok=True)
+    db_file.unlink(missing_ok=True)
+    shutil.copy2(backup, db_file)
 
 
 def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
     db_file.parent.mkdir(parents=True, exist_ok=True)
-    if db_file.exists() and paths is not None:
-        with connect(db_file) as probe:
+    current = 0
+    existing = db_file.exists() and db_file.stat().st_size > 0
+    if existing:
+        # Probe with a plain read-only connection so refusing a future schema does not
+        # switch journal mode or otherwise mutate the database file.
+        probe = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
+        try:
             current = int(probe.execute("PRAGMA user_version").fetchone()[0])
-        if current < SCHEMA_VERSION:
-            backup_database(paths, f"before-schema-v{SCHEMA_VERSION}")
-    with transaction(db_file) as connection:
-        _base_schema(connection)
-        _upgrade_legacy(connection)
-        connection.execute(
-            "INSERT OR REPLACE INTO schema_migrations(version, applied_at, description) VALUES(?, ?, ?)",
-            (SCHEMA_VERSION, now(), "SnapIMS v0.5.0 reconstruction schema"),
-        )
-        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-    with connect(db_file) as connection:
-        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
-        foreign = connection.execute("PRAGMA foreign_key_check").fetchall()
-    if integrity != "ok" or foreign:
-        raise RuntimeError(f"Migration integrity failure: integrity={integrity}, foreign_keys={len(foreign)}")
+        finally:
+            probe.close()
+        if current > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"Database schema {current} is newer than supported schema {SCHEMA_VERSION}; "
+                "startup was refused without modifying the database."
+            )
+        if current == SCHEMA_VERSION:
+            with connect(db_file) as connection:
+                integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+                foreign = connection.execute("PRAGMA foreign_key_check").fetchall()
+            if integrity != "ok" or foreign:
+                raise RuntimeError(
+                    f"Database integrity failure: integrity={integrity}, "
+                    f"foreign_keys={len(foreign)}"
+                )
+            return
+
+    backup: Path | None = None
+    if existing and paths is not None:
+        backup = backup_database(paths, f"before-schema-v{SCHEMA_VERSION}")
+    try:
+        with transaction(db_file) as connection:
+            # Add columns needed by index creation before CREATE INDEX runs on a legacy table.
+            _upgrade_legacy(connection)
+            _base_schema(connection)
+            _upgrade_legacy(connection)
+            timestamp = now()
+            connection.execute(
+                "UPDATE items SET created_at=CASE WHEN created_at='' THEN ? ELSE created_at END, "
+                "updated_at=CASE WHEN updated_at='' THEN ? ELSE updated_at END",
+                (timestamp, timestamp),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO shopify_sync(item_id) SELECT item_id FROM items"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO recognition_jobs(batch_id,provider,status,total,updated_at) "
+                "SELECT batch_id,'mock','READY',COUNT(*),? FROM items GROUP BY batch_id",
+                (timestamp,),
+            )
+            connection.execute(
+                "INSERT OR REPLACE INTO schema_migrations(version, applied_at, description) "
+                "VALUES(?, ?, ?)",
+                (SCHEMA_VERSION, timestamp, "SnapIMS v0.5.1 verified schema"),
+            )
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        with connect(db_file) as connection:
+            integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+            foreign = connection.execute("PRAGMA foreign_key_check").fetchall()
+        if integrity != "ok" or foreign:
+            raise RuntimeError(
+                f"Migration integrity failure: integrity={integrity}, "
+                f"foreign_keys={len(foreign)}"
+            )
+    except Exception:
+        if backup is not None and backup.exists():
+            _restore_database(db_file, backup)
+        raise
 
 
 def get_setting(db_file: Path, key: str, default: str = "") -> str:

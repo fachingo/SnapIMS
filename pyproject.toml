@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "snapims"
-version = "0.5.0"
+version = "0.5.1"
 description = "Photo-first, exception-driven inventory ingestion for physical media"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,6 +29,8 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.11",
   "python-docx>=1.1",
+  "build>=1.2",
+  "pytest-cov>=5.0",
 ]
 
 [project.scripts]

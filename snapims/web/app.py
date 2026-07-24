@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -219,7 +220,9 @@ def recognition_status(paths: DataPaths, batch_id: str, job: dict[str, Any] | No
 @app.post("/review/identify")
 def identify(batch_id: str = Form(...), provider: str = Form("mock"), delay: float = Form(0)) -> RedirectResponse:
     paths = get_paths()
-    start_batch_recognition(paths.db_file, batch_id, provider, delay=delay)
+    configured_delay = float(os.getenv("SNAPIMS_MOCK_DELAY", "0") or 0)
+    effective_delay = delay if delay > 0 else configured_delay
+    start_batch_recognition(paths.db_file, batch_id, provider, delay=effective_delay)
     return redirect(f"/review?batch_id={quote(batch_id)}")
 
 

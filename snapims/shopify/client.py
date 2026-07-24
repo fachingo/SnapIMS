@@ -31,7 +31,7 @@ class HTTPShopifyTransport:
             self.endpoint,
             data=json.dumps({"query": query, "variables": variables}).encode(),
             method="POST",
-            headers={"Content-Type": "application/json", "X-Shopify-Access-Token": self.config.access_token, "User-Agent": "SnapIMS/0.5"},
+            headers={"Content-Type": "application/json", "X-Shopify-Access-Token": self.config.access_token, "User-Agent": "SnapIMS/0.5.1"},
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
@@ -124,6 +124,21 @@ class ShopifyClient:
             {"inventoryItemId": inventory_item_id, "locationId": self.config.location_id, "available": quantity},
             "inventoryActivate",
         )
+
+
+    def inventory_quantity(self, inventory_item_id: str) -> int | None:
+        payload = self.transport.graphql(
+            """query InventoryQuantity($id:ID!){inventoryItem(id:$id){inventoryLevels(first:50){nodes{location{id} quantities(names:[\"available\"]){name quantity}}}}}""",
+            {"id": inventory_item_id},
+        )
+        nodes = payload.get("data", {}).get("inventoryItem", {}).get("inventoryLevels", {}).get("nodes", [])
+        for node in nodes:
+            if node.get("location", {}).get("id") != self.config.location_id:
+                continue
+            for quantity in node.get("quantities", []):
+                if quantity.get("name") == "available":
+                    return int(quantity.get("quantity", 0))
+        return None
 
     def stage_images(self, image_paths: list[Path]) -> list[dict[str, Any]]:
         inputs = [{"filename": path.name, "mimeType": mimetypes.guess_type(path.name)[0] or "image/jpeg", "httpMethod": "POST", "resource": "PRODUCT_IMAGE"} for path in image_paths]

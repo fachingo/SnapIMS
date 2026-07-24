@@ -21,3 +21,6 @@ SnapIMS-data/
 demo-data/
 operator-audit-assets/**/workspace/
 operator-audit-assets/**/downloads/
+
+operator-audit-assets/**/camera-rolls/
+operator-audit-assets/**/logs/
