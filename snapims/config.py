@@ -17,6 +17,7 @@ class DataPaths:
     backups: Path
     logs: Path
     db_file: Path
+    catalog_db_file: Path
 
     @classmethod
     def from_root(cls, root: str | Path | None = None) -> DataPaths:
@@ -32,6 +33,7 @@ class DataPaths:
             backups=base / "backups",
             logs=base / "logs",
             db_file=base / "database" / "inventory.sqlite3",
+            catalog_db_file=base / "database" / "movie_catalog.sqlite3",
         )
 
     def ensure(self) -> DataPaths:
