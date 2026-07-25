@@ -398,7 +398,7 @@ Browser evidence: `release-evidence/v0.7.0/browser/screenshots/`
 ''',
 "DOCUMENTATION_VERIFICATION.md": r'''# SnapIMS 0.7.0 Documentation Verification
 
-The Operator Guide was regenerated after the final v0.7.0 native browser audit. It uses the final 1440×1000 screenshots for Home, Import, Review, Movie ambiguity/selection, recognition recovery, Batch Editor keyboard operation, CSV, Publish, restart and Diagnostics.
+The 52-page Operator Guide was regenerated after the final v0.7.0 native browser audit. It uses the final 1440×1000 screenshots for Home, Import, Review, Movie ambiguity/selection, recognition recovery, Batch Editor keyboard operation, CSV, Publish, restart and Diagnostics.
 
 Verification procedure:
 
