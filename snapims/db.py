@@ -310,6 +310,35 @@ def _base_schema(connection: sqlite3.Connection) -> None:
             diff_json TEXT NOT NULL,
             blocking_errors_json TEXT NOT NULL DEFAULT '[]'
         );
+        CREATE TABLE IF NOT EXISTS item_movie_links (
+            item_id TEXT PRIMARY KEY REFERENCES items(item_id) ON DELETE RESTRICT,
+            movie_id TEXT,
+            link_status TEXT NOT NULL,
+            link_method TEXT NOT NULL DEFAULT '',
+            recognition_result_id INTEGER REFERENCES recognition_results(recognition_result_id) ON DELETE RESTRICT,
+            match_score REAL,
+            linked_at TEXT,
+            updated_at TEXT NOT NULL,
+            operator_confirmed INTEGER NOT NULL DEFAULT 0,
+            catalog_revision INTEGER,
+            last_error TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS item_movie_link_events (
+            link_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id TEXT NOT NULL REFERENCES items(item_id) ON DELETE RESTRICT,
+            previous_movie_id TEXT,
+            movie_id TEXT,
+            event_type TEXT NOT NULL,
+            link_status TEXT NOT NULL,
+            link_method TEXT NOT NULL DEFAULT '',
+            recognition_result_id INTEGER REFERENCES recognition_results(recognition_result_id) ON DELETE RESTRICT,
+            match_score REAL,
+            operator_confirmed INTEGER NOT NULL DEFAULT 0,
+            catalog_revision INTEGER,
+            occurred_at TEXT NOT NULL,
+            source TEXT NOT NULL,
+            details_json TEXT NOT NULL DEFAULT '{}'
+        );
         CREATE TABLE IF NOT EXISTS import_journal (
             import_id TEXT PRIMARY KEY,
             source_fingerprint TEXT NOT NULL UNIQUE,
@@ -346,6 +375,8 @@ def _base_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_checkpoints_batch ON batch_checkpoints(batch_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_csv_staging_lifecycle ON csv_staging(status, expires_at);
         CREATE INDEX IF NOT EXISTS idx_import_journal_status ON import_journal(status, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_item_movie_links_movie ON item_movie_links(movie_id, link_status);
+        CREATE INDEX IF NOT EXISTS idx_item_movie_link_events_item ON item_movie_link_events(item_id, occurred_at DESC);
         """
     )
 
@@ -398,6 +429,16 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
         "request_id", "operation_type", "batch_id", "status", "result_json",
         "error_message", "created_at", "updated_at", "completed_at",
     },
+    "item_movie_links": {
+        "item_id", "movie_id", "link_status", "link_method",
+        "recognition_result_id", "match_score", "linked_at", "updated_at",
+        "operator_confirmed", "catalog_revision", "last_error",
+    },
+    "item_movie_link_events": {
+        "link_event_id", "item_id", "previous_movie_id", "movie_id", "event_type",
+        "link_status", "link_method", "recognition_result_id", "match_score",
+        "operator_confirmed", "catalog_revision", "occurred_at", "source", "details_json",
+    },
 }
 
 EXPECTED_INDEXES = {
@@ -409,6 +450,8 @@ EXPECTED_INDEXES = {
     "idx_checkpoints_batch",
     "idx_csv_staging_lifecycle",
     "idx_import_journal_status",
+    "idx_item_movie_links_movie",
+    "idx_item_movie_link_events_item",
 }
 
 
@@ -1941,3 +1984,212 @@ def media_totals(db_file: Path) -> dict[str, int]:
 
 def list_editor_items(db_file: Path, batch_id: str) -> list[dict[str, Any]]:
     return list_items(db_file, batch_id=batch_id)
+
+def get_item_movie_link(db_file: Path, item_id: str) -> dict[str, Any] | None:
+    initialize(db_file)
+    with connect(db_file) as connection:
+        row = connection.execute(
+            "SELECT * FROM item_movie_links WHERE item_id=?", (item_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def set_item_movie_link(
+    db_file: Path,
+    *,
+    item_id: str,
+    movie_id: str,
+    link_status: str,
+    link_method: str,
+    recognition_result_id: int | None,
+    match_score: float | None,
+    operator_confirmed: bool,
+    catalog_revision: int | None,
+    source: str = "SLMC",
+) -> None:
+    """Set the one current cross-database link and preserve an auditable event.
+
+    The caller must validate that movie_id exists in movie_catalog.sqlite3 before
+    invoking this function. SQLite cannot enforce that relationship across files.
+    """
+
+    initialize(db_file)
+    if not movie_id.startswith("MOV-"):
+        raise ValueError("Movie ID must use the immutable MOV- identifier format")
+    timestamp = now()
+    with transaction(db_file) as connection:
+        item = connection.execute("SELECT item_id FROM items WHERE item_id=?", (item_id,)).fetchone()
+        if item is None:
+            raise KeyError(f"Unknown Item ID: {item_id}")
+        if recognition_result_id is not None:
+            result = connection.execute(
+                "SELECT item_id FROM recognition_results WHERE recognition_result_id=?",
+                (recognition_result_id,),
+            ).fetchone()
+            if result is None or str(result[0]) != item_id:
+                raise ValueError("Recognition result does not belong to the Item being linked")
+        previous = connection.execute(
+            "SELECT movie_id,link_status FROM item_movie_links WHERE item_id=?", (item_id,)
+        ).fetchone()
+        previous_movie_id = str(previous[0] or "") if previous else ""
+        linked_at = timestamp if previous_movie_id != movie_id else None
+        connection.execute(
+            """INSERT INTO item_movie_links(
+                   item_id,movie_id,link_status,link_method,recognition_result_id,match_score,
+                   linked_at,updated_at,operator_confirmed,catalog_revision,last_error
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(item_id) DO UPDATE SET
+                   movie_id=excluded.movie_id,link_status=excluded.link_status,
+                   link_method=excluded.link_method,recognition_result_id=excluded.recognition_result_id,
+                   match_score=excluded.match_score,
+                   linked_at=CASE WHEN item_movie_links.movie_id IS NOT excluded.movie_id
+                                  THEN excluded.updated_at ELSE item_movie_links.linked_at END,
+                   updated_at=excluded.updated_at,operator_confirmed=excluded.operator_confirmed,
+                   catalog_revision=excluded.catalog_revision,last_error=''""",
+            (
+                item_id,
+                movie_id,
+                link_status,
+                link_method,
+                recognition_result_id,
+                match_score,
+                linked_at or timestamp,
+                timestamp,
+                int(operator_confirmed),
+                catalog_revision,
+                "",
+            ),
+        )
+        event_type = "LINKED" if not previous_movie_id else (
+            "RELINKED" if previous_movie_id != movie_id else "LINK_REFRESHED"
+        )
+        connection.execute(
+            """INSERT INTO item_movie_link_events(
+                   item_id,previous_movie_id,movie_id,event_type,link_status,link_method,
+                   recognition_result_id,match_score,operator_confirmed,catalog_revision,
+                   occurred_at,source,details_json
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                item_id,
+                previous_movie_id or None,
+                movie_id,
+                event_type,
+                link_status,
+                link_method,
+                recognition_result_id,
+                match_score,
+                int(operator_confirmed),
+                catalog_revision,
+                timestamp,
+                source,
+                json.dumps({"previous_status": str(previous[1]) if previous else ""}),
+            ),
+        )
+
+
+def mark_item_catalog_unavailable(
+    db_file: Path,
+    item_id: str,
+    recognition_result_id: int | None,
+    error: str,
+) -> None:
+    initialize(db_file)
+    timestamp = now()
+    with transaction(db_file) as connection:
+        item = connection.execute("SELECT item_id FROM items WHERE item_id=?", (item_id,)).fetchone()
+        if item is None:
+            raise KeyError(f"Unknown Item ID: {item_id}")
+        previous = connection.execute(
+            "SELECT movie_id FROM item_movie_links WHERE item_id=?", (item_id,)
+        ).fetchone()
+        previous_movie_id = str(previous[0] or "") if previous else ""
+        connection.execute(
+            """INSERT INTO item_movie_links(
+                   item_id,movie_id,link_status,link_method,recognition_result_id,match_score,
+                   linked_at,updated_at,operator_confirmed,catalog_revision,last_error
+               ) VALUES(?,NULL,'CATALOG_UNAVAILABLE','',?,NULL,NULL,?,0,NULL,?)
+               ON CONFLICT(item_id) DO UPDATE SET
+                   link_status='CATALOG_UNAVAILABLE',link_method='',recognition_result_id=excluded.recognition_result_id,
+                   updated_at=excluded.updated_at,last_error=excluded.last_error""",
+            (item_id, recognition_result_id, timestamp, error[:2000]),
+        )
+        connection.execute(
+            """INSERT INTO item_movie_link_events(
+                   item_id,previous_movie_id,movie_id,event_type,link_status,link_method,
+                   recognition_result_id,occurred_at,source,details_json
+               ) VALUES(?,?,NULL,'CATALOG_UNAVAILABLE','CATALOG_UNAVAILABLE','',?,?,?,?)""",
+            (
+                item_id,
+                previous_movie_id or None,
+                recognition_result_id,
+                timestamp,
+                "SLMC",
+                json.dumps({"error": error[:2000]}),
+            ),
+        )
+
+
+def mark_item_movie_link_stale(db_file: Path, item_id: str, *, reason: str) -> None:
+    initialize(db_file)
+    timestamp = now()
+    with transaction(db_file) as connection:
+        row = connection.execute(
+            "SELECT * FROM item_movie_links WHERE item_id=?", (item_id,)
+        ).fetchone()
+        if row is None:
+            return
+        connection.execute(
+            "UPDATE item_movie_links SET link_status='STALE',updated_at=?,last_error=? WHERE item_id=?",
+            (timestamp, reason, item_id),
+        )
+        connection.execute(
+            """INSERT INTO item_movie_link_events(
+                   item_id,previous_movie_id,movie_id,event_type,link_status,link_method,
+                   recognition_result_id,match_score,operator_confirmed,catalog_revision,
+                   occurred_at,source,details_json
+               ) VALUES(?,?,?,'STALE','STALE',?,?,?,?,?,?,?,?)""",
+            (
+                item_id,
+                row["movie_id"],
+                row["movie_id"],
+                row["link_method"],
+                row["recognition_result_id"],
+                row["match_score"],
+                row["operator_confirmed"],
+                row["catalog_revision"],
+                timestamp,
+                "OPERATOR_CORRECTION",
+                json.dumps({"reason": reason}),
+            ),
+        )
+
+
+def item_movie_link_history(db_file: Path, item_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+    initialize(db_file)
+    with connect(db_file) as connection:
+        rows = connection.execute(
+            "SELECT * FROM item_movie_link_events WHERE item_id=? ORDER BY link_event_id DESC LIMIT ?",
+            (item_id, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def movie_link_summary(db_file: Path) -> dict[str, int]:
+    initialize(db_file)
+    with connect(db_file) as connection:
+        return {
+            "linked_items": int(connection.execute(
+                "SELECT COUNT(*) FROM item_movie_links WHERE movie_id IS NOT NULL AND link_status!='STALE'"
+            ).fetchone()[0]),
+            "stale_links": int(connection.execute(
+                "SELECT COUNT(*) FROM item_movie_links WHERE link_status='STALE'"
+            ).fetchone()[0]),
+            "unlinked_recognized_items": int(connection.execute(
+                """SELECT COUNT(*) FROM items i
+                   WHERE i.recognition_status='COMPLETE'
+                     AND NOT EXISTS(
+                         SELECT 1 FROM item_movie_links l
+                         WHERE l.item_id=i.item_id AND l.movie_id IS NOT NULL AND l.link_status!='STALE'
+                     )"""
+            ).fetchone()[0]),
+        }
