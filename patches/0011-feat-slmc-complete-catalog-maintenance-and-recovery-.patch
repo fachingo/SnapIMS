@@ -1,0 +1,959 @@
+From dad21ce4d50684b9dfbe21c22cfbb6ab453fcad5 Mon Sep 17 00:00:00 2001
+From: OpenAI <noreply@openai.com>
+Date: Sat, 25 Jul 2026 09:40:28 +0000
+Subject: [PATCH 11/14] feat(slmc): complete catalog maintenance and recovery
+ tools
+
+
+diff --git a/scripts/catalog_admin.py b/scripts/catalog_admin.py
+index 45aca3d..97f28b7 100755
+--- a/scripts/catalog_admin.py
++++ b/scripts/catalog_admin.py
+@@ -9,10 +9,13 @@ from snapims.catalog import db as catalog_db
+ from snapims.catalog.admin import (
+     add_alias,
+     import_catalog_json,
++    inspect_movie,
+     manual_search,
+     merge_movies,
+     reconcile_maintenance_jobs,
++    refresh_movie_source,
+     split_movie,
++    update_movie_fields,
+ )
+ from snapims.config import DataPaths
+ 
+@@ -25,6 +28,18 @@ def parser() -> argparse.ArgumentParser:
+     commands.add_parser("backup")
+     commands.add_parser("rebuild-index")
+     commands.add_parser("reconcile")
++    show = commands.add_parser("show")
++    show.add_argument("movie_id")
++    refresh = commands.add_parser("refresh")
++    refresh.add_argument("movie_id")
++    update = commands.add_parser("update")
++    update.add_argument("movie_id")
++    update.add_argument("--canonical-title")
++    update.add_argument("--original-title")
++    update.add_argument("--year", type=int)
++    update.add_argument("--runtime", type=int)
++    update.add_argument("--media-type")
++    update.add_argument("--summary")
+     search = commands.add_parser("search")
+     search.add_argument("title")
+     search.add_argument("--year", type=int)
+@@ -58,6 +73,21 @@ def main() -> int:
+         output = {"indexed_movies": catalog_db.rebuild_search_index(paths.catalog_db_file)}
+     elif args.command == "reconcile":
+         output = {"completed_jobs": reconcile_maintenance_jobs(paths)}
++    elif args.command == "show":
++        output = inspect_movie(paths, args.movie_id)
++    elif args.command == "refresh":
++        output = refresh_movie_source(paths, args.movie_id)
++    elif args.command == "update":
++        output = update_movie_fields(
++            paths,
++            args.movie_id,
++            canonical_title=args.canonical_title,
++            original_title=args.original_title,
++            release_year=args.year,
++            runtime_minutes=args.runtime,
++            media_type=args.media_type,
++            concise_summary=args.summary,
++        )
+     elif args.command == "search":
+         output = manual_search(paths, args.title, args.year)
+     elif args.command == "add-alias":
+diff --git a/scripts/scan_release_archive.py b/scripts/scan_release_archive.py
+new file mode 100644
+index 0000000..e9ba05a
+--- /dev/null
++++ b/scripts/scan_release_archive.py
+@@ -0,0 +1,72 @@
++from __future__ import annotations
++
++import argparse
++import re
++import sys
++import zipfile
++from pathlib import Path
++
++FORBIDDEN_NAMES = (
++    ".env",
++    ".pem",
++    ".key",
++    ".p12",
++    ".sqlite",
++    ".sqlite3",
++    ".db",
++    ".log",
++    ".pyc",
++)
++FORBIDDEN_PARTS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "workspace", "backups"}
++SECRET_PATTERNS = [
++    re.compile(rb"OPENAI_API_KEY\s*=\s*[^\s#]+", re.I),
++    re.compile(rb"SHOPIFY_ADMIN_ACCESS_TOKEN\s*=\s*[^\s#]+", re.I),
++    re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
++    re.compile(rb"sk-[A-Za-z0-9_-]{20,}"),
++    re.compile(rb"shpat_[A-Za-z0-9]{20,}"),
++]
++ALLOWED_ENV_EXAMPLE = ".env.example"
++
++
++def scan(path: Path) -> list[str]:
++    issues: list[str] = []
++    with zipfile.ZipFile(path) as archive:
++        for info in archive.infolist():
++            name = info.filename
++            lowered = name.casefold()
++            parts = {part.casefold() for part in Path(name).parts}
++            basename = Path(name).name.casefold()
++            if parts & FORBIDDEN_PARTS:
++                issues.append(f"forbidden directory: {name}")
++            if basename != ALLOWED_ENV_EXAMPLE and any(lowered.endswith(suffix) for suffix in FORBIDDEN_NAMES):
++                issues.append(f"forbidden file type: {name}")
++            if info.is_dir() or info.file_size > 5_000_000:
++                continue
++            try:
++                payload = archive.read(info)
++            except OSError as exc:
++                issues.append(f"unreadable member: {name}: {exc}")
++                continue
++            for pattern in SECRET_PATTERNS:
++                if pattern.search(payload):
++                    issues.append(f"possible secret in: {name}")
++                    break
++    return sorted(set(issues))
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("archive", type=Path)
++    args = parser.parse_args()
++    issues = scan(args.archive)
++    if issues:
++        print("ARCHIVE SAFETY SCAN: FAILED")
++        for issue in issues:
++            print(f"- {issue}")
++        return 1
++    print("ARCHIVE SAFETY SCAN: PASSED")
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/snapims/catalog/admin.py b/snapims/catalog/admin.py
+index bcb4721..1359931 100644
+--- a/snapims/catalog/admin.py
++++ b/snapims/catalog/admin.py
+@@ -7,7 +7,8 @@ from typing import Any
+ from snapims import db as inventory_db
+ from snapims.catalog import db as catalog_db
+ from snapims.catalog.normalization import normalize_title, strip_leading_article
+-from snapims.catalog.service import get_movie, search_local
++from snapims.catalog.service import create_or_update_movie, get_movie, search_local
++from snapims.catalog.wikipedia import WikipediaClient
+ from snapims.config import DataPaths
+ 
+ 
+@@ -32,13 +33,21 @@ def _finish_job(
+     error: str = "",
+ ) -> None:
+     with catalog_db.transaction(paths.catalog_db_file) as connection:
++        if result is None:
++            existing = connection.execute(
++                "SELECT result_json FROM catalog_maintenance_jobs WHERE maintenance_job_id=?",
++                (job_id,),
++            ).fetchone()
++            result_json = str(existing[0]) if existing else "{}"
++        else:
++            result_json = json.dumps(result, sort_keys=True)
+         connection.execute(
+             """UPDATE catalog_maintenance_jobs
+                SET status=?,result_json=?,last_error=?,updated_at=?,finished_at=CASE WHEN ? IN ('COMPLETE','FAILED') THEN ? ELSE finished_at END
+                WHERE maintenance_job_id=?""",
+             (
+                 status,
+-                json.dumps(result or {}, sort_keys=True),
++                result_json,
+                 error,
+                 catalog_db.now(),
+                 status,
+@@ -93,6 +102,233 @@ def add_alias(
+     catalog_db.rebuild_search_index(paths.catalog_db_file)
+ 
+ 
++def update_movie_fields(
++    paths: DataPaths,
++    movie_id: str,
++    *,
++    canonical_title: str | None = None,
++    original_title: str | None = None,
++    release_year: int | None = None,
++    runtime_minutes: int | None = None,
++    media_type: str | None = None,
++    concise_summary: str | None = None,
++) -> dict[str, Any]:
++    """Apply explicit operator corrections without changing Movie identity."""
++
++    catalog_db.backup_catalog(paths, "before-movie-field-correction")
++    with catalog_db.transaction(paths.catalog_db_file) as connection:
++        row = connection.execute(
++            "SELECT * FROM movies WHERE movie_id=? AND active=1", (movie_id,)
++        ).fetchone()
++        if row is None:
++            raise KeyError(f"Unknown active Movie ID: {movie_id}")
++        changes: dict[str, dict[str, Any]] = {}
++        updates: dict[str, Any] = {}
++        if canonical_title is not None:
++            title = canonical_title.strip()
++            if not title:
++                raise ValueError("Canonical title cannot be blank")
++            if title != str(row["canonical_title"]):
++                old_title = str(row["canonical_title"])
++                changes["canonical_title"] = {"old": old_title, "new": title}
++                updates.update(
++                    canonical_title=title,
++                    normalized_title=normalize_title(title),
++                    articleless_title=strip_leading_article(normalize_title(title)),
++                )
++                connection.execute(
++                    """INSERT OR IGNORE INTO movie_aliases(
++                           movie_id,alias,normalized_alias,articleless_alias,alias_type,language,
++                           source,source_page_id,created_at
++                       ) VALUES(?,?,?,?,?,'','OPERATOR','',?)""",
++                    (
++                        movie_id,
++                        old_title,
++                        normalize_title(old_title),
++                        strip_leading_article(normalize_title(old_title)),
++                        "previous_canonical",
++                        catalog_db.now(),
++                    ),
++                )
++        for field, value in (
++            ("original_title", original_title),
++            ("primary_release_year", release_year),
++            ("runtime_minutes", runtime_minutes),
++            ("media_type", media_type),
++            ("concise_summary", concise_summary),
++        ):
++            if value is not None and value != row[field]:
++                changes[field] = {"old": row[field], "new": value}
++                updates[field] = value
++        if not changes:
++            return {"movie_id": movie_id, "changed_fields": []}
++        assignments = ",".join(f"{column}=?" for column in updates)
++        connection.execute(
++            f"UPDATE movies SET {assignments},catalog_revision=catalog_revision+1,updated_at=? WHERE movie_id=?",
++            (*updates.values(), catalog_db.now(), movie_id),
++        )
++        connection.execute(
++            """INSERT INTO catalog_events(
++                   occurred_at,event_type,movie_id,source,details_json
++               ) VALUES(?,'MOVIE_FIELDS_CORRECTED',?,'OPERATOR',?)""",
++            (catalog_db.now(), movie_id, json.dumps(changes, default=str, sort_keys=True)),
++        )
++    catalog_db.rebuild_search_index(paths.catalog_db_file)
++    return {"movie_id": movie_id, "changed_fields": sorted(changes)}
++
++
++def refresh_movie_source(
++    paths: DataPaths,
++    movie_id: str,
++    *,
++    client: WikipediaClient | None = None,
++) -> dict[str, Any]:
++    """Refresh one sourced Movie from its recorded Wikipedia page.
++
++    Operator-authored aliases remain. Source-derived facts are replaced inside one
++    catalog transaction and the immutable Movie ID is preserved.
++    """
++
++    catalog_db.initialize(paths.catalog_db_file, paths=paths)
++    with catalog_db.connect(paths.catalog_db_file, readonly=True) as connection:
++        movie = connection.execute(
++            "SELECT * FROM movies WHERE movie_id=? AND active=1", (movie_id,)
++        ).fetchone()
++        source = connection.execute(
++            """SELECT * FROM movie_sources
++               WHERE movie_id=? AND provider_name='wikipedia' AND active=1
++               ORDER BY movie_source_id DESC LIMIT 1""",
++            (movie_id,),
++        ).fetchone()
++    if movie is None:
++        raise KeyError(f"Unknown active Movie ID: {movie_id}")
++    if source is None:
++        raise ValueError("Movie has no active Wikipedia source")
++    catalog_db.backup_catalog(paths, "before-movie-source-refresh")
++    wikipedia = client or WikipediaClient(paths.catalog_db_file)
++    candidate = wikipedia.fetch_candidate(
++        str(source["source_page_id"]),
++        query_title=str(movie["canonical_title"]),
++        query_year=int(movie["primary_release_year"]) if movie["primary_release_year"] is not None else None,
++    )
++    if candidate.media_type == "non-film" or candidate.rejected_reason:
++        raise ValueError(f"Refreshed source is not an acceptable film: {candidate.rejected_reason or candidate.media_type}")
++    with catalog_db.transaction(paths.catalog_db_file) as connection:
++        connection.execute(
++            """UPDATE movies SET canonical_title=?,normalized_title=?,articleless_title=?,
++                   original_title=?,primary_release_year=?,release_date=?,media_type=?,
++                   runtime_minutes=?,concise_summary=?,data_quality_status='SOURCE_VERIFIED',
++                   catalog_revision=catalog_revision+1,updated_at=? WHERE movie_id=?""",
++            (
++                candidate.canonical_title,
++                normalize_title(candidate.canonical_title),
++                strip_leading_article(normalize_title(candidate.canonical_title)),
++                candidate.original_title,
++                candidate.release_year,
++                candidate.release_date,
++                candidate.media_type,
++                candidate.runtime_minutes,
++                candidate.summary,
++                catalog_db.now(),
++                movie_id,
++            ),
++        )
++        connection.execute(
++            """UPDATE movie_sources SET source_page_title=?,source_url=?,source_revision_id=?,
++                   retrieved_at=?,parser_version=?,raw_response_hash=?,attribution_data=?,
++                   field_provenance_json=?,active=1 WHERE movie_source_id=?""",
++            (
++                candidate.source_page_title,
++                candidate.source_url,
++                candidate.source_revision_id,
++                candidate.retrieved_at,
++                candidate.parser_version,
++                candidate.raw_response_hash,
++                candidate.attribution,
++                json.dumps({field: candidate.source_url for field in (
++                    "canonical_title", "release_year", "runtime_minutes", "directors",
++                    "genres", "countries", "languages", "summary"
++                )}),
++                int(source["movie_source_id"]),
++            ),
++        )
++        for table in ("movie_credits", "movie_genres", "movie_countries", "movie_languages"):
++            connection.execute(f"DELETE FROM {table} WHERE movie_id=? AND source='wikipedia'", (movie_id,))
++        for order, director in enumerate(candidate.directors, start=1):
++            connection.execute(
++                "INSERT OR IGNORE INTO movie_credits(movie_id,person_name,credit_type,billing_order,source,created_at) VALUES(?,?,'director',?,'wikipedia',?)",
++                (movie_id, director, order, catalog_db.now()),
++            )
++        for table, column, values in (
++            ("movie_genres", "genre", candidate.genres),
++            ("movie_countries", "country", candidate.countries),
++            ("movie_languages", "language", candidate.languages),
++        ):
++            for value in values:
++                connection.execute(
++                    f"INSERT OR IGNORE INTO {table}(movie_id,{column},source) VALUES(?,?,'wikipedia')",
++                    (movie_id, value),
++                )
++        for alias in (candidate.canonical_title, candidate.original_title, *candidate.aliases):
++            if not alias.strip():
++                continue
++            connection.execute(
++                """INSERT OR IGNORE INTO movie_aliases(
++                       movie_id,alias,normalized_alias,articleless_alias,alias_type,language,
++                       source,source_page_id,created_at
++                   ) VALUES(?,?,?,?,?,'en','wikipedia',?,?)""",
++                (
++                    movie_id,
++                    alias.strip(),
++                    normalize_title(alias),
++                    strip_leading_article(normalize_title(alias)),
++                    "canonical" if alias == candidate.canonical_title else "alternate",
++                    candidate.source_page_id,
++                    catalog_db.now(),
++                ),
++            )
++        connection.execute(
++            """INSERT INTO catalog_events(
++                   occurred_at,event_type,movie_id,source,details_json
++               ) VALUES(?,'MOVIE_SOURCE_REFRESHED',?,'WIKIPEDIA',?)""",
++            (
++                catalog_db.now(),
++                movie_id,
++                json.dumps(
++                    {
++                        "source_page_id": candidate.source_page_id,
++                        "source_revision_id": candidate.source_revision_id,
++                    },
++                    sort_keys=True,
++                ),
++            ),
++        )
++    catalog_db.rebuild_search_index(paths.catalog_db_file)
++    refreshed = get_movie(paths.catalog_db_file, movie_id)
++    return {
++        "movie_id": movie_id,
++        "canonical_title": refreshed["canonical_title"] if refreshed else candidate.canonical_title,
++        "source_revision_id": candidate.source_revision_id,
++    }
++
++
++def inspect_movie(paths: DataPaths, movie_id: str) -> dict[str, Any]:
++    movie = get_movie(paths.catalog_db_file, movie_id)
++    if movie is None:
++        raise KeyError(movie_id)
++    with catalog_db.connect(paths.catalog_db_file, readonly=True) as connection:
++        aliases = [dict(row) for row in connection.execute(
++            "SELECT * FROM movie_aliases WHERE movie_id=? ORDER BY alias_id", (movie_id,)
++        )]
++        sources = [dict(row) for row in connection.execute(
++            "SELECT * FROM movie_sources WHERE movie_id=? ORDER BY movie_source_id", (movie_id,)
++        )]
++        events = [dict(row) for row in connection.execute(
++            "SELECT * FROM catalog_events WHERE movie_id=? ORDER BY catalog_event_id DESC LIMIT 50", (movie_id,)
++        )]
++    return {"movie": movie, "aliases": aliases, "sources": sources, "events": events}
++
++
+ def _relink_inventory_movie(paths: DataPaths, old_movie_id: str, new_movie_id: str, *, method: str) -> int:
+     with inventory_db.connect(paths.db_file) as connection:
+         rows = connection.execute(
+@@ -347,6 +583,32 @@ def reconcile_maintenance_jobs(paths: DataPaths) -> int:
+                     method="MOVIE_MERGE_RECONCILIATION",
+                 )
+                 result = {"relinked_items": relinked, **payload}
++            elif row["operation"] == "SPLIT":
++                stored_result = json.loads(str(row["result_json"] or "{}"))
++                new_movie_id = str(stored_result.get("new_movie_id") or "")
++                new_movie = get_movie(paths.catalog_db_file, new_movie_id)
++                if new_movie is None:
++                    raise RuntimeError("Split target Movie is missing")
++                relinked = 0
++                for item_id in payload.get("item_ids", []):
++                    current = inventory_db.get_item_movie_link(paths.db_file, str(item_id))
++                    if current and str(current.get("movie_id") or "") == new_movie_id:
++                        continue
++                    if current is None or str(current.get("movie_id") or "") != str(payload["source_movie_id"]):
++                        raise ValueError(f"Split Item is linked to an unexpected Movie: {item_id}")
++                    inventory_db.set_item_movie_link(
++                        paths.db_file,
++                        item_id=str(item_id),
++                        movie_id=new_movie_id,
++                        link_status="LOCAL_MATCH",
++                        link_method="MOVIE_SPLIT_RECONCILIATION",
++                        recognition_result_id=int(current.get("recognition_result_id") or 0),
++                        match_score=float(current.get("match_score") or 1.0),
++                        operator_confirmed=True,
++                        catalog_revision=int(new_movie["catalog_revision"]),
++                    )
++                    relinked += 1
++                result = {"relinked_items": relinked, "new_movie_id": new_movie_id, **payload}
+             else:
+                 continue
+             _finish_job(paths, int(row["maintenance_job_id"]), "COMPLETE", result=result)
+diff --git a/snapims/catalog/db.py b/snapims/catalog/db.py
+index 9af3912..8b84ed9 100644
+--- a/snapims/catalog/db.py
++++ b/snapims/catalog/db.py
+@@ -560,13 +560,47 @@ def catalog_summary(db_file: Path) -> dict[str, Any]:
+                WHERE provider_name='wikipedia' AND status='SUCCESS'
+                ORDER BY attempt_id DESC LIMIT 1"""
+         ).fetchone()
++        latest_external = connection.execute(
++            """SELECT status,error_code,error_message,finished_at FROM catalog_lookup_attempts
++               WHERE provider_name='wikipedia' ORDER BY attempt_id DESC LIMIT 1"""
++        ).fetchone()
++        suspected_duplicates = int(connection.execute(
++            """SELECT COUNT(*) FROM (
++                   SELECT normalized_title,primary_release_year,media_type
++                   FROM movies WHERE active=1
++                   GROUP BY normalized_title,primary_release_year,media_type
++                   HAVING COUNT(*) > 1
++               )"""
++        ).fetchone()[0])
++        pending_maintenance = int(connection.execute(
++            "SELECT COUNT(*) FROM catalog_maintenance_jobs WHERE status NOT IN ('COMPLETE','FAILED')"
++        ).fetchone()[0])
++        fts_rows = 0
++        if fts == "1":
++            try:
++                fts_rows = int(connection.execute("SELECT COUNT(*) FROM movie_search").fetchone()[0])
++            except sqlite3.OperationalError:
++                fts_rows = -1
++    backup_dir = db_file.parent.parent / "backups"
++    backups = sorted(backup_dir.glob("movie-catalog-*.sqlite3"), key=lambda path: path.stat().st_mtime)
++    rate_limit_state = "CLEAR"
++    if latest_external and str(latest_external[1] or "") == "RATE_LIMIT":
++        rate_limit_state = "RATE_LIMITED"
++    elif latest_external and str(latest_external[0] or "") == "FAILED":
++        rate_limit_state = "LAST_LOOKUP_FAILED"
+     return {
+         **counts,
+         "integrity": integrity,
+         "foreign_key_violations": foreign,
+         "schema_version": schema,
+         "fts_available": fts == "1",
++        "fts_index_rows": fts_rows,
++        "fts_index_healthy": (fts != "1") or fts_rows == counts["movies"],
++        "suspected_duplicate_movies": suspected_duplicates,
++        "pending_maintenance_jobs": pending_maintenance,
++        "rate_limit_state": rate_limit_state,
+         "database_size_bytes": db_file.stat().st_size if db_file.exists() else 0,
++        "last_backup": str(backups[-1]) if backups else "",
+         "last_successful_external_lookup": str(last_external[0]) if last_external else "",
+     }
+ 
+diff --git a/snapims/catalog/migrations/0001_initial.sql b/snapims/catalog/migrations/0001_initial.sql
+new file mode 100644
+index 0000000..5de0c6b
+--- /dev/null
++++ b/snapims/catalog/migrations/0001_initial.sql
+@@ -0,0 +1,212 @@
++-- SLMC catalog schema 1 reference migration.
++-- Runtime migration, FTS fallback, ledger hash, structural verification, backup,
++-- and post-migration integrity checks are implemented in snapims/catalog/db.py.
++CREATE TABLE IF NOT EXISTS catalog_schema_migrations (
++    version INTEGER PRIMARY KEY,
++    applied_at TEXT NOT NULL,
++    description TEXT NOT NULL,
++    schema_hash TEXT NOT NULL
++);
++CREATE TABLE IF NOT EXISTS catalog_sequences (name TEXT PRIMARY KEY, next_value INTEGER NOT NULL);
++CREATE TABLE IF NOT EXISTS movies (
++    movie_id TEXT PRIMARY KEY,
++    canonical_title TEXT NOT NULL,
++    normalized_title TEXT NOT NULL,
++    articleless_title TEXT NOT NULL,
++    original_title TEXT NOT NULL DEFAULT '',
++    primary_release_year INTEGER,
++    release_date TEXT,
++    media_type TEXT NOT NULL DEFAULT 'film',
++    runtime_minutes INTEGER,
++    concise_summary TEXT NOT NULL DEFAULT '',
++    active INTEGER NOT NULL DEFAULT 1,
++    data_quality_status TEXT NOT NULL DEFAULT 'PROVISIONAL',
++    catalog_revision INTEGER NOT NULL DEFAULT 1,
++    created_at TEXT NOT NULL,
++    updated_at TEXT NOT NULL,
++    CHECK(primary_release_year IS NULL OR primary_release_year BETWEEN 1870 AND 2200),
++    CHECK(runtime_minutes IS NULL OR runtime_minutes BETWEEN 1 AND 10000)
++);
++CREATE TABLE IF NOT EXISTS movie_aliases (
++    alias_id INTEGER PRIMARY KEY AUTOINCREMENT,
++    movie_id TEXT NOT NULL REFERENCES movies(movie_id) ON DELETE RESTRICT,
++    alias TEXT NOT NULL,
++    normalized_alias TEXT NOT NULL,
++    articleless_alias TEXT NOT NULL,
++    alias_type TEXT NOT NULL DEFAULT 'alternate',
++    language TEXT NOT NULL DEFAULT '',
++    source TEXT NOT NULL DEFAULT '',
++    source_page_id TEXT NOT NULL DEFAULT '',
++    created_at TEXT NOT NULL,
++    UNIQUE(movie_id, normalized_alias, alias_type, language)
++);
++CREATE TABLE IF NOT EXISTS movie_titles (
++    title_id INTEGER PRIMARY KEY AUTOINCREMENT,
++    movie_id TEXT NOT NULL REFERENCES movies(movie_id) ON DELETE RESTRICT,
++    title TEXT NOT NULL,
++    normalized_title TEXT NOT NULL,
++    title_type TEXT NOT NULL,
++    language TEXT NOT NULL DEFAULT '',
++    region TEXT NOT NULL DEFAULT '',
++    source TEXT NOT NULL DEFAULT '',
++    created_at TEXT NOT NULL,
++    UNIQUE(movie_id, normalized_title, title_type, language, region)
++);
++CREATE TABLE IF NOT EXISTS movie_sources (
++    movie_source_id INTEGER PRIMARY KEY AUTOINCREMENT,
++    movie_id TEXT NOT NULL REFERENCES movies(movie_id) ON DELETE RESTRICT,
++    provider_name TEXT NOT NULL,
++    source_page_title TEXT NOT NULL,
++    source_page_id TEXT NOT NULL,
++    source_url TEXT NOT NULL,
++    source_revision_id TEXT NOT NULL DEFAULT '',
++    retrieved_at TEXT NOT NULL,
++    parser_version TEXT NOT NULL,
++    raw_response_hash TEXT NOT NULL,
++    attribution_data TEXT NOT NULL DEFAULT '',
++    refresh_eligible INTEGER NOT NULL DEFAULT 1,
++    field_provenance_json TEXT NOT NULL DEFAULT '{}',
++    active INTEGER NOT NULL DEFAULT 1,
++    UNIQUE(provider_name, source_page_id)
++);
++CREATE TABLE IF NOT EXISTS movie_credits (
++    credit_id INTEGER PRIMARY KEY AUTOINCREMENT,
++    movie_id TEXT NOT NULL REFERENCES movies(movie_id) ON DELETE RESTRICT,
++    person_name TEXT NOT NULL,
++    credit_type TEXT NOT NULL,
++    billing_order INTEGER,
++    source TEXT NOT NULL DEFAULT '',
++    created_at TEXT NOT NULL,
++    UNIQUE(movie_id, person_name, credit_type)
++);
++CREATE TABLE IF NOT EXISTS movie_genres (
++    movie_id TEXT NOT NULL REFERENCES movies(movie_id) ON DELETE RESTRICT,
++    genre TEXT NOT NULL,
++    source TEXT NOT NULL DEFAULT '',
++    PRIMARY KEY(movie_id, genre)
++);
++CREATE TABLE IF NOT EXISTS movie_countries (
++    movie_id TEXT NOT NULL REFERENCES movies(movie_id) ON DELETE RESTRICT,
++    country TEXT NOT NULL,
++    source TEXT NOT NULL DEFAULT '',
++    PRIMARY KEY(movie_id, country)
++);
++CREATE TABLE IF NOT EXISTS movie_languages (
++    movie_id TEXT NOT NULL REFERENCES movies(movie_id) ON DELETE RESTRICT,
++    language TEXT NOT NULL,
++    source TEXT NOT NULL DEFAULT '',
++    PRIMARY KEY(movie_id, language)
++);
++CREATE TABLE IF NOT EXISTS catalog_lookup_jobs (
++    job_id INTEGER PRIMARY KEY AUTOINCREMENT,
++    recognition_result_id INTEGER NOT NULL UNIQUE,
++    item_id TEXT NOT NULL,
++    proposed_title TEXT NOT NULL,
++    normalized_title TEXT NOT NULL,
++    proposed_year INTEGER,
++    request_json TEXT NOT NULL,
++    status TEXT NOT NULL,
++    selected_movie_id TEXT REFERENCES movies(movie_id) ON DELETE RESTRICT,
++    link_state TEXT NOT NULL DEFAULT 'NOT_LINKED',
++    attempt_count INTEGER NOT NULL DEFAULT 0,
++    candidate_count INTEGER NOT NULL DEFAULT 0,
++    last_error TEXT NOT NULL DEFAULT '',
++    created_at TEXT NOT NULL,
++    updated_at TEXT NOT NULL,
++    started_at TEXT,
++    finished_at TEXT,
++    next_retry_at TEXT,
++    lease_owner TEXT NOT NULL DEFAULT '',
++    lease_expires_at TEXT
++);
++CREATE TABLE IF NOT EXISTS movie_candidates (
++    candidate_id INTEGER PRIMARY KEY AUTOINCREMENT,
++    job_id INTEGER NOT NULL REFERENCES catalog_lookup_jobs(job_id) ON DELETE RESTRICT,
++    provider_name TEXT NOT NULL,
++    source_page_id TEXT NOT NULL,
++    source_page_title TEXT NOT NULL,
++    source_url TEXT NOT NULL DEFAULT '',
++    canonical_title TEXT NOT NULL DEFAULT '',
++    release_year INTEGER,
++    media_type TEXT NOT NULL DEFAULT '',
++    score REAL NOT NULL DEFAULT 0,
++    evidence_json TEXT NOT NULL DEFAULT '[]',
++    rejected_reason TEXT NOT NULL DEFAULT '',
++    candidate_payload_json TEXT NOT NULL DEFAULT '{}',
++    created_at TEXT NOT NULL,
++    UNIQUE(job_id, provider_name, source_page_id)
++);
++CREATE TABLE IF NOT EXISTS movie_match_decisions (
++    decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
++    job_id INTEGER NOT NULL REFERENCES catalog_lookup_jobs(job_id) ON DELETE RESTRICT,
++    item_id TEXT NOT NULL,
++    recognition_result_id INTEGER NOT NULL,
++    selected_movie_id TEXT REFERENCES movies(movie_id) ON DELETE RESTRICT,
++    selected_candidate_id INTEGER REFERENCES movie_candidates(candidate_id) ON DELETE RESTRICT,
++    decision_type TEXT NOT NULL,
++    decision_reason TEXT NOT NULL,
++    match_score REAL,
++    operator_confirmed INTEGER NOT NULL DEFAULT 0,
++    decided_at TEXT NOT NULL
++);
++CREATE TABLE IF NOT EXISTS catalog_lookup_attempts (
++    attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,
++    job_id INTEGER NOT NULL REFERENCES catalog_lookup_jobs(job_id) ON DELETE RESTRICT,
++    phase TEXT NOT NULL,
++    provider_name TEXT NOT NULL DEFAULT '',
++    started_at TEXT NOT NULL,
++    finished_at TEXT,
++    status TEXT NOT NULL,
++    request_hash TEXT NOT NULL DEFAULT '',
++    response_hash TEXT NOT NULL DEFAULT '',
++    http_status INTEGER,
++    error_code TEXT NOT NULL DEFAULT '',
++    error_message TEXT NOT NULL DEFAULT '',
++    metadata_json TEXT NOT NULL DEFAULT '{}'
++);
++CREATE TABLE IF NOT EXISTS wikipedia_response_cache (
++    cache_key TEXT PRIMARY KEY,
++    request_url TEXT NOT NULL,
++    response_json TEXT NOT NULL,
++    response_hash TEXT NOT NULL,
++    http_status INTEGER NOT NULL,
++    retrieved_at TEXT NOT NULL,
++    expires_at TEXT,
++    etag TEXT NOT NULL DEFAULT '',
++    last_modified TEXT NOT NULL DEFAULT ''
++);
++CREATE TABLE IF NOT EXISTS catalog_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
++CREATE TABLE IF NOT EXISTS catalog_maintenance_jobs (
++    maintenance_job_id INTEGER PRIMARY KEY AUTOINCREMENT,
++    operation TEXT NOT NULL,
++    status TEXT NOT NULL,
++    payload_json TEXT NOT NULL,
++    result_json TEXT NOT NULL DEFAULT '{}',
++    last_error TEXT NOT NULL DEFAULT '',
++    created_at TEXT NOT NULL,
++    updated_at TEXT NOT NULL,
++    finished_at TEXT
++);
++CREATE TABLE IF NOT EXISTS catalog_events (
++    catalog_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
++    occurred_at TEXT NOT NULL,
++    event_type TEXT NOT NULL,
++    movie_id TEXT REFERENCES movies(movie_id) ON DELETE RESTRICT,
++    item_id TEXT NOT NULL DEFAULT '',
++    recognition_result_id INTEGER,
++    catalog_revision INTEGER,
++    source TEXT NOT NULL,
++    details_json TEXT NOT NULL DEFAULT '{}'
++);
++CREATE INDEX IF NOT EXISTS idx_movies_normalized ON movies(normalized_title, primary_release_year);
++CREATE INDEX IF NOT EXISTS idx_movies_articleless ON movies(articleless_title, primary_release_year);
++CREATE INDEX IF NOT EXISTS idx_alias_normalized ON movie_aliases(normalized_alias);
++CREATE INDEX IF NOT EXISTS idx_alias_articleless ON movie_aliases(articleless_alias);
++CREATE INDEX IF NOT EXISTS idx_sources_movie ON movie_sources(movie_id, active);
++CREATE INDEX IF NOT EXISTS idx_jobs_status ON catalog_lookup_jobs(status, updated_at);
++CREATE INDEX IF NOT EXISTS idx_jobs_item ON catalog_lookup_jobs(item_id, recognition_result_id DESC);
++CREATE INDEX IF NOT EXISTS idx_candidates_job_score ON movie_candidates(job_id, score DESC);
++CREATE INDEX IF NOT EXISTS idx_events_movie ON catalog_events(movie_id, occurred_at DESC);
++CREATE INDEX IF NOT EXISTS idx_maintenance_status ON catalog_maintenance_jobs(status, updated_at);
++-- Optional when SQLite FTS5 is available:
++-- CREATE VIRTUAL TABLE movie_search USING fts5(movie_id UNINDEXED,title,aliases,tokenize='unicode61 remove_diacritics 2');
+diff --git a/snapims/migrations/0007_item_movie_links.sql b/snapims/migrations/0007_item_movie_links.sql
+new file mode 100644
+index 0000000..ae7c939
+--- /dev/null
++++ b/snapims/migrations/0007_item_movie_links.sql
+@@ -0,0 +1,33 @@
++-- SnapIMS inventory schema 7: minimum SLMC integration structure.
++-- Runtime application is implemented and verified in snapims/db.py.
++CREATE TABLE IF NOT EXISTS item_movie_links (
++    item_id TEXT PRIMARY KEY REFERENCES items(item_id) ON DELETE RESTRICT,
++    movie_id TEXT,
++    link_status TEXT NOT NULL,
++    link_method TEXT NOT NULL DEFAULT '',
++    recognition_result_id INTEGER REFERENCES recognition_results(recognition_result_id) ON DELETE RESTRICT,
++    match_score REAL,
++    linked_at TEXT,
++    updated_at TEXT NOT NULL,
++    operator_confirmed INTEGER NOT NULL DEFAULT 0,
++    catalog_revision INTEGER,
++    last_error TEXT NOT NULL DEFAULT ''
++);
++CREATE TABLE IF NOT EXISTS item_movie_link_events (
++    link_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
++    item_id TEXT NOT NULL REFERENCES items(item_id) ON DELETE RESTRICT,
++    previous_movie_id TEXT,
++    movie_id TEXT,
++    event_type TEXT NOT NULL,
++    link_status TEXT NOT NULL,
++    link_method TEXT NOT NULL DEFAULT '',
++    recognition_result_id INTEGER REFERENCES recognition_results(recognition_result_id) ON DELETE RESTRICT,
++    match_score REAL,
++    operator_confirmed INTEGER NOT NULL DEFAULT 0,
++    catalog_revision INTEGER,
++    occurred_at TEXT NOT NULL,
++    source TEXT NOT NULL,
++    details_json TEXT NOT NULL DEFAULT '{}'
++);
++CREATE INDEX IF NOT EXISTS idx_item_movie_links_movie ON item_movie_links(movie_id, link_status);
++CREATE INDEX IF NOT EXISTS idx_item_movie_link_events_item ON item_movie_link_events(item_id, occurred_at DESC);
+diff --git a/snapims/web/app.py b/snapims/web/app.py
+index 45d68c7..87093f7 100644
+--- a/snapims/web/app.py
++++ b/snapims/web/app.py
+@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
+ from snapims import __version__, db
+ from snapims.config import DataPaths, ShopifyConfig
+ from snapims.catalog import db as catalog_db
++from snapims.catalog.admin import reconcile_maintenance_jobs
+ from snapims.catalog.service import (
+     get_catalog_status,
+     get_movie,
+@@ -66,6 +67,7 @@ async def lifespan(app: FastAPI):
+     try:
+         catalog_db.initialize(paths.catalog_db_file, paths=paths)
+         reconcile_pending_links(paths)
++        reconcile_maintenance_jobs(paths)
+         recover_catalog_jobs(
+             paths, start_workers=not bool(os.getenv("PYTEST_CURRENT_TEST"))
+         )
+diff --git a/snapims/web/templates/diagnostics.html b/snapims/web/templates/diagnostics.html
+index d010aeb..8d8e7ae 100644
+--- a/snapims/web/templates/diagnostics.html
++++ b/snapims/web/templates/diagnostics.html
+@@ -5,8 +5,8 @@
+ <section class="panel"><h2>Paths</h2><table><tr><th>Data root</th><td><code>{{ paths.root }}</code></td></tr><tr><th>Inventory database</th><td><code>{{ paths.db_file }}</code></td></tr><tr><th>Movie catalog database</th><td><code>{{ paths.catalog_db_file }}</code></td></tr><tr><th>Exports</th><td><code>{{ paths.exports }}</code></td></tr><tr><th>Backups</th><td><code>{{ paths.backups }}</code></td></tr></table></section>
+ <section class="panel"><div class="page-heading"><div><h2>Local movie catalog</h2><p>{% if catalog.available %}Permanent SnapIMS business data; not a disposable API cache.{% else %}Catalog unavailable. Inventory and Review remain operational.{% endif %}</p></div><div class="actions"><form method="post" action="/diagnostics/catalog/backup"><button>Back up catalog</button></form><form method="post" action="/diagnostics/catalog/rebuild-index"><button>Rebuild search index</button></form><form method="post" action="/diagnostics/catalog/retry-failed"><button>Retry failed lookups</button></form></div></div>
+ {% if catalog_error %}<div class="alert error"><strong>Catalog unavailable</strong><p>{{ catalog_error }}</p></div>{% endif %}
+-<div class="metric-grid compact"><article><b>{{ catalog.movies|default(0) }}</b><span>Movies</span></article><article><b>{{ catalog.aliases|default(0) }}</b><span>Aliases</span></article><article><b>{{ links.linked_items }}</b><span>Linked items</span></article><article><b>{{ links.unlinked_recognized_items }}</b><span>Unlinked recognized</span></article><article><b>{{ catalog.local_hits|default(0) }}</b><span>Local hits</span></article><article><b>{{ catalog.wikipedia_calls|default(0) }}</b><span>Wikipedia calls</span></article><article><b>{{ catalog.ambiguous_matches|default(0) }}</b><span>Ambiguous</span></article><article><b>{{ catalog.failed_jobs|default(0) }}</b><span>Failed jobs</span></article><article><b>{{ links.stale_links }}</b><span>Stale links</span></article><article><b>{{ catalog.database_size_bytes|default(0) }}</b><span>Catalog bytes</span></article><article><b>{{ catalog.schema_version|default('-') }}</b><span>Catalog schema</span></article><article><b>{{ catalog.integrity|default('unavailable') }}</b><span>Catalog integrity</span></article></div>
+-<table><tr><th>FTS index</th><td>{{ 'Available' if catalog.fts_available else 'Fallback search only' }}</td></tr><tr><th>Catalog FK violations</th><td>{{ catalog.foreign_key_violations|default(0) }}</td></tr><tr><th>Last successful external lookup</th><td>{{ catalog.last_successful_external_lookup|default('None') or 'None' }}</td></tr></table></section>
++<div class="metric-grid compact"><article><b>{{ catalog.movies|default(0) }}</b><span>Movies</span></article><article><b>{{ catalog.aliases|default(0) }}</b><span>Aliases</span></article><article><b>{{ links.linked_items }}</b><span>Linked items</span></article><article><b>{{ links.unlinked_recognized_items }}</b><span>Unlinked recognized</span></article><article><b>{{ catalog.local_hits|default(0) }}</b><span>Local hits</span></article><article><b>{{ catalog.wikipedia_misses|default(0) }}</b><span>Wikipedia misses</span></article><article><b>{{ catalog.wikipedia_calls|default(0) }}</b><span>Wikipedia calls</span></article><article><b>{{ catalog.new_movie_records|default(0) }}</b><span>New Movie records</span></article><article><b>{{ catalog.ambiguous_matches|default(0) }}</b><span>Ambiguous</span></article><article><b>{{ catalog.failed_jobs|default(0) }}</b><span>Failed jobs</span></article><article><b>{{ links.stale_links }}</b><span>Stale links</span></article><article><b>{{ catalog.suspected_duplicate_movies|default(0) }}</b><span>Suspected duplicates</span></article><article><b>{{ catalog.database_size_bytes|default(0) }}</b><span>Catalog bytes</span></article><article><b>{{ catalog.schema_version|default('-') }}</b><span>Catalog schema</span></article><article><b>{{ catalog.integrity|default('unavailable') }}</b><span>Catalog integrity</span></article></div>
++<table><tr><th>FTS index</th><td>{{ 'Healthy (' ~ catalog.fts_index_rows ~ ' rows)' if catalog.fts_available and catalog.fts_index_healthy else ('Needs rebuild' if catalog.fts_available else 'Fallback search only') }}</td></tr><tr><th>Catalog FK violations</th><td>{{ catalog.foreign_key_violations|default(0) }}</td></tr><tr><th>Pending maintenance jobs</th><td>{{ catalog.pending_maintenance_jobs|default(0) }}</td></tr><tr><th>Rate-limit state</th><td>{{ catalog.rate_limit_state|default('UNKNOWN') }}</td></tr><tr><th>Last backup</th><td><code>{{ catalog.last_backup|default('None') or 'None' }}</code></td></tr><tr><th>Last successful external lookup</th><td>{{ catalog.last_successful_external_lookup|default('None') or 'None' }}</td></tr></table></section>
+ <section class="panel"><h2>Recent catalog jobs</h2><table><thead><tr><th>Item</th><th>Recognized title</th><th>Status</th><th>Candidates</th><th>Attempts</th><th>Last error</th></tr></thead><tbody>{% for job in catalog_jobs %}<tr><td><code>{{ job.item_id }}</code></td><td>{{ job.proposed_title }}</td><td>{{ job.status }}</td><td>{{ job.candidate_count }}</td><td>{{ job.attempt_count }}</td><td>{{ job.last_error }}</td></tr>{% else %}<tr><td colspan="6">No catalog jobs yet.</td></tr>{% endfor %}</tbody></table></section>
+ <section class="panel"><h2>Provider configuration</h2><table>{% for name,state in providers.items() %}<tr><th>{{ name }}</th><td>{{ state[1] }}</td></tr>{% endfor %}</table></section>
+ <section class="panel"><h2>Media bandwidth</h2><div class="metric-grid compact"><article><b>{{ media_totals.original_bytes }}</b><span>Original bytes</span></article><article><b>{{ media_totals.preview_bytes }}</b><span>Preview bytes</span></article><article><b>{{ media_totals.recognition_bytes }}</b><span>Recognition bytes</span></article><article><b>{{ media_totals.images_skipped }}</b><span>AI-skipped images</span></article></div></section>
+diff --git a/tests/test_catalog_admin.py b/tests/test_catalog_admin.py
+index 90adf76..9d31986 100644
+--- a/tests/test_catalog_admin.py
++++ b/tests/test_catalog_admin.py
+@@ -6,9 +6,19 @@ from pathlib import Path
+ 
+ from snapims import db
+ from snapims.catalog import db as catalog_db
+-from snapims.catalog.admin import add_alias, import_catalog_json, merge_movies, split_movie
++from snapims.catalog import admin as catalog_admin
++from snapims.catalog.admin import (
++    add_alias,
++    import_catalog_json,
++    merge_movies,
++    reconcile_maintenance_jobs,
++    refresh_movie_source,
++    split_movie,
++    update_movie_fields,
++)
+ from snapims.catalog.models import MovieCandidate
+ from snapims.catalog.service import create_or_update_movie, get_catalog_status, queue_recognition_lookup, search_local
++from snapims.catalog.wikipedia import FixtureTransport, WikipediaClient
+ from snapims.demo import create_demo_batch
+ from snapims.processor import process_batch
+ from snapims.recognition.base import BaseRecognizer, RecognitionResult
+@@ -170,3 +180,100 @@ def test_import_rejects_incompatible_schema(data_paths, tmp_path: Path) -> None:
+         assert "incompatible" in str(exc)
+     else:  # pragma: no cover
+         raise AssertionError("incompatible import was accepted")
++
++
++def test_update_movie_fields_preserves_identity_and_old_title_alias(data_paths) -> None:
++    catalog_db.initialize(data_paths.catalog_db_file, paths=data_paths)
++    movie_id, _ = create_or_update_movie(data_paths.catalog_db_file, movie("Old Title", 1984, "1301"))
++    result = update_movie_fields(
++        data_paths,
++        movie_id,
++        canonical_title="Corrected Title",
++        runtime_minutes=111,
++    )
++    assert result["movie_id"] == movie_id
++    assert result["changed_fields"] == ["canonical_title", "runtime_minutes"]
++    assert search_local(data_paths.catalog_db_file, "Corrected Title", 1984)[0].movie_id == movie_id
++    assert search_local(data_paths.catalog_db_file, "Old Title", 1984)[0].movie_id == movie_id
++    with catalog_db.connect(data_paths.catalog_db_file, readonly=True) as connection:
++        assert connection.execute(
++            "SELECT COUNT(*) FROM catalog_events WHERE movie_id=? AND event_type='MOVIE_FIELDS_CORRECTED'",
++            (movie_id,),
++        ).fetchone()[0] == 1
++
++
++def test_refresh_movie_source_replaces_source_facts_without_changing_id(data_paths) -> None:
++    catalog_db.initialize(data_paths.catalog_db_file, paths=data_paths)
++    stale = movie("Old Demo Title", 1992, "2002")
++    movie_id, _ = create_or_update_movie(data_paths.catalog_db_file, stale)
++    client = WikipediaClient(
++        data_paths.catalog_db_file,
++        transport=FixtureTransport(Path("tests/fixtures/wikipedia")),
++        min_interval=0,
++        max_retries=0,
++    )
++    result = refresh_movie_source(data_paths, movie_id, client=client)
++    assert result["movie_id"] == movie_id
++    assert result["canonical_title"] == "Demo VHS 002"
++    with catalog_db.connect(data_paths.catalog_db_file, readonly=True) as connection:
++        refreshed = connection.execute(
++            "SELECT canonical_title,runtime_minutes,catalog_revision FROM movies WHERE movie_id=?",
++            (movie_id,),
++        ).fetchone()
++        languages = [row[0] for row in connection.execute(
++            "SELECT language FROM movie_languages WHERE movie_id=?", (movie_id,)
++        )]
++    assert tuple(refreshed) == ("Demo VHS 002", 95, 2)
++    assert languages == ["English"]
++
++
++def test_split_link_pending_reconciles_after_restart(tmp_path: Path, data_paths, monkeypatch) -> None:
++    catalog_db.initialize(data_paths.catalog_db_file, paths=data_paths)
++    source, _ = create_or_update_movie(data_paths.catalog_db_file, movie("Crash", 1996, "1202"))
++    item = linked_item(tmp_path, data_paths, "Crash", 1996)
++    assert get_catalog_status(data_paths, item["item_id"]).movie_id == source
++    original_set_link = catalog_admin.inventory_db.set_item_movie_link
++    calls = {"count": 0}
++
++    def fail_once(*args, **kwargs):
++        calls["count"] += 1
++        if calls["count"] == 1:
++            raise OSError("simulated inventory link outage")
++        return original_set_link(*args, **kwargs)
++
++    monkeypatch.setattr(catalog_admin.inventory_db, "set_item_movie_link", fail_once)
++    try:
++        split_movie(
++            data_paths,
++            source,
++            canonical_title="Crash",
++            release_year=1978,
++            item_ids=[item["item_id"]],
++        )
++    except OSError:
++        pass
++    else:  # pragma: no cover
++        raise AssertionError("simulated split link failure did not surface")
++    with catalog_db.connect(data_paths.catalog_db_file, readonly=True) as connection:
++        pending = connection.execute(
++            "SELECT maintenance_job_id,status,result_json FROM catalog_maintenance_jobs ORDER BY maintenance_job_id DESC LIMIT 1"
++        ).fetchone()
++    assert pending["status"] == "LINK_PENDING"
++    new_movie_id = json.loads(pending["result_json"])["new_movie_id"]
++    monkeypatch.setattr(catalog_admin.inventory_db, "set_item_movie_link", original_set_link)
++    assert reconcile_maintenance_jobs(data_paths) == 1
++    assert get_catalog_status(data_paths, item["item_id"]).movie_id == new_movie_id
++    with catalog_db.connect(data_paths.catalog_db_file, readonly=True) as connection:
++        assert connection.execute(
++            "SELECT status FROM catalog_maintenance_jobs WHERE maintenance_job_id=?",
++            (pending["maintenance_job_id"],),
++        ).fetchone()[0] == "COMPLETE"
++
++
++def test_catalog_summary_exposes_operations_health(data_paths) -> None:
++    catalog_db.initialize(data_paths.catalog_db_file, paths=data_paths)
++    summary = catalog_db.catalog_summary(data_paths.catalog_db_file)
++    assert summary["suspected_duplicate_movies"] == 0
++    assert summary["pending_maintenance_jobs"] == 0
++    assert summary["rate_limit_state"] == "CLEAR"
++    assert summary["fts_index_healthy"] is True
+diff --git a/tests/test_catalog_live_wikipedia.py b/tests/test_catalog_live_wikipedia.py
+new file mode 100644
+index 0000000..0248b54
+--- /dev/null
++++ b/tests/test_catalog_live_wikipedia.py
+@@ -0,0 +1,35 @@
++from __future__ import annotations
++
++import os
++from pathlib import Path
++
++import pytest
++
++from snapims.catalog import db as catalog_db
++from snapims.catalog.wikipedia import WikipediaClient
++
++
++@pytest.mark.skipif(
++    os.getenv("SNAPIMS_LIVE_WIKIPEDIA_TEST", "").strip() != "1",
++    reason="Set SNAPIMS_LIVE_WIKIPEDIA_TEST=1 to run the bounded live English Wikipedia integration test.",
++)
++def test_live_english_wikipedia_gremlins_lookup(tmp_path: Path) -> None:
++    catalog_file = tmp_path / "movie_catalog.sqlite3"
++    catalog_db.initialize(catalog_file)
++    client = WikipediaClient(
++        catalog_file,
++        user_agent=os.getenv(
++            "SNAPIMS_WIKIPEDIA_USER_AGENT",
++            "SnapIMS-SLMC/0.1.0 live-test (contact: owner-configured)",
++        ),
++        timeout=15,
++        max_retries=1,
++        min_interval=1.0,
++    )
++    candidates = client.search_candidates("Gremlins", 1984, limit=5)
++    accepted = [candidate for candidate in candidates if not candidate.rejected_reason]
++    assert accepted
++    assert accepted[0].canonical_title == "Gremlins"
++    assert accepted[0].release_year == 1984
++    assert accepted[0].source_page_id
++    assert accepted[0].source_revision_id

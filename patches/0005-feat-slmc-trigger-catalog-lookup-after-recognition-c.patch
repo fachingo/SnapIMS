@@ -1,0 +1,62 @@
+From ef438b7731a5a8e33f624d32a339bda53d7a0689 Mon Sep 17 00:00:00 2001
+From: OpenAI <noreply@openai.com>
+Date: Sat, 25 Jul 2026 08:59:44 +0000
+Subject: [PATCH 05/14] feat(slmc): trigger catalog lookup after recognition
+ commit
+
+
+diff --git a/snapims/recognition/service.py b/snapims/recognition/service.py
+index 28253e8..3ec9f05 100644
+--- a/snapims/recognition/service.py
++++ b/snapims/recognition/service.py
+@@ -9,6 +9,7 @@ from typing import Any
+ from snapims import db
+ from snapims.recognition.base import BaseRecognizer, RecognitionResult
+ from snapims.recognition.providers import recognizer_registry
++from snapims.config import DataPaths
+ 
+ _ACTIVE: dict[str, threading.Thread] = {}
+ _LOCK = threading.Lock()
+@@ -98,7 +99,20 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) ->
+             "UPDATE items SET recognition_status='COMPLETE',recognition_error='',updated_at=? WHERE item_id=?",
+             (db.now(), item_id),
+         )
+-    return int(cursor.lastrowid), result
++    recognition_result_id = int(cursor.lastrowid)
++    # Catalog work is additive. A catalog failure must never erase or roll back the
++    # committed visual recognition result.
++    try:
++        from snapims.catalog.service import queue_recognition_lookup
++
++        paths = DataPaths.from_root(db_file.parent.parent).ensure()
++        queue_recognition_lookup(paths, recognition_result_id)
++    except Exception as exc:
++        try:
++            db.mark_item_catalog_unavailable(db_file, item_id, recognition_result_id, str(exc))
++        except Exception:
++            pass
++    return recognition_result_id, result
+ 
+ 
+ def _job_counts(db_file: Path, batch_id: str) -> tuple[list[dict[str, Any]], int, int]:
+@@ -346,8 +360,19 @@ def accept_item(
+         raise KeyError(f"Unknown Item ID: {item_id}")
+     suggestion = db.latest_recognition(db_file, item_id)
+     candidates = json.loads(suggestion["barcode_candidates_json"]) if suggestion else []
++    catalog_title = ""
++    catalog_status = None
++    try:
++        from snapims.catalog.service import get_catalog_status
++
++        catalog_status = get_catalog_status(DataPaths.from_root(db_file.parent.parent).ensure(), item_id)
++        catalog_title = catalog_status.canonical_title
++    except Exception:
++        catalog_status = None
++    if catalog_status and catalog_status.materially_ambiguous and not str(item["title"] or "").strip():
++        return ["Catalog match is ambiguous. Confirm the title in Edit details before approval."]
+     values: dict[str, Any] = {
+-        "title": str(item["title"] or (suggestion["suggested_title"] if suggestion else "")).strip(),
++        "title": str(item["title"] or catalog_title or (suggestion["suggested_title"] if suggestion else "")).strip(),
+         "release_year": item["release_year"] or (suggestion["release_year"] if suggestion else None),
+         "edition": item["edition"] or (suggestion["edition"] if suggestion else ""),
+         "distributor": item["distributor"] or (suggestion["distributor"] if suggestion else ""),

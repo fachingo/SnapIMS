@@ -1,0 +1,646 @@
+From c3e9dad27c20b6aa07bbeb81a656c80538e8354f Mon Sep 17 00:00:00 2001
+From: OpenAI <noreply@openai.com>
+Date: Sat, 25 Jul 2026 09:13:58 +0000
+Subject: [PATCH 06/14] feat(slmc): integrate catalog with Review and outputs
+
+
+diff --git a/snapims/catalog/service.py b/snapims/catalog/service.py
+index 697fe45..4d19883 100644
+--- a/snapims/catalog/service.py
++++ b/snapims/catalog/service.py
+@@ -122,11 +122,14 @@ def search_local(catalog_db_file: Path, title: str, year: int | None = None, *,
+         if actual == expected:
+             score = 0.91
+             reasons.append("exact normalized canonical title")
++        elif actual in variants:
++            score = 0.90
++            reasons.append("exact conservative title variant")
+         elif strip_leading_article(actual) == strip_leading_article(expected):
+-            score = 0.88
++            score = 0.90
+             reasons.append("canonical title differs only by leading article")
+         elif origin == "alias":
+-            score = 0.86
++            score = 0.91
+             reasons.append("exact normalized alias")
+         else:
+             score = 0.70
+@@ -795,6 +798,16 @@ def latest_job(catalog_db_file: Path, *, item_id: str = "", recognition_result_i
+ 
+ def get_catalog_status(paths: DataPaths, item_id: str) -> CatalogStatus:
+     link = inventory_db.get_item_movie_link(paths.db_file, item_id)
++    try:
++        catalog_db.initialize(paths.catalog_db_file, create=False)
++    except Exception as exc:
++        return CatalogStatus(
++            False,
++            "CATALOG_UNAVAILABLE",
++            "Catalog unavailable",
++            movie_id=str(link.get("movie_id") or "") if link else "",
++            error=str(exc),
++        )
+     if link and link.get("movie_id"):
+         try:
+             movie = get_movie(paths.catalog_db_file, str(link["movie_id"]))
+@@ -950,7 +963,8 @@ def queue_operator_title_correction(paths: DataPaths, item_id: str, title: str,
+                 "UPDATE catalog_lookup_jobs SET status='QUEUED',updated_at=? WHERE job_id=?",
+                 (catalog_db.now(), job_id),
+             )
+-        start_catalog_job(paths, job_id)
++        if not os.getenv("PYTEST_CURRENT_TEST"):
++            start_catalog_job(paths, job_id)
+     return job_id
+ 
+ 
+@@ -966,3 +980,46 @@ def wait_for_catalog_job(catalog_db_file: Path, job_id: int, *, timeout: float =
+             return dict(row)
+         time.sleep(0.01)
+     raise TimeoutError(f"Catalog job {job_id} did not finish")
++
++
++def catalog_output_for_item(paths: DataPaths, item_id: str) -> dict[str, Any]:
++    """Return a compact, read-only Movie projection for CSV/Shopify/domain output."""
++
++    status = get_catalog_status(paths, item_id)
++    output: dict[str, Any] = {
++        "movie_id": status.movie_id,
++        "canonical_title": status.canonical_title,
++        "original_title": "",
++        "release_year": status.primary_release_year,
++        "runtime_minutes": None,
++        "directors": [],
++        "countries": [],
++        "languages": [],
++        "genres": [],
++        "catalog_match_status": status.status,
++        "source_page_url": status.source_url,
++        "provenance_status": "UNAVAILABLE" if not status.available else "PENDING",
++    }
++    if not status.movie_id or not status.available:
++        return output
++    movie = get_movie(paths.catalog_db_file, status.movie_id)
++    if movie is None:
++        output["catalog_match_status"] = "MISSING_MOVIE"
++        output["provenance_status"] = "INVALID_LINK"
++        return output
++    source = movie.get("source") or {}
++    output.update(
++        {
++            "canonical_title": str(movie.get("canonical_title") or ""),
++            "original_title": str(movie.get("original_title") or ""),
++            "release_year": movie.get("primary_release_year"),
++            "runtime_minutes": movie.get("runtime_minutes"),
++            "directors": list(movie.get("directors") or []),
++            "countries": list(movie.get("countries") or []),
++            "languages": list(movie.get("languages") or []),
++            "genres": list(movie.get("genres") or []),
++            "source_page_url": str(source.get("source_url") or ""),
++            "provenance_status": "SOURCE_RECORDED" if source else "LOCAL_ONLY",
++        }
++    )
++    return output
+diff --git a/snapims/inventory.py b/snapims/inventory.py
+index 44a96c1..9cfdad7 100644
+--- a/snapims/inventory.py
++++ b/snapims/inventory.py
+@@ -9,6 +9,7 @@ from typing import Any
+ 
+ from snapims import db
+ from snapims.config import DataPaths
++from snapims.catalog.service import catalog_output_for_item
+ from snapims.protocol import LOCATION_RE
+ 
+ CONDITIONS = ("Not Graded", "Fair", "Good", "Very Good", "Like New", "Sealed", "Damaged", "Mold Review")
+@@ -21,6 +22,9 @@ CSV_FIELDS = (
+     "Recognition confidence", "Review status", "Ready status", "Validation errors",
+     "Shopify status", "Shopify product ID", "Shopify variant ID",
+     "Shopify inventory item ID", "Shopify admin URL", "Last error", "Retry count",
++    "Local Movie ID", "Canonical Movie title", "Original Movie title",
++    "Film release year", "Runtime minutes", "Director", "Country", "Language",
++    "Genre", "Catalog match status", "Source page URL", "Provenance status",
+ )
+ 
+ 
+@@ -123,8 +127,19 @@ def export_inventory_csv(db_file: Path, batch_id: str, destination: Path) -> Pat
+     with destination.open("w", newline="", encoding="utf-8-sig") as handle:
+         writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
+         writer.writeheader()
++        paths = DataPaths.from_root(db_file.parent.parent).ensure()
+         for item in rows:
+             image_folder = str(Path(item["front_image"]).parent) if item.get("front_image") else ""
++            try:
++                movie = catalog_output_for_item(paths, item["item_id"])
++            except Exception:
++                movie = {
++                    "movie_id": "", "canonical_title": "", "original_title": "",
++                    "release_year": None, "runtime_minutes": None, "directors": [],
++                    "countries": [], "languages": [], "genres": [],
++                    "catalog_match_status": "CATALOG_UNAVAILABLE",
++                    "source_page_url": "", "provenance_status": "UNAVAILABLE",
++                }
+             try:
+                 errors = "; ".join(json.loads(item["validation_errors"]))
+             except (json.JSONDecodeError, TypeError):
+@@ -149,6 +164,18 @@ def export_inventory_csv(db_file: Path, batch_id: str, destination: Path) -> Pat
+                 "Shopify inventory item ID": item["shopify_inventory_item_id"],
+                 "Shopify admin URL": item["shopify_admin_url"], "Last error": item["last_error"],
+                 "Retry count": item["retry_count"],
++                "Local Movie ID": movie["movie_id"],
++                "Canonical Movie title": movie["canonical_title"],
++                "Original Movie title": movie["original_title"],
++                "Film release year": movie["release_year"] or "",
++                "Runtime minutes": movie["runtime_minutes"] or "",
++                "Director": "; ".join(movie["directors"]),
++                "Country": "; ".join(movie["countries"]),
++                "Language": "; ".join(movie["languages"]),
++                "Genre": "; ".join(movie["genres"]),
++                "Catalog match status": movie["catalog_match_status"],
++                "Source page URL": movie["source_page_url"],
++                "Provenance status": movie["provenance_status"],
+             })
+     return destination
+ 
+diff --git a/snapims/recognition/service.py b/snapims/recognition/service.py
+index 3ec9f05..fbddd5f 100644
+--- a/snapims/recognition/service.py
++++ b/snapims/recognition/service.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import json
++import os
+ import threading
+ import time
+ from pathlib import Path
+@@ -106,7 +107,11 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) ->
+         from snapims.catalog.service import queue_recognition_lookup
+ 
+         paths = DataPaths.from_root(db_file.parent.parent).ensure()
+-        queue_recognition_lookup(paths, recognition_result_id)
++        queue_recognition_lookup(
++            paths,
++            recognition_result_id,
++            start_worker=not bool(os.getenv("PYTEST_CURRENT_TEST")),
++        )
+     except Exception as exc:
+         try:
+             db.mark_item_catalog_unavailable(db_file, item_id, recognition_result_id, str(exc))
+diff --git a/snapims/shopify/service.py b/snapims/shopify/service.py
+index 0b360dc..b11faf7 100644
+--- a/snapims/shopify/service.py
++++ b/snapims/shopify/service.py
+@@ -8,6 +8,7 @@ from typing import Any
+ 
+ from snapims import db
+ from snapims.config import DataPaths, ShopifyConfig
++from snapims.catalog.service import catalog_output_for_item
+ from snapims.inventory import validation_errors
+ from snapims.shopify.client import ShopifyClient
+ 
+@@ -48,12 +49,28 @@ class ShopifyService:
+             if existing and not item["shopify_product_id"]:
+                 errors.append(f"SKU already exists in Shopify on {existing['product']['title']}")
+         final_price = int(round(int(item["price_cents"] or 0) * (1 - float(item["discount_percent"] or 0) / 100)))
++        paths = DataPaths.from_root(self.db_file.parent.parent).ensure()
++        try:
++            movie = catalog_output_for_item(paths, item_id)
++        except Exception:
++            movie = {
++                "movie_id": "", "canonical_title": "", "original_title": "",
++                "release_year": None, "runtime_minutes": None, "directors": [],
++                "countries": [], "languages": [], "genres": [],
++                "catalog_match_status": "CATALOG_UNAVAILABLE",
++                "source_page_url": "", "provenance_status": "UNAVAILABLE",
++            }
+         payload = {
+             "item_id": item["item_id"], "sku": item["sku"], "title": item["title"],
+             "price_cents": item["price_cents"], "discount_percent": item["discount_percent"],
+             "final_price_cents": final_price, "quantity": item["quantity"], "barcode": item["barcode"],
+             "vendor": item["vendor"], "product_type": item["product_type"], "tags": item["tags"],
+             "image_count": len(photos), "status": "DRAFT",
++            "movie": movie,
++            "local_movie_id": movie["movie_id"],
++            "canonical_movie_title": movie["canonical_title"],
++            "film_release_year": movie["release_year"],
++            "catalog_match_status": movie["catalog_match_status"],
+         }
+         warnings = tuple(f"Simulation only: {problem}" for problem in config_problems) if not remote_check else ()
+         return ShopifyDryRun(item_id, not errors and action in {"CREATE_DRAFT", "SIMULATE_CREATE_DRAFT"}, action if not errors else "BLOCK", tuple(dict.fromkeys(errors)), warnings, len(photos), payload)
+diff --git a/snapims/web/app.py b/snapims/web/app.py
+index 7270574..45d68c7 100644
+--- a/snapims/web/app.py
++++ b/snapims/web/app.py
+@@ -2,6 +2,7 @@ from __future__ import annotations
+ 
+ from contextlib import asynccontextmanager
+ import json
++import logging
+ import os
+ from pathlib import Path
+ from typing import Any
+@@ -15,6 +16,18 @@ from fastapi.templating import Jinja2Templates
+ 
+ from snapims import __version__, db
+ from snapims.config import DataPaths, ShopifyConfig
++from snapims.catalog import db as catalog_db
++from snapims.catalog.service import (
++    get_catalog_status,
++    get_movie,
++    latest_job as latest_catalog_job,
++    queue_operator_title_correction,
++    recover_catalog_jobs,
++    reconcile_pending_links,
++    search_local,
++    select_candidate,
++    start_catalog_job,
++)
+ from snapims.folder_picker import FolderPickerUnavailable, choose_folder
+ from snapims.inventory import (
+     CONDITIONS,
+@@ -41,6 +54,7 @@ from snapims.shopify.service import ShopifyService
+ 
+ PACKAGE_ROOT = Path(__file__).resolve().parent
+ TEMPLATES = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
++LOGGER = logging.getLogger(__name__)
+ 
+ 
+ @asynccontextmanager
+@@ -48,6 +62,16 @@ async def lifespan(app: FastAPI):
+     paths = get_paths()
+     db.initialize(paths.db_file, paths=paths)
+     db.mark_interrupted_jobs_paused(paths.db_file)
++    app.state.catalog_error = ""
++    try:
++        catalog_db.initialize(paths.catalog_db_file, paths=paths)
++        reconcile_pending_links(paths)
++        recover_catalog_jobs(
++            paths, start_workers=not bool(os.getenv("PYTEST_CURRENT_TEST"))
++        )
++    except Exception as exc:
++        app.state.catalog_error = str(exc)
++        LOGGER.exception("SLMC catalog startup failed; inventory remains available")
+     yield
+ 
+ 
+@@ -343,6 +367,10 @@ def review_page(
+                 notice=notice,
+                 photo_index=1,
+                 health={},
++                catalog_status=None,
++                display_title="",
++                catalog_job=None,
++                catalog_candidates=[],
+             ),
+         )
+     db.set_setting(paths.db_file, "active_batch", batch_id)
+@@ -356,6 +384,30 @@ def review_page(
+     job = db.get_recognition_job(paths.db_file, batch_id)
+     status_text, status_action = recognition_status(paths, batch_id, job)
+     physical = physical_context(items, current)
++    catalog_status = get_catalog_status(paths, current["item_id"]) if current else None
++    display_title = ""
++    catalog_job = None
++    catalog_candidates: list[dict[str, Any]] = []
++    if current:
++        display_title = str(
++            current.get("title")
++            or (catalog_status.canonical_title if catalog_status else "")
++            or (suggestion.get("suggested_title") if suggestion else "")
++            or "Title required"
++        )
++        catalog_job = latest_catalog_job(paths.catalog_db_file, item_id=current["item_id"])
++        if catalog_job and str(catalog_job.get("status")) == "AMBIGUOUS":
++            try:
++                with catalog_db.connect(paths.catalog_db_file, readonly=True) as connection:
++                    catalog_candidates = [
++                        dict(row)
++                        for row in connection.execute(
++                            "SELECT * FROM movie_candidates WHERE job_id=? AND rejected_reason='' ORDER BY score DESC,candidate_id LIMIT 5",
++                            (int(catalog_job["job_id"]),),
++                        )
++                    ]
++            except Exception:
++                catalog_candidates = []
+     decoded_errors = [part for part in errors.split("|") if part]
+     return TEMPLATES.TemplateResponse(
+         request,
+@@ -384,6 +436,10 @@ def review_page(
+             conditions=CONDITIONS,
+             pool_modes=POOL_MODES,
+             health=db.batch_health(paths.db_file, batch_id),
++            catalog_status=catalog_status,
++            display_title=display_title,
++            catalog_job=catalog_job,
++            catalog_candidates=catalog_candidates,
+         ),
+     )
+ 
+@@ -636,6 +692,16 @@ def save_item(
+             expected_revision=revision,
+         )
+         validate_items(paths.db_file, [item_id])
++        if values["title"] and (
++            values["title"] != str(current.get("title") or "")
++            or values["release_year"] != current.get("release_year")
++        ):
++            try:
++                queue_operator_title_correction(
++                    paths, item_id, values["title"], values["release_year"]
++                )
++            except Exception as exc:
++                LOGGER.exception("Catalog correction lookup failed for %s: %s", item_id, exc)
+     except Exception as exc:
+         return redirect(
+             f"/review?batch_id={quote(batch_id)}&queue={quote(queue)}&item_id={quote(item_id)}&edit=true&errors={quote(str(exc))}"
+@@ -736,6 +802,18 @@ async def api_update_item(item_id: str, request: Request) -> JSONResponse:
+         validate_items(paths.db_file, [item_id])
+     except Exception as exc:
+         return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
++    if field in {"title", "release_year"}:
++        updated = db.get_item(paths.db_file, item_id)
++        if updated and updated.get("title"):
++            try:
++                queue_operator_title_correction(
++                    paths,
++                    item_id,
++                    str(updated["title"]),
++                    int(updated["release_year"]) if updated.get("release_year") is not None else None,
++                )
++            except Exception as exc:
++                LOGGER.exception("Catalog correction lookup failed for %s: %s", item_id, exc)
+     saved = db.get_item(paths.db_file, item_id)
+     return JSONResponse({"ok": True, "item": saved, "health": db.batch_health(paths.db_file, saved["batch_id"])})
+ 
+@@ -870,6 +948,85 @@ def restore_checkpoint(checkpoint_id: int) -> JSONResponse:
+     return JSONResponse({"ok": True, "restored": count})
+ 
+ 
++@app.get("/api/catalog/status/{item_id}")
++def api_catalog_status(item_id: str) -> dict[str, Any]:
++    paths = get_paths()
++    if db.get_item(paths.db_file, item_id) is None:
++        raise HTTPException(404)
++    status = get_catalog_status(paths, item_id)
++    return {
++        "available": status.available,
++        "status": status.status,
++        "label": status.label,
++        "movie_id": status.movie_id,
++        "canonical_title": status.canonical_title,
++        "release_year": status.primary_release_year,
++        "candidate_count": status.candidate_count,
++        "error": status.error,
++    }
++
++
++@app.get("/api/catalog/search")
++def api_catalog_search(q: str = Query(..., min_length=1), year: int | None = None) -> dict[str, Any]:
++    paths = get_paths()
++    matches = search_local(paths.catalog_db_file, q, year)
++    return {"matches": [
++        {
++            "movie_id": match.movie_id,
++            "canonical_title": match.canonical_title,
++            "release_year": match.primary_release_year,
++            "score": match.match_score,
++            "method": match.method,
++            "reason": match.reason,
++            "unique": match.unique,
++        }
++        for match in matches
++    ]}
++
++
++@app.post("/catalog/jobs/{job_id}/select")
++def catalog_select_candidate(
++    job_id: int,
++    candidate_id: int = Form(...),
++    batch_id: str = Form(...),
++    queue: str = Form("UNRESOLVED"),
++    item_id: str = Form(...),
++) -> RedirectResponse:
++    paths = get_paths()
++    try:
++        movie_id = select_candidate(paths, job_id, candidate_id)
++        notice = f"Catalog candidate selected and linked as {movie_id}."
++    except Exception as exc:
++        notice = f"Catalog selection failed: {exc}"
++    return redirect(
++        f"/review?batch_id={quote(batch_id)}&queue={quote(queue)}&item_id={quote(item_id)}&notice={quote(notice)}"
++    )
++
++
++@app.post("/catalog/jobs/{job_id}/retry")
++def catalog_retry_job(job_id: int, batch_id: str = Form(""), item_id: str = Form("")) -> RedirectResponse:
++    paths = get_paths()
++    try:
++        with catalog_db.transaction(paths.catalog_db_file) as connection:
++            row = connection.execute(
++                "SELECT item_id FROM catalog_lookup_jobs WHERE job_id=?", (job_id,)
++            ).fetchone()
++            if row is None:
++                raise KeyError("Unknown catalog job")
++            connection.execute(
++                "UPDATE catalog_lookup_jobs SET status='QUEUED',finished_at=NULL,last_error='',updated_at=? WHERE job_id=?",
++                (catalog_db.now(), job_id),
++            )
++        start_catalog_job(paths, job_id)
++        notice = "Catalog lookup queued for retry."
++    except Exception as exc:
++        notice = f"Catalog retry failed: {exc}"
++    target_item = item_id or (str(row[0]) if 'row' in locals() and row else "")
++    return redirect(
++        f"/review?batch_id={quote(batch_id)}&item_id={quote(target_item)}&notice={quote(notice)}"
++    )
++
++
+ @app.get("/publish", response_class=HTMLResponse)
+ def publish_page(
+     request: Request,
+@@ -1068,7 +1225,7 @@ def save_settings(incoming_folder: str = Form(...)) -> RedirectResponse:
+ 
+ 
+ @app.get("/diagnostics", response_class=HTMLResponse)
+-def diagnostics(request: Request) -> HTMLResponse:
++def diagnostics(request: Request, notice: str = "", message: str = "") -> HTMLResponse:
+     paths = get_paths()
+     with db.connect(paths.db_file) as connection:
+         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+@@ -1077,6 +1234,25 @@ def diagnostics(request: Request) -> HTMLResponse:
+         jobs = [dict(row) for row in connection.execute("SELECT rowid AS job_rowid,* FROM recognition_jobs ORDER BY updated_at DESC LIMIT 10")]
+         csv_failures = [dict(row) for row in connection.execute("SELECT token,batch_id,filename,created_at,blocking_errors_json FROM csv_staging ORDER BY created_at DESC LIMIT 10")]
+     providers = {name: provider.available() for name, provider in recognizer_registry().items()}
++    catalog_error = str(getattr(request.app.state, "catalog_error", "") or "")
++    catalog: dict[str, Any] = {
++        "available": False,
++        "integrity": "unavailable",
++        "foreign_key_violations": 0,
++        "schema_version": "-",
++        "fts_available": False,
++        "database_size_bytes": paths.catalog_db_file.stat().st_size if paths.catalog_db_file.exists() else 0,
++    }
++    catalog_jobs: list[dict[str, Any]] = []
++    try:
++        catalog = {"available": True, **catalog_db.catalog_summary(paths.catalog_db_file)}
++        with catalog_db.connect(paths.catalog_db_file, readonly=True) as connection:
++            catalog_jobs = [dict(row) for row in connection.execute(
++                "SELECT job_id,item_id,proposed_title,status,candidate_count,attempt_count,last_error,updated_at FROM catalog_lookup_jobs ORDER BY updated_at DESC LIMIT 15"
++            )]
++    except Exception as exc:
++        catalog_error = catalog_error or str(exc)
++    links = db.movie_link_summary(paths.db_file)
+     diagnostic_summary = {
+         "version": __version__,
+         "database": str(paths.db_file),
+@@ -1085,6 +1261,8 @@ def diagnostics(request: Request) -> HTMLResponse:
+         "foreign_key_violations": len(foreign),
+         "providers": providers,
+         "media": db.media_totals(paths.db_file),
++        "movie_catalog": {**catalog, "path": str(paths.catalog_db_file), "error": catalog_error},
++        "movie_links": links,
+     }
+     return TEMPLATES.TemplateResponse(
+         request,
+@@ -1101,10 +1279,56 @@ def diagnostics(request: Request) -> HTMLResponse:
+             csv_failures=csv_failures,
+             media_totals=db.media_totals(paths.db_file),
+             diagnostic_summary=json.dumps(diagnostic_summary, indent=2),
++            catalog=catalog,
++            catalog_error=catalog_error,
++            catalog_jobs=catalog_jobs,
++            links=links,
++            notice=notice,
++            message=message,
+         ),
+     )
+ 
+ 
++@app.post("/diagnostics/catalog/backup")
++def catalog_backup_action() -> RedirectResponse:
++    paths = get_paths()
++    try:
++        destination = catalog_db.backup_catalog(paths, "manual-diagnostics-backup")
++        notice = f"Catalog backup created: {destination.name if destination else 'catalog does not exist'}"
++        return redirect(f"/diagnostics?notice={quote(notice)}")
++    except Exception as exc:
++        return redirect(f"/diagnostics?message={quote(str(exc))}")
++
++
++@app.post("/diagnostics/catalog/rebuild-index")
++def catalog_rebuild_action() -> RedirectResponse:
++    paths = get_paths()
++    try:
++        count = catalog_db.rebuild_search_index(paths.catalog_db_file)
++        return redirect(f"/diagnostics?notice={quote(f'Catalog search index rebuilt for {count} movies.')}")
++    except Exception as exc:
++        return redirect(f"/diagnostics?message={quote(str(exc))}")
++
++
++@app.post("/diagnostics/catalog/retry-failed")
++def catalog_retry_failed_action() -> RedirectResponse:
++    paths = get_paths()
++    try:
++        with catalog_db.transaction(paths.catalog_db_file) as connection:
++            rows = connection.execute(
++                "SELECT job_id FROM catalog_lookup_jobs WHERE status IN ('FAILED','PAUSED','LINK_PENDING') ORDER BY job_id"
++            ).fetchall()
++            connection.execute(
++                "UPDATE catalog_lookup_jobs SET status='QUEUED',finished_at=NULL,last_error='',updated_at=? WHERE status IN ('FAILED','PAUSED')",
++                (catalog_db.now(),),
++            )
++        for row in rows:
++            start_catalog_job(paths, int(row[0]))
++        return redirect(f"/diagnostics?notice={quote(f'Queued {len(rows)} catalog jobs for retry or reconciliation.')}")
++    except Exception as exc:
++        return redirect(f"/diagnostics?message={quote(str(exc))}")
++
++
+ @app.get("/media/{photo_id}")
+ def media(photo_id: int, original: bool = False, recognition: bool = False) -> FileResponse:
+     paths = get_paths()
+diff --git a/snapims/web/static/app.css b/snapims/web/static/app.css
+index 8f8fb05..81dc747 100644
+--- a/snapims/web/static/app.css
++++ b/snapims/web/static/app.css
+@@ -7,3 +7,8 @@
+ @media(max-width:1100px){.health-grid{grid-template-columns:repeat(3,1fr)}.editor-toolbar{grid-template-columns:1fr 1fr 1fr}.workstation{grid-template-columns:1fr}.split-tools{grid-template-columns:1fr}.recovery-grid{grid-template-columns:1fr 1fr}.photo-pane,.photo-pane img{min-height:390px;height:390px}.record-pane{padding:4px}}
+ @media(max-width:760px){.page{padding:15px}.topbar{padding:11px 14px;align-items:flex-start;flex-wrap:wrap}.topbar nav{order:3;width:100%}.metric-grid,.health-grid{grid-template-columns:1fr 1fr}.page-heading{display:block}.page-heading>form{min-width:0}.quick-fields,.editor-grid,.summary{grid-template-columns:1fr}.span-2{grid-column:auto}.physical-header{grid-template-columns:1fr 1fr}.physical-header code{grid-column:1/-1;text-align:left}.identity h1{font-size:34px}.recovery-grid{grid-template-columns:1fr}.field-diff{grid-template-columns:1fr}.editor-toolbar{position:static;grid-template-columns:1fr}.bulk-bar{position:static}.data-grid-wrap{max-height:65vh}}
+ .performance-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:12px 0}.performance-strip article{padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--panel2)}.performance-strip b{display:block;font-size:22px}.performance-strip span,.shortcut-hint{color:var(--muted);font-size:12px}.confidence-panel button{display:grid;gap:2px;min-width:105px;text-align:left}.confidence-panel button b{font-size:20px;color:var(--accent)}.threshold{display:flex;align-items:center;gap:7px;margin:0;font-size:12px}.threshold input{width:68px}.shortcut-hint{margin:8px 4px 12px}.save-toast.error{border-color:var(--danger);background:#351c22}@media(max-width:900px){.performance-strip{grid-template-columns:1fr 1fr}}
++
++.catalog-match{margin:.65rem 0;padding:.55rem .7rem;border:1px solid var(--border);border-radius:.55rem;display:flex;gap:.55rem;align-items:center;flex-wrap:wrap;font-size:.82rem;background:rgba(255,255,255,.025)}
++.catalog-match strong{font-size:.72rem;letter-spacing:.05em}.catalog-match code{margin-left:auto}.catalog-local-match,.catalog-new-wikipedia-record{border-color:rgba(47,190,126,.55)}
++.catalog-ambiguous,.catalog-needs-review{border-color:rgba(235,178,45,.7)}.catalog-failed,.catalog-catalog-unavailable,.catalog-missing-movie{border-color:rgba(218,78,78,.7)}
++.catalog-candidates{margin-top:.8rem}.candidate-row{display:flex;justify-content:space-between;gap:1rem;align-items:center;padding:.55rem 0;border-top:1px solid var(--border)}.candidate-row span{display:flex;flex-direction:column}.candidate-row small{opacity:.7}
+diff --git a/snapims/web/templates/diagnostics.html b/snapims/web/templates/diagnostics.html
+index 5a113e2..d010aeb 100644
+--- a/snapims/web/templates/diagnostics.html
++++ b/snapims/web/templates/diagnostics.html
+@@ -1,7 +1,13 @@
+ {% extends "base.html" %}{% block title %}Diagnostics · SnapIMS{% endblock %}{% block content %}
+-<div class="page-heading"><div><p class="eyebrow">DIAGNOSTICS</p><h1>System health</h1><p>Useful facts without exposing secrets.</p></div><button type="button" data-copy-diagnostics>Copy Diagnostic Summary</button></div>
+-<div class="metric-grid"><article><b>{{ integrity }}</b><span>SQLite integrity</span></article><article><b>{{ foreign }}</b><span>Foreign-key violations</span></article><article><b>{{ schema }}</b><span>Schema version</span></article><article><b>{{ version }}</b><span>Application version</span></article></div>
+-<section class="panel"><h2>Paths</h2><table><tr><th>Data root</th><td><code>{{ paths.root }}</code></td></tr><tr><th>Database</th><td><code>{{ paths.db_file }}</code></td></tr><tr><th>Exports</th><td><code>{{ paths.exports }}</code></td></tr><tr><th>Backups</th><td><code>{{ paths.backups }}</code></td></tr></table></section>
++<div class="page-heading"><div><p class="eyebrow">DIAGNOSTICS</p><h1>System health</h1><p>Inventory and permanent local movie-catalog status.</p></div><button type="button" data-copy-diagnostics>Copy Diagnostic Summary</button></div>
++{% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}{% if message %}<div class="alert error">{{ message }}</div>{% endif %}
++<div class="metric-grid"><article><b>{{ integrity }}</b><span>Inventory integrity</span></article><article><b>{{ foreign }}</b><span>Inventory FK violations</span></article><article><b>{{ schema }}</b><span>Inventory schema</span></article><article><b>{{ version }}</b><span>Application version</span></article></div>
++<section class="panel"><h2>Paths</h2><table><tr><th>Data root</th><td><code>{{ paths.root }}</code></td></tr><tr><th>Inventory database</th><td><code>{{ paths.db_file }}</code></td></tr><tr><th>Movie catalog database</th><td><code>{{ paths.catalog_db_file }}</code></td></tr><tr><th>Exports</th><td><code>{{ paths.exports }}</code></td></tr><tr><th>Backups</th><td><code>{{ paths.backups }}</code></td></tr></table></section>
++<section class="panel"><div class="page-heading"><div><h2>Local movie catalog</h2><p>{% if catalog.available %}Permanent SnapIMS business data; not a disposable API cache.{% else %}Catalog unavailable. Inventory and Review remain operational.{% endif %}</p></div><div class="actions"><form method="post" action="/diagnostics/catalog/backup"><button>Back up catalog</button></form><form method="post" action="/diagnostics/catalog/rebuild-index"><button>Rebuild search index</button></form><form method="post" action="/diagnostics/catalog/retry-failed"><button>Retry failed lookups</button></form></div></div>
++{% if catalog_error %}<div class="alert error"><strong>Catalog unavailable</strong><p>{{ catalog_error }}</p></div>{% endif %}
++<div class="metric-grid compact"><article><b>{{ catalog.movies|default(0) }}</b><span>Movies</span></article><article><b>{{ catalog.aliases|default(0) }}</b><span>Aliases</span></article><article><b>{{ links.linked_items }}</b><span>Linked items</span></article><article><b>{{ links.unlinked_recognized_items }}</b><span>Unlinked recognized</span></article><article><b>{{ catalog.local_hits|default(0) }}</b><span>Local hits</span></article><article><b>{{ catalog.wikipedia_calls|default(0) }}</b><span>Wikipedia calls</span></article><article><b>{{ catalog.ambiguous_matches|default(0) }}</b><span>Ambiguous</span></article><article><b>{{ catalog.failed_jobs|default(0) }}</b><span>Failed jobs</span></article><article><b>{{ links.stale_links }}</b><span>Stale links</span></article><article><b>{{ catalog.database_size_bytes|default(0) }}</b><span>Catalog bytes</span></article><article><b>{{ catalog.schema_version|default('-') }}</b><span>Catalog schema</span></article><article><b>{{ catalog.integrity|default('unavailable') }}</b><span>Catalog integrity</span></article></div>
++<table><tr><th>FTS index</th><td>{{ 'Available' if catalog.fts_available else 'Fallback search only' }}</td></tr><tr><th>Catalog FK violations</th><td>{{ catalog.foreign_key_violations|default(0) }}</td></tr><tr><th>Last successful external lookup</th><td>{{ catalog.last_successful_external_lookup|default('None') or 'None' }}</td></tr></table></section>
++<section class="panel"><h2>Recent catalog jobs</h2><table><thead><tr><th>Item</th><th>Recognized title</th><th>Status</th><th>Candidates</th><th>Attempts</th><th>Last error</th></tr></thead><tbody>{% for job in catalog_jobs %}<tr><td><code>{{ job.item_id }}</code></td><td>{{ job.proposed_title }}</td><td>{{ job.status }}</td><td>{{ job.candidate_count }}</td><td>{{ job.attempt_count }}</td><td>{{ job.last_error }}</td></tr>{% else %}<tr><td colspan="6">No catalog jobs yet.</td></tr>{% endfor %}</tbody></table></section>
+ <section class="panel"><h2>Provider configuration</h2><table>{% for name,state in providers.items() %}<tr><th>{{ name }}</th><td>{{ state[1] }}</td></tr>{% endfor %}</table></section>
+ <section class="panel"><h2>Media bandwidth</h2><div class="metric-grid compact"><article><b>{{ media_totals.original_bytes }}</b><span>Original bytes</span></article><article><b>{{ media_totals.preview_bytes }}</b><span>Preview bytes</span></article><article><b>{{ media_totals.recognition_bytes }}</b><span>Recognition bytes</span></article><article><b>{{ media_totals.images_skipped }}</b><span>AI-skipped images</span></article></div></section>
+ <section class="panel"><h2>Recent recognition jobs</h2><table><thead><tr><th>Batch</th><th>Status</th><th>Provider</th><th>Progress</th><th>Last error</th></tr></thead><tbody>{% for job in jobs %}<tr><td>{{ job.batch_id }}</td><td>{{ job.status }}</td><td>{{ job.provider }}</td><td>{{ job.completed }}/{{ job.total }}</td><td>{{ job.error_message }}</td></tr>{% endfor %}</tbody></table></section>
+diff --git a/snapims/web/templates/review.html b/snapims/web/templates/review.html
+index c7a9c46..21e5d0d 100644
+--- a/snapims/web/templates/review.html
++++ b/snapims/web/templates/review.html
+@@ -13,8 +13,8 @@
+   {% if edit %}
+     <p class="eyebrow">EXCEPTION EDITOR</p><h1>Edit item</h1>
+     <form method="post" action="/review/save" class="editor-grid"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><input type="hidden" name="queue" value="{{ queue }}"><input type="hidden" name="revision" value="{{ current.record_revision }}">
+-      <label class="span-2">Title<input autofocus name="title" value="{{ current.title or (suggestion.suggested_title if suggestion else '') }}"></label>
+-      <label>Release year<input name="release_year" value="{{ current.release_year or (suggestion.release_year if suggestion else '') }}"></label><label>Barcode<input name="barcode" value="{{ current.barcode }}"></label>
++      <label class="span-2">Title<input autofocus name="title" value="{{ current.title or (catalog_status.canonical_title if catalog_status and catalog_status.canonical_title else '') or (suggestion.suggested_title if suggestion else '') }}"></label>
++      <label>Release year<input name="release_year" value="{{ current.release_year or (catalog_status.primary_release_year if catalog_status and catalog_status.primary_release_year else '') or (suggestion.release_year if suggestion else '') }}"></label><label>Barcode<input name="barcode" value="{{ current.barcode }}"></label>
+       <label>Studio / distributor<input name="distributor" value="{{ current.distributor or (suggestion.distributor if suggestion else '') }}"></label><label>Edition / format<input name="edition" value="{{ current.edition or (suggestion.edition if suggestion else '') }}"></label>
+       <label>Price CAD<input name="price" type="number" step="0.01" value="{{ '%.2f'|format((current.price_cents or (suggestion.suggested_price_cents if suggestion else 0) or 0)/100) }}"></label><label>Discount %<input name="discount" type="number" step="0.01" value="{{ current.discount_percent or (suggestion.suggested_discount_percent if suggestion else 0) }}"></label>
+       <label>Quantity<input name="quantity" type="number" value="{{ current.quantity }}"></label><label>Condition<select name="condition">{% for option in conditions %}<option {% if option==current.condition %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+@@ -26,11 +26,12 @@
+       <div class="span-2 action-row"><button class="primary">{{ 'Save changes' if current.review_status=='DONE' else 'Save edits & next' }}</button><a class="button" href="/review?batch_id={{ batch_id }}&queue={{ queue }}&item_id={{ current.item_id }}">Cancel changes</a></div>
+     </form>
+   {% else %}
+-    <div class="identity"><p class="eyebrow">{{ 'SAVED RECORD' if current.review_status=='DONE' else ('AI SUGGESTION' if suggestion else 'MANUAL REVIEW') }}</p><h1>{{ current.title or (suggestion.suggested_title if suggestion else 'Title required') }}</h1><p>{{ current.edition or (suggestion.edition if suggestion else 'No edition detected') }}</p>{% if suggestion %}<div class="confidence"><strong>{{ (suggestion.confidence * 100)|round|int }}%</strong><span>Recognition confidence</span></div>{% endif %}</div>
++    <div class="identity"><p class="eyebrow">{{ 'SAVED RECORD' if current.review_status=='DONE' else ('AI SUGGESTION' if suggestion else 'MANUAL REVIEW') }}</p><h1>{{ display_title }}</h1><p>{{ current.edition or (suggestion.edition if suggestion else 'No edition detected') }}</p>{% if catalog_status %}<div class="catalog-match catalog-{{ catalog_status.status|lower|replace('_','-') }}"><strong>Catalog match: {{ catalog_status.label|upper }}</strong>{% if catalog_status.canonical_title %}<span>{{ catalog_status.canonical_title }}{% if catalog_status.primary_release_year %} ({{ catalog_status.primary_release_year }}){% endif %}</span>{% elif catalog_status.candidate_count %}<span>{{ catalog_status.candidate_count }} possible films</span>{% elif catalog_status.error %}<span>{{ catalog_status.error }}</span>{% endif %}{% if catalog_status.movie_id %}<code>{{ catalog_status.movie_id }}</code>{% endif %}</div>{% endif %}{% if suggestion %}<div class="confidence"><strong>{{ (suggestion.confidence * 100)|round|int }}%</strong><span>Recognition confidence</span></div>{% endif %}</div>
+     <form id="quick-approve-form" method="post" action="/review/approve" class="quick-approve" data-quick-review><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><div class="quick-fields"><label>Price CAD<input id="quick-price" name="price" type="text" inputmode="decimal" autocomplete="off" value="{{ '%.2f'|format((current.price_cents or (suggestion.suggested_price_cents if suggestion else 0) or 0)/100) }}"></label><label>Discount %<input name="discount" type="number" step="0.01" value="{{ current.discount_percent or (suggestion.suggested_discount_percent if suggestion else 0) }}"></label></div><button id="approve-next-button" class="approve" type="submit">✓ Approve & Next</button></form>
+     <div class="secondary-actions"><a class="button" href="/review?batch_id={{ batch_id }}&queue={{ queue }}&item_id={{ current.item_id }}&edit=true">Edit details</a>{% if current.review_status!='DONE' %}<form method="post" action="/review/later"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><button>Later</button></form>{% endif %}{% if current.recognition_status=='FAILED' %}<form method="post" action="/review/retry"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><select name="provider"><option value="mock">Mock</option><option value="openai">OpenAI</option></select><button>Retry this item</button></form>{% endif %}</div>
+     <dl class="summary"><div><dt>Location</dt><dd>{{ current.shelf }}</dd></div><div><dt>Images</dt><dd>{{ current.image_count }}</dd></div><div><dt>Condition</dt><dd>{{ current.condition }}</dd></div><div><dt>Review source</dt><dd>{{ current.review_source or 'Not reviewed' }}</dd></div></dl>
+-    {% if suggestion %}<details class="evidence"><summary>Recognition evidence and history</summary><p><strong>Suggested title:</strong> {{ suggestion.suggested_title }}</p><p><strong>Provider:</strong> {{ suggestion.provider }}</p>{% set reasons=suggestion.uncertainty_reasons_json|default('[]') %}<pre>{{ reasons }}</pre>{% for record in history %}<div class="history"><strong>{{ record.suggested_title }}</strong><span>{{ record.provider }} · {{ (record.confidence*100)|round|int }}%</span></div>{% endfor %}</details>{% endif %}
++    {% if catalog_candidates and catalog_job %}<details class="catalog-candidates" open><summary>Resolve ambiguous movie match</summary><p>The photograph remains authoritative. Select only the matching film, or edit the title.</p>{% for candidate in catalog_candidates %}<form method="post" action="/catalog/jobs/{{ catalog_job.job_id }}/select" class="candidate-row"><input type="hidden" name="candidate_id" value="{{ candidate.candidate_id }}"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="queue" value="{{ queue }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><span><strong>{{ candidate.canonical_title }}</strong>{% if candidate.release_year %} ({{ candidate.release_year }}){% endif %}<small>{{ candidate.media_type }} · evidence score {{ '%.2f'|format(candidate.score) }}</small></span><button type="submit">Use this movie</button></form>{% endfor %}</details>{% endif %}
++    {% if suggestion %}<details class="evidence"><summary>Recognition evidence and history</summary><p><strong>Original AI title:</strong> {{ suggestion.suggested_title }}</p><p><strong>Provider:</strong> {{ suggestion.provider }}</p>{% if catalog_status and catalog_status.source_url %}<p><strong>Catalog source:</strong> <a href="{{ catalog_status.source_url }}" rel="noreferrer" target="_blank">Wikipedia source page</a></p>{% endif %}{% set reasons=suggestion.uncertainty_reasons_json|default('[]') %}<pre>{{ reasons }}</pre>{% for record in history %}<div class="history"><strong>{{ record.suggested_title }}</strong><span>{{ record.provider }} · {{ (record.confidence*100)|round|int }}%</span></div>{% endfor %}</details>{% endif %}
+     {% if item_history %}<details><summary>Change history</summary>{% for change in item_history[:20] %}<div class="history"><strong>{{ change.field_name }}</strong><span>{{ change.source }} · {{ change.occurred_at }}</span><code>{{ change.old_value_json }} → {{ change.new_value_json }}</code></div>{% endfor %}</details>{% endif %}
+   {% endif %}
+   </div>
+diff --git a/tests/test_db_migration.py b/tests/test_db_migration.py
+index df2f6cc..9d5649b 100644
+--- a/tests/test_db_migration.py
++++ b/tests/test_db_migration.py
+@@ -123,7 +123,7 @@ def test_pre_migration_backup_created(tmp_path: Path) -> None:
+     paths = DataPaths.from_root(tmp_path / "workspace").ensure()
+     legacy_v03_database(paths.db_file)
+     db.initialize(paths.db_file, paths=paths)
+-    backups = list(paths.backups.glob("*before-schema-v6*.sqlite3"))
++    backups = list(paths.backups.glob("*before-schema-v7*.sqlite3"))
+     assert len(backups) == 1
+     with sqlite3.connect(backups[0]) as connection:
+         assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+@@ -190,7 +190,7 @@ def test_current_schema_initialize_is_idempotent(tmp_path: Path) -> None:
+     db.initialize(db_file)
+     # WAL metadata may vary, but the logical schema and version remain stable.
+     with db.connect(db_file) as connection:
+-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
++        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
+         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+     assert first
+ 
