@@ -2,7 +2,7 @@
 
 ## Authoritative inventory database
 
-Path: `~/SnapIMS-data/database/inventory.sqlite3`  
+Path: `~/SnapIMS-data/database/inventory.sqlite3`
 Schema version: **8**
 
 This database owns Batch and Item identity, photos, physical sequence, shelf, condition, Price, Discount, quantity, working/review state, recognition history, CSV stages, checkpoints, Shopify state, current Movie link, and link audit events.
@@ -11,7 +11,7 @@ Schema 8 adds/validates the Movie-link structures and permanently repairs legacy
 
 ## Rebuildable Movie Catalog
 
-Path: `~/SnapIMS-data/database/movie_catalog.sqlite3`  
+Path: `~/SnapIMS-data/database/movie_catalog.sqlite3`
 Catalog schema version: **1**
 
 This independent database stores Movies, titles, aliases, release year/date, runtime, countries, languages, directors, genres, concise source-backed summaries, source page/revision/retrieval provenance, candidates, decisions, lookup jobs, response cache, events, maintenance jobs, and FTS search data.

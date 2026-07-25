@@ -143,7 +143,7 @@ Next required work is the real 20-tape Pixel/live-AI pilot, physical CSV reconci
 
 ## Authoritative inventory database
 
-Path: `~/SnapIMS-data/database/inventory.sqlite3`  
+Path: `~/SnapIMS-data/database/inventory.sqlite3`
 Schema version: **8**
 
 This database owns Batch and Item identity, photos, physical sequence, shelf, condition, Price, Discount, quantity, working/review state, recognition history, CSV stages, checkpoints, Shopify state, current Movie link, and link audit events.
@@ -152,7 +152,7 @@ Schema 8 adds/validates the Movie-link structures and permanently repairs legacy
 
 ## Rebuildable Movie Catalog
 
-Path: `~/SnapIMS-data/database/movie_catalog.sqlite3`  
+Path: `~/SnapIMS-data/database/movie_catalog.sqlite3`
 Catalog schema version: **1**
 
 This independent database stores Movies, titles, aliases, release year/date, runtime, countries, languages, directors, genres, concise source-backed summaries, source page/revision/retrieval provenance, candidates, decisions, lookup jobs, response cache, events, maintenance jobs, and FTS search data.
@@ -417,7 +417,7 @@ Final files:
 ''',
 "GITHUB_PUSH_STATUS.md": r'''# GitHub Publication Status
 
-Target repository: `fachingo/SnapIMS`  
+Target repository: `fachingo/SnapIMS`
 Target branch: `feature/v0.7.0-keyboard-catalog`
 
 The release is packaged as a complete repository and portable Git bundle. No force-push or automatic merge is performed by the release package.
