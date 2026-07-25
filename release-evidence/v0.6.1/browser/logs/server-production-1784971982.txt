@@ -1,0 +1,30 @@
+INFO:     Started server process [7092]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8893 (Press CTRL+C to quit)
+INFO:     127.0.0.1:50054 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50066 - "GET /batch-editor?batch_id=20260725-093234 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50076 - "GET /media/14 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50068 - "GET /media/8 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50072 - "GET /media/11 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50066 - "GET /media/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50092 - "GET /media/17 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50100 - "GET /media/20 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50068 - "GET /media/23 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50066 - "GET /media/29 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50072 - "GET /media/32 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50076 - "GET /media/26 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50100 - "GET /media/35 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50100 - "GET /media/38 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50076 - "GET /media/41 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50092 - "GET /media/53 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50068 - "GET /media/47 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50066 - "GET /media/50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50072 - "GET /media/44 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50072 - "GET /publish?batch_id=20260725-093234 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50072 - "GET /publish?batch_id=20260725-093234&simulate=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50072 - "GET /diagnostics HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [7092]
