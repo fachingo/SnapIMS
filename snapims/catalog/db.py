@@ -4,6 +4,7 @@ import hashlib
 import json
 import shutil
 import sqlite3
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -14,6 +15,8 @@ from snapims.config import DataPaths
 
 CATALOG_SCHEMA_VERSION = 1
 CATALOG_PARSER_VERSION = "slmc-wikipedia-1"
+_VERIFIED_DATABASES: dict[Path, tuple[int, int]] = {}
+_VERIFIED_LOCK = threading.Lock()
 
 
 def now() -> str:
@@ -362,8 +365,15 @@ def verify_structure(connection: sqlite3.Connection) -> list[str]:
 
 
 def initialize(db_file: Path, *, paths: DataPaths | None = None, create: bool = True) -> None:
+    db_file = db_file.resolve()
     db_file.parent.mkdir(parents=True, exist_ok=True)
     exists = db_file.exists() and db_file.stat().st_size > 0
+    if exists:
+        stat = db_file.stat()
+        signature = (stat.st_mtime_ns, stat.st_size)
+        with _VERIFIED_LOCK:
+            if _VERIFIED_DATABASES.get(db_file) == signature:
+                return
     if not exists and not create:
         raise FileNotFoundError(f"Catalog database does not exist: {db_file}")
     current = 0
@@ -394,6 +404,9 @@ def initialize(db_file: Path, *, paths: DataPaths | None = None, create: bool = 
                     "Catalog schema is structurally incompatible: "
                     + "; ".join([*errors, f"foreign-key violations={len(foreign)}"])
                 )
+            stat = db_file.stat()
+            with _VERIFIED_LOCK:
+                _VERIFIED_DATABASES[db_file] = (stat.st_mtime_ns, stat.st_size)
             return
 
     backup: Path | None = None
@@ -445,7 +458,12 @@ def initialize(db_file: Path, *, paths: DataPaths | None = None, create: bool = 
             raise RuntimeError(
                 f"Catalog migration verification failed: integrity={integrity}; foreign={len(foreign)}"
             )
+        stat = db_file.stat()
+        with _VERIFIED_LOCK:
+            _VERIFIED_DATABASES[db_file] = (stat.st_mtime_ns, stat.st_size)
     except Exception:
+        with _VERIFIED_LOCK:
+            _VERIFIED_DATABASES.pop(db_file, None)
         if backup is not None and backup.exists():
             _restore_database(db_file, backup)
         elif not exists:

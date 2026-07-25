@@ -1,0 +1,61 @@
+{
+  "package": "SLMC-0.1.0",
+  "methodology": "single-process SQLite synthetic benchmark; bounded indexed lookups; timings use time.perf_counter",
+  "hardware": {
+    "platform": "Linux-6.12.13-x86_64-with-glibc2.41",
+    "python": "3.13.5",
+    "processor": "",
+    "cpu_count": 5
+  },
+  "dataset": {
+    "requested_movies": 10000,
+    "requested_aliases": 50000,
+    "actual_movies_including_probes": 10011,
+    "actual_aliases": 50000,
+    "database_size_bytes": 17354752,
+    "database_size_before_fts_bytes": 17354752
+  },
+  "build": {
+    "insert_seconds": 0.43510689000004277,
+    "fts_rebuild_seconds": 0.18113270599997122,
+    "fts_indexed_movies": 10000
+  },
+  "latency": {
+    "exact_title": {
+      "samples": 20,
+      "median_ms": 1.0258210000984036,
+      "p95_ms": 1.2853559999257413,
+      "max_ms": 36.911896999981764
+    },
+    "title_and_year": {
+      "samples": 20,
+      "median_ms": 1.0577829999647292,
+      "p95_ms": 1.1454379998667719,
+      "max_ms": 29.915346000052523
+    },
+    "exact_alias": {
+      "samples": 20,
+      "median_ms": 0.8927584999582905,
+      "p95_ms": 1.003456999796981,
+      "max_ms": 6.138380000038524
+    },
+    "fts_candidate": {
+      "samples": 20,
+      "median_ms": 0.7398464999823773,
+      "p95_ms": 0.7964209999045124,
+      "max_ms": 0.8068659999480587
+    },
+    "single_movie_insert": {
+      "samples": 10,
+      "median_ms": 0.02068550008971215,
+      "p95_ms": 0.09518100000605045,
+      "max_ms": 0.09518100000605045
+    }
+  },
+  "duplicate_prevention": {
+    "prevented": true,
+    "error": "UNIQUE constraint failed: movie_sources.provider_name, movie_sources.source_page_id"
+  },
+  "integrity": "ok",
+  "foreign_key_violations": 0
+}
