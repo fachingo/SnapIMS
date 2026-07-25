@@ -33,11 +33,7 @@ cp -n .env.example .env
 nano .env
 ```
 
-Add the real key without committing it:
-
-```text
-OPENAI_API_KEY=your-key-here
-```
+In `.env`, set the `OPENAI_API_KEY` variable to the real key. Do not commit or paste the key into logs, screenshots, documentation, or support messages.
 
 ## Run with the existing data directory
 

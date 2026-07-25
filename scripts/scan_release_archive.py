@@ -42,6 +42,10 @@ def scan(path: Path) -> list[str]:
                 issues.append(f"forbidden file type: {name}")
             if info.is_dir() or info.file_size > 5_000_000:
                 continue
+            # The checked-in template contains empty secret variable names by design.
+            # Filename/type rules still apply, but an empty .env.example is not a secret.
+            if basename == ALLOWED_ENV_EXAMPLE:
+                continue
             try:
                 payload = archive.read(info)
             except OSError as exc:
