@@ -1,6 +1,6 @@
 # GitHub Publication Status
 
-Target repository: `fachingo/SnapIMS`  
+Target repository: `fachingo/SnapIMS`
 Target branch: `feature/v0.7.0-keyboard-catalog`
 
 The release is packaged as a complete repository and portable Git bundle. No force-push or automatic merge is performed by the release package.
