@@ -1,21 +1,27 @@
-# SnapIMS v0.6.0 Native Browser Verification
+# SnapIMS 0.6.0 + SLMC-0.1.0 Native Browser Verification
 
-Status: PASSED
+## Host v0.6.0 audit
 
-Batch: `20260725-054122`
-Viewport: 1440 x 1000
+The original operator workstation browser audit remains under `operator-audit-assets/v0.6.0-browser/`.
 
-## Verified scenarios
-- Home dashboard rendered
-- Empty folder action disabled; no raw FastAPI response
-- 20-item import completed without started_at failure
-- Missing OpenAI key produced actionable recovery screen
-- Recognition recovered through mock provider
-- Price → Enter approved and focused next price
-- Batch Editor inline edit and 20-row bulk price completed
-- CSV round trip showed diff and updated working batch
-- External review and Shopify simulation completed
-- Working values survived process restart
-- Diagnostics rendered provider, schema, and media data
+## SLMC integration audit
 
-Browser page errors: 0
+Status: **PASSED with stated limitations**. Evidence is under `operator-audit-assets/slmc-0.1.0-browser/`.
+
+Verified:
+
+- actual browser Import preview and preserve;
+- recognition commit followed by immediate local catalog search;
+- existing Movie shown as Local Match with zero external attempt;
+- one fixture-backed Wikipedia miss created one durable Movie;
+- second copy reused the same Movie and did not increment Wikipedia attempts;
+- Price/Discount and Enter opened the next Item exactly once;
+- CSV preserved Item ID and added matching Movie ID/facts;
+- Shopify simulation received structured Movie fields without publication;
+- catalog Diagnostics rendered;
+- process restart preserved Movies, aliases, jobs and links;
+- inventory/catalog integrity `ok`, FK violations `0`.
+
+Browser page errors: 0. Unexpected failed requests: 0. Two inherited favicon 404 console messages were recorded. Live AI, live Wikipedia and live Shopify were not tested.
+
+See `BROWSER_VERIFICATION_REPORT.md`.

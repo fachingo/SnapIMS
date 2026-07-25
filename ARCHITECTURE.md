@@ -1,30 +1,27 @@
-# SnapIMS 0.6.0 Architecture
+# SnapIMS 0.6.0 + SLMC-0.1.0 Architecture
 
 ## System boundaries
 
 - `snapims/protocol.py`, `pipeline.py`, `processor.py`: deterministic QR/photo import.
-- `snapims/db.py`: SQLite persistence, migrations, checkpoints, history, cursors, recognition jobs.
+- `snapims/db.py`: authoritative physical inventory, schema 7, backups, checkpoints, history, cursors, recognition jobs and audited Item-to-Movie links.
 - `snapims/recognition/`: provider adapters and durable recognition orchestration.
-- `snapims/inventory.py`: record validation, CSV export/import staging, diff application, external review.
-- `snapims/shopify/`: Shopify adapter, idempotency, and simulation/live boundaries.
-- `snapims/web/`: FastAPI routes, Jinja templates, browser interactions.
+- `snapims/catalog/`: independent permanent Movie database, local search, bounded Wikipedia discovery, candidates, jobs, reconciliation and administration.
+- `snapims/inventory.py`: validation, CSV export/import staging, diff application and external review.
+- `snapims/shopify/`: structured simulation/draft integration and idempotency boundaries.
+- `snapims/web/`: FastAPI routes, Jinja templates, compact catalog states and diagnostics.
 
-The SQLite working batch is authoritative. Review, Batch Editor, CSV apply, and recovery all update the same item records. Original and AI values remain available through recognition history, change history, and rollback checkpoints.
+`inventory.sqlite3` is authoritative for physical inventory. `movie_catalog.sqlite3` is authoritative for reusable Movie identity and provenance. The databases use durable reconciliation rather than pretending to have a cross-file atomic foreign key.
+
+## Recognition and catalog flow
+
+The first-pass vision result is committed unchanged. SLMC immediately searches local canonical titles, aliases, title/year evidence and FTS. A materially unique local hit links without Wikipedia. A genuine miss queues one restart-safe bounded English Wikipedia lookup in the background. Review remains usable and the fast Price/Discount → Approve & Next/Enter contract is unchanged.
 
 ## Media pipeline
 
-Each product photo has three durable representations:
+Each product photo has preserved original, browser preview and recognition derivative representations. QR cards and ineligible images are excluded from provider payloads without deletion.
 
-1. Original: exact preserved source file.
-2. Preview: 1080-pixel browser derivative.
-3. Recognition: 1920-pixel AI derivative.
+## Concurrency and recovery
 
-QR cards, duplicates, blank images, and ineligible photos are excluded from provider payloads without being deleted.
+SQLite uses WAL, busy timeouts, transactions, item revisions, unique job/source constraints, one current link per Item, append-only link events, leased catalog jobs and restart reconciliation. Failed Item linking retains the shared Movie and moves to `LINK_PENDING`.
 
-## Concurrency safety
-
-SQLite uses WAL, busy timeouts, transactions, and item record revisions. Browser edits include the expected revision; stale writes are rejected rather than silently replacing newer values.
-
-## Extension points
-
-Provider adapters, Shopify publishing, CSV tooling, and UI services remain separate enough to support future Android capture clients, Docker/server deployment, ERP adapters, and additional AI providers without replacing the deterministic import core.
+See `ARCHITECTURE_LOCAL_MOVIE_CATALOG.md` for the full SLMC design.

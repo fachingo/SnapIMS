@@ -1,0 +1,237 @@
+{
+  "package": "SLMC-0.1.0",
+  "application_version": "0.6.0",
+  "inventory_schema": 7,
+  "catalog_schema": 1,
+  "metadata": {
+    "commit": "dad21ce4d50684b9dfbe21c22cfbb6ab453fcad5",
+    "branch": "feature/slmc-local-movie-catalog",
+    "status": "M ARCHITECTURE.md\n M DATABASE.md\n M DOCUMENTATION_VERIFICATION.md\n M NATIVE_BROWSER_VERIFICATION.md\n M PRODUCTION_READINESS.md\n M PROJECT_STATUS.md\n M README.md\n M RELEASE_NOTES.md\n M SCREENSHOT_INDEX.md\n M SnapIMS_Operator_Guide.docx\n M SnapIMS_Operator_Guide.pdf\n?? ARCHITECTURE_LOCAL_MOVIE_CATALOG.md\n?? BROWSER_VERIFICATION_REPORT.md\n?? CATALOG_ADMIN_GUIDE.md\n?? CATALOG_BACKUP_AND_RESTORE.md\n?? CATALOG_DATABASE_SCHEMA.md\n?? CHANGELOG_SLMC.md\n?? CROSS_DATABASE_RECOVERY.md\n?? INVENTORY_DATABASE_INTEGRATION.md\n?? LICENSE_AND_ATTRIBUTION.md\n?? LOCAL_MATCHING_RULES.md\n?? MERGE_CONFLICT_MAP.md\n?? PERFORMANCE_REPORT.md\n?? README_BLEND_WITH_SNAPIMS.md\n?? THIRD_PARTY_NOTICES.md\n?? WIKIPEDIA_DATA_POLICY.md\n?? WIKIPEDIA_INGESTION_POLICY.md\n?? operator-audit-assets/slmc-0.1.0-browser/\n?? scripts/generate_operator_guide_slmc.py"
+  },
+  "local_seed_movie_id": "MOV-00000001",
+  "scenarios": [
+    "Actual browser Import preview and preserve completed for a two-item batch.",
+    "Recognition committed first; Demo VHS 001 resolved from the permanent local catalog without an external attempt.",
+    "Enter approved the first item once, preserved quick Price/Discount, and opened the next physical item with a newly ingested catalog record.",
+    "A second batch reused both local Movie records; the Wikipedia-attempt count remained exactly one.",
+    "CSV preserved Item ID and included the same durable local Movie IDs and structured catalog fields.",
+    "Shopify simulation received structured Movie facts; no remote product ID or automatic publication was created.",
+    "Diagnostics displayed catalog schema, integrity, counts, jobs, FTS, and maintenance controls.",
+    "Full process restart preserved Movies, aliases, jobs, and inventory links."
+  ],
+  "console_errors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "page_errors": [],
+  "request_failures": [],
+  "limitations": [
+    "Recognition used the deterministic Mock provider, not live AI.",
+    "Wikipedia used deterministic fixtures through the official-client parsing path, not live network calls.",
+    "Shopify was simulation-only; no live draft or publication was attempted."
+  ],
+  "first_batch": "20260725-094033",
+  "second_batch": "20260725-094035-SLMC-SECOND",
+  "counts_after_first_batch": {
+    "movies": 2,
+    "aliases": 3,
+    "wikipedia_attempts": 1,
+    "jobs": 2
+  },
+  "counts_after_second_batch": {
+    "movies": 2,
+    "aliases": 3,
+    "wikipedia_attempts": 1,
+    "jobs": 4
+  },
+  "first_batch_links": [
+    {
+      "item_id": "20260725-094033-A1-001",
+      "movie_id": "MOV-00000001",
+      "link_status": "LOCAL_MATCH",
+      "link_method": "LOCAL_ALIAS"
+    },
+    {
+      "item_id": "20260725-094033-A1-002",
+      "movie_id": "MOV-00000002",
+      "link_status": "NEW_WIKIPEDIA_RECORD",
+      "link_method": "WIKIPEDIA_INGEST"
+    }
+  ],
+  "second_batch_links": [
+    {
+      "item_id": "20260725-094035-SLMC-SECOND-B2-001",
+      "movie_id": "MOV-00000001",
+      "link_status": "LOCAL_MATCH",
+      "link_method": "LOCAL_ALIAS"
+    },
+    {
+      "item_id": "20260725-094035-SLMC-SECOND-B2-002",
+      "movie_id": "MOV-00000002",
+      "link_status": "LOCAL_MATCH",
+      "link_method": "LOCAL_ALIAS"
+    }
+  ],
+  "csv": [
+    {
+      "Item ID": "20260725-094035-SLMC-SECOND-B2-001",
+      "SKU": "20260725-094035-SLMC-SECOND-B2-001",
+      "Batch ID": "20260725-094035-SLMC-SECOND",
+      "Shelf": "B2",
+      "Sequence": "1",
+      "Rare flag": "FALSE",
+      "Review flag": "FALSE",
+      "Title": "Demo VHS 001",
+      "Release year": "1991",
+      "Edition": "Standard VHS",
+      "Distributor": "Demo Distributor",
+      "Barcode": "",
+      "Condition": "Not Graded",
+      "Condition notes": "",
+      "Price": "8.50",
+      "Discount percent": "10",
+      "Quantity": "1",
+      "Tags": "",
+      "Product type": "VHS Tape",
+      "Vendor": "Canada VHS",
+      "Description": "",
+      "Image folder": "/mnt/data/slmc-work/SnapIMS-v0.6.0/operator-audit-assets/slmc-0.1.0-browser/workspace/processed/20260725-094035-SLMC-SECOND/images",
+      "Image count": "2",
+      "Recognition provider": "mock",
+      "Recognition confidence": "0.91",
+      "Review status": "DONE",
+      "Ready status": "TRUE",
+      "Validation errors": "",
+      "Shopify status": "NOT_UPLOADED",
+      "Shopify product ID": "",
+      "Shopify variant ID": "",
+      "Shopify inventory item ID": "",
+      "Shopify admin URL": "",
+      "Last error": "",
+      "Retry count": "0",
+      "Local Movie ID": "MOV-00000001",
+      "Canonical Movie title": "Demo VHS 001",
+      "Original Movie title": "",
+      "Film release year": "1991",
+      "Runtime minutes": "91",
+      "Director": "Local Sample Director",
+      "Country": "Canada",
+      "Language": "English",
+      "Genre": "Drama",
+      "Catalog match status": "LOCAL_MATCH",
+      "Source page URL": "https://en.wikipedia.org/wiki/Demo_VHS_001_(1991_film)",
+      "Provenance status": "SOURCE_RECORDED"
+    },
+    {
+      "Item ID": "20260725-094035-SLMC-SECOND-B2-002",
+      "SKU": "20260725-094035-SLMC-SECOND-B2-002",
+      "Batch ID": "20260725-094035-SLMC-SECOND",
+      "Shelf": "B2",
+      "Sequence": "2",
+      "Rare flag": "TRUE",
+      "Review flag": "TRUE",
+      "Title": "Demo VHS 002",
+      "Release year": "1992",
+      "Edition": "Standard VHS",
+      "Distributor": "Demo Distributor",
+      "Barcode": "",
+      "Condition": "Not Graded",
+      "Condition notes": "",
+      "Price": "7.50",
+      "Discount percent": "0",
+      "Quantity": "1",
+      "Tags": "",
+      "Product type": "VHS Tape",
+      "Vendor": "Canada VHS",
+      "Description": "",
+      "Image folder": "/mnt/data/slmc-work/SnapIMS-v0.6.0/operator-audit-assets/slmc-0.1.0-browser/workspace/processed/20260725-094035-SLMC-SECOND/images",
+      "Image count": "2",
+      "Recognition provider": "mock",
+      "Recognition confidence": "0.91",
+      "Review status": "DONE",
+      "Ready status": "TRUE",
+      "Validation errors": "",
+      "Shopify status": "NOT_UPLOADED",
+      "Shopify product ID": "",
+      "Shopify variant ID": "",
+      "Shopify inventory item ID": "",
+      "Shopify admin URL": "",
+      "Last error": "",
+      "Retry count": "0",
+      "Local Movie ID": "MOV-00000002",
+      "Canonical Movie title": "Demo VHS 002",
+      "Original Movie title": "",
+      "Film release year": "1992",
+      "Runtime minutes": "95",
+      "Director": "Sample Director",
+      "Country": "Canada",
+      "Language": "English",
+      "Genre": "Comedy",
+      "Catalog match status": "LOCAL_MATCH",
+      "Source page URL": "https://en.wikipedia.org/wiki/Demo_VHS_002_(1992_film)",
+      "Provenance status": "SOURCE_RECORDED"
+    }
+  ],
+  "shopify_structured_movie_payloads": [
+    {
+      "movie_id": "MOV-00000001",
+      "canonical_title": "Demo VHS 001",
+      "original_title": "",
+      "release_year": 1991,
+      "runtime_minutes": 91,
+      "directors": [
+        "Local Sample Director"
+      ],
+      "countries": [
+        "Canada"
+      ],
+      "languages": [
+        "English"
+      ],
+      "genres": [
+        "Drama"
+      ],
+      "catalog_match_status": "LOCAL_MATCH",
+      "source_page_url": "https://en.wikipedia.org/wiki/Demo_VHS_001_(1991_film)",
+      "provenance_status": "SOURCE_RECORDED"
+    },
+    {
+      "movie_id": "MOV-00000002",
+      "canonical_title": "Demo VHS 002",
+      "original_title": "",
+      "release_year": 1992,
+      "runtime_minutes": 95,
+      "directors": [
+        "Sample Director"
+      ],
+      "countries": [
+        "Canada"
+      ],
+      "languages": [
+        "English"
+      ],
+      "genres": [
+        "Comedy"
+      ],
+      "catalog_match_status": "LOCAL_MATCH",
+      "source_page_url": "https://en.wikipedia.org/wiki/Demo_VHS_002_(1992_film)",
+      "provenance_status": "SOURCE_RECORDED"
+    }
+  ],
+  "inventory_integrity": {
+    "integrity": "ok",
+    "foreign_key_violations": 0,
+    "schema_version": 7
+  },
+  "catalog_integrity": {
+    "integrity": "ok",
+    "foreign_key_violations": 0,
+    "schema_version": 1
+  },
+  "restart_snapshot_equal": true,
+  "expected_request_aborts": [
+    "GET http://127.0.0.1:8894/review?batch_id=20260725-094033&notice=Identification%20started.: net::ERR_ABORTED",
+    "GET http://127.0.0.1:8894/review?batch_id=20260725-094035-SLMC-SECOND&notice=Identification%20started.: net::ERR_ABORTED",
+    "GET http://127.0.0.1:8894/publish/csv/20260725-094035-SLMC-SECOND: net::ERR_ABORTED"
+  ]
+}

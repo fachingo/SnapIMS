@@ -1,19 +1,19 @@
-# SnapIMS 0.6.0 Screenshot Index
+# SnapIMS 0.6.0 + SLMC-0.1.0 Screenshot Index
 
-Browser evidence is stored in `operator-audit-assets/v0.6.0-browser/screenshots/`.
+## Host workstation evidence
 
-1. `01-home-dashboard.png`
-2. `02-import-empty-safe.png`
-3. `03-native-folder-selected.png`
-4. `04-import-preview.png`
-5. `05-import-complete.png`
-6. `06-recognition-failure-recovery.png`
-7. `07-recognition-complete.png`
-8. `08-price-enter-next.png`
-9. `09-batch-editor-bulk-price.png`
-10. `10-command-palette.png`
-11. `11-csv-difference-preview.png`
-12. `12-csv-applied.png`
-13. `13-publish-simulation.png`
-14. `14-restart-durable.png`
-15. `15-diagnostics.png`
+Stored in `operator-audit-assets/v0.6.0-browser/screenshots/`.
+
+## SLMC evidence
+
+Stored in `operator-audit-assets/slmc-0.1.0-browser/screenshots/`.
+
+1. `01-import-preview.png`
+2. `02-import-complete.png`
+3. `03-local-match-review.png`
+4. `04-new-wikipedia-record-and-next.png`
+5. `05-review-complete.png`
+6. `06-second-copy-local-reuse.png`
+7. `07-shopify-simulation.png`
+8. `08-catalog-diagnostics.png`
+9. `09-restart-durable-catalog.png`

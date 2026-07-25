@@ -1,18 +1,33 @@
-# SnapIMS 0.6.0 Test Results
+# SnapIMS 0.6.0 + SLMC-0.1.0 Test Results
 
 ## Automated tests
 
-Result: **123 passed**.
+Full suite result: **155 passed, 1 skipped in 67.58 seconds**.
 
-Coverage includes protocol parsing, imports, migrations, recognition, Review, Batch Editor, CSV diff/apply/rollback, Shopify idempotency, web routes, and restart behavior.
+The skipped test is the optional live English Wikipedia integration check. It is disabled unless `SNAPIMS_LIVE_WIKIPEDIA_TEST=1` and a descriptive User-Agent are supplied.
 
-The full suite reached `123 passed in 37.19s` in the container. The hosting harness occasionally retained the completed Python process after pytest printed its final result; individual test modules and grouped release tests exited normally.
+Deterministic catalog subset: **32 passed, 1 skipped**.
+
+Coverage includes the inherited protocol, import, recognition, Review, Batch Editor, CSV, Shopify simulation and web tests plus independent catalog migration, local-first matching, Wikipedia fixture parsing, duplicate prevention, ambiguity, persisted jobs, cross-database link reconciliation, administration, backup/restore, merge/split, provenance, structured outputs and restart durability.
 
 ## Additional checks
 
-- `python -m compileall -q snapims scripts/native_browser_audit_v060.py`: passed.
-- `node --check snapims/web/static/app.js`: passed.
-- Native Chromium audit: passed.
-- SQLite migration/integrity tests: passed.
+- `python -m compileall -q snapims scripts tests`: **passed**.
+- `node --check snapims/web/static/app.js`: **passed**.
+- `git diff --check`: **passed**.
+- `python -m pip wheel . --no-deps --no-build-isolation`: **passed**.
+- clean inventory initialization: integrity `ok`, FK violations `0`, schema `7`.
+- clean catalog initialization: integrity `ok`, FK violations `0`, schema `1`, FTS healthy.
+- deterministic native Chromium audit: **passed with stated limitations**.
 
-Ruff is declared in the development dependencies and remains part of `scripts/run_quality_gate.sh`. The artifact environment used for this reconstruction did not contain a Ruff executable and had no package-network access; run the repository quality gate in the installed project environment before merge.
+## Unresolved environment gates
+
+The container did not contain Ruff or mypy, and the configured package gateway failed when installation was attempted. Therefore these gates are **not claimed as passed**:
+
+- Ruff: unavailable (`No module named ruff`).
+- mypy: unavailable (`No module named mypy`).
+- `python -m build`: build frontend unavailable; the pip PEP 517 wheel fallback passed.
+
+`python -m pip check` was not green because the shared container has a pre-existing MoviePy/Pillow version conflict unrelated to SnapIMS.
+
+See `TEST_REPORT.md` for exact evidence and limitations.

@@ -1,25 +1,15 @@
-# SnapIMS 0.6.0 Project Status
+# SnapIMS 0.6.0 + SLMC-0.1.0 Project Status
 
-Classification: **functional beta candidate for controlled pilot testing**.
+Classification: **standalone mergeable integration package; controlled-pilot candidate after blend**.
 
-## Implemented
+## Implemented in the host application
 
-- Deterministic QR/photo import and duplicate protection.
-- Durable SQLite records, migrations, backups, checkpoints, and restart recovery.
-- Mock and OpenAI recognition adapters with durable failure recovery.
-- One-click/Enter Review path with inline price and discount.
-- Completed-item correction with immutable item identity.
-- Batch Editor and bulk operator workflow.
-- CSV export, upload, difference preview, apply, rollback, and external review.
-- Shopify simulation and live adapter boundaries.
-- Browser preview and AI image derivatives.
-- Operator documentation and native browser verification.
+Deterministic import, durable physical inventory, recognition, one-action Review, completed-item correction, Batch Editor, CSV round trip, Shopify simulation/draft boundaries, media derivatives and browser documentation.
 
-## Not yet accepted for 1.0
+## Added by SLMC
 
-- Real 20-tape Pixel pilot.
-- Live OpenAI recognition against the real pilot.
-- One live Shopify draft created and inspected.
-- Physical CSV reconciliation.
-- Final operator-guide walkthrough using the real pilot.
-- No known blockers after that pilot.
+Permanent local Movie authority, local-first matching, bounded Wikipedia miss ingestion, aliases/provenance, restart-safe catalog jobs, audited cross-database links, ambiguity handling, structured CSV/Shopify fields, diagnostics/admin, performance evidence and integration package documentation.
+
+## Not accepted for 1.0
+
+Real Pixel pilot, live AI, live Wikipedia operating check, one live Shopify draft, physical CSV reconciliation, final merged documentation walkthrough and production blocker closure remain outstanding.

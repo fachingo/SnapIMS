@@ -1,20 +1,21 @@
-# SnapIMS 0.6.0 Documentation Verification
+# SnapIMS 0.6.0 + SLMC-0.1.0 Documentation Verification
 
-The v0.6.0 Operator Guide and active Markdown documents were synchronized against the browser-verified UI.
+The integration Operator Guide was regenerated from the final deterministic browser UI and contains current screenshots for Local Match, New Catalog Record, repeated-copy reuse and catalog Diagnostics.
 
-Verified labels and workflows include:
+Verified operator labels and states include:
 
-- Browse Folder...
-- Preview batch
-- Preserve and import batch
-- Retry Batch / Retry Failed Items Only
-- Continue With Manual Review
-- Approve & Next
-- Batch Editor
-- Bulk Price / Fill Down / checkpoints
-- Upload and preview differences
-- Apply Valid Changes
-- Mark valid batch externally reviewed
-- Run Shopify simulation
+- Local Match;
+- New Catalog Record;
+- Searching;
+- Ambiguous;
+- Not Found / Failed / Needs Review / Catalog Unavailable;
+- Approve & Next;
+- Back up catalog;
+- Rebuild search index;
+- Retry failed lookups;
+- Run Shopify simulation;
+- Download CSV.
 
-Historical v0.5.x reports and generation scripts were moved under `docs/history/v0.5.1/` and `scripts/history/v0.5.1/` so they are clearly non-current.
+The guide states that the application remains 0.6.0, the package is SLMC-0.1.0, the photograph is authority, Wikipedia is film-level discovery only, and 1.0.0 remains forbidden until the full production gate passes.
+
+The regenerated PDF is 38 pages. A separate 90-DPI render and 4-column montage inspection found no clipped text, blank pages or missing screenshots. The final merged branch must regenerate the guide again whenever its browser UI differs from this isolated package.

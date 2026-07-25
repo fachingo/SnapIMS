@@ -1,27 +1,35 @@
 # SnapIMS Release Notes
 
-## 0.6.0 - Operator workstation and stabilization
+## SLMC-0.1.0 integration package for SnapIMS 0.6.0
+
+This is an isolated package, not a final SnapIMS semantic release.
 
 ### Added
 
-- Native folder browse workflow and safe import errors.
-- Recognition failure classification and recovery screen.
-- Preview and recognition image derivatives.
-- Keyboard-first Price -> Enter Review flow.
-- Batch Editor with inline editing, filtering, confidence buckets, command palette, bulk operations, checkpoints, undo/redo, and session restoration.
-- CSV upload, field-level difference preview, apply confirmation, difference report, and rollback.
-- External review workflow.
-- Field-level audit history, token recording, media bandwidth metrics, and stale-edit conflict detection.
+- Permanent independent `movie_catalog.sqlite3` and catalog schema 1.
+- Immutable local Movie IDs, normalized title/alias/year search and FTS fallback.
+- Official English Wikipedia bounded miss lookup with descriptive User-Agent, limits, timeouts, retries, response cache and provenance.
+- Restart-safe catalog jobs, candidates, decisions, ambiguity and link reconciliation.
+- Inventory schema 7 with current Item-to-Movie links and append-only link events.
+- Post-recognition local-first catalog lookup.
+- Compact Review states without changing Approve & Next or Enter.
+- Structured Movie fields in CSV and Shopify simulation.
+- Catalog diagnostics, backup, verify, index rebuild, retry, search, inspect, alias, refresh, manual correction, merge, split, export and import tools.
+- Deterministic tests, optional live Wikipedia test, browser audit, performance benchmark and integration documentation.
 
-### Fixed
+### Fixed during verification
 
-- Legacy recognition-job schema compatibility.
-- `started_at` NOT NULL failures.
-- Final-item recognition-job upsert failures.
-- AI suggestion/title precedence during approval.
-- Silent recognition failure refresh.
-- Unnecessary original-image browser/AI payload use.
+- Final infobox fields no longer retain closing `}}` markup.
+- Split maintenance jobs preserve their target Movie and reconcile `LINK_PENDING` Item links after restart.
 
-## 0.5.1 - Verification hardening
+### Preserved
 
-Historical release candidate. Its reports and generation scripts are retained under `docs/history/v0.5.1/`.
+Import, Publish/navigation layout, QR rules, Item/Batch IDs, photo grouping, Price, Discount, recognition history and draft-only Shopify policy.
+
+### Version policy
+
+The merged capability is a minor SnapIMS release. The exact version is chosen after blending and final browser verification. SnapIMS 1.0.0 remains prohibited until all production acceptance criteria pass.
+
+## 0.6.0 - Operator workstation and stabilization
+
+The original host release added native folder browsing, recognition recovery, image derivatives, keyboard-first Review, Batch Editor, CSV difference/apply/rollback, external review, durable history and token/media accounting.

@@ -1,4 +1,4 @@
-# SnapIMS 0.6.0
+# SnapIMS 0.6.0 + SLMC-0.1.0 Integration Build
 
 SnapIMS is a photo-first, exception-driven inventory workstation for converting physical-media collections into validated inventory records, CSV exports, and Shopify draft products.
 
@@ -8,6 +8,7 @@ The operating model is deliberately simple:
 Photograph + QR events
 -> deterministic import
 -> AI recognition
+-> local Movie catalog lookup (Wikipedia only on a genuine miss)
 -> individual Review or Batch Editor
 -> validated working batch
 -> CSV / Shopify output
@@ -25,6 +26,13 @@ SnapIMS is not designed as a conventional data-entry application. Routine record
 - CSV upload with staged difference preview, validation, explicit apply, and rollback checkpoint.
 - Externally reviewed batch confirmation for validated CSV/bulk workflows.
 - Durable change history, optimistic-revision conflict protection, and recognition token accounting.
+
+
+## SLMC-0.1.0 integration
+
+This isolated branch adds a permanent `<data-root>/database/movie_catalog.sqlite3`, local-first title/alias/year search, bounded official English Wikipedia discovery, durable candidates/jobs/provenance, inventory schema 7 links, compact Review match states, structured CSV/Shopify simulation fields, and catalog diagnostics/administration.
+
+The application version remains 0.6.0. SLMC-0.1.0 is an integration package, not a final SnapIMS release. Blend instructions are in `README_BLEND_WITH_SNAPIMS.md`.
 
 ## Install on Linux
 
@@ -75,10 +83,11 @@ Use the Batch Editor when many records need the same treatment or when low-confi
 ```bash
 scripts/run_quality_gate.sh
 python scripts/native_browser_audit_v060.py
+python scripts/native_browser_audit_slmc.py
 ```
 
 Current verification evidence is documented in `TEST_RESULTS.md` and `NATIVE_BROWSER_VERIFICATION.md`.
 
 ## Version status
 
-SnapIMS 0.6.0 is a functional beta candidate for controlled pilot work. It is **not** 1.0.0. The real Pixel pilot, live AI run, live Shopify draft, physical CSV reconciliation, and final operator acceptance remain mandatory before production release.
+SnapIMS 0.6.0 with SLMC-0.1.0 remains an integration/pilot build. It is **not** 1.0.0. The real Pixel pilot, live AI run, live Shopify draft, physical CSV reconciliation, and final operator acceptance remain mandatory before production release.

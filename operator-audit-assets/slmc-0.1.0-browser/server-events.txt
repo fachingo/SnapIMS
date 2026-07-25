@@ -1,0 +1,62 @@
+INFO:     Started server process [9666]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8894 (Press CTRL+C to quit)
+INFO:     127.0.0.1:45034 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45042 - "GET /import HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45042 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45054 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45054 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:45054 - "POST /import/browse HTTP/1.1" 303 See Other
+INFO:     127.0.0.1:45054 - "GET /import?source_folder=/mnt/data/slmc-work/SnapIMS-v0.6.0/operator-audit-assets/slmc-0.1.0-browser/camera-roll&notice=Folder%20selected. HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45054 - "POST /import/preview HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45054 - "POST /import/commit HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45054 - "GET /review?batch_id=20260725-094033 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45054 - "GET /media/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45054 - "POST /review/identify HTTP/1.1" 303 See Other
+INFO:     127.0.0.1:45054 - "GET /review?batch_id=20260725-094033&notice=Identification%20started. HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45054 - "GET /media/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45054 - "GET /review/job/20260725-094033 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45042 - "GET /review?batch_id=20260725-094033 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45042 - "GET /media/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45042 - "POST /review/approve HTTP/1.1" 303 See Other
+INFO:     127.0.0.1:45042 - "GET /review?batch_id=20260725-094033&queue=UNRESOLVED&item_id=20260725-094033-A1-002&notice=Approved.%20Next%20unfinished%20tape%20opened. HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45042 - "GET /media/8 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45042 - "POST /review/approve HTTP/1.1" 303 See Other
+INFO:     127.0.0.1:45042 - "GET /review?batch_id=20260725-094033&queue=DONE&notice=Review%20complete. HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45042 - "GET /media/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45042 - "GET /review?batch_id=20260725-094035-SLMC-SECOND HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45042 - "GET /media/13 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45042 - "POST /review/identify HTTP/1.1" 303 See Other
+INFO:     127.0.0.1:45042 - "GET /review?batch_id=20260725-094035-SLMC-SECOND&notice=Identification%20started. HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45042 - "GET /media/13 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45042 - "GET /review/job/20260725-094035-SLMC-SECOND HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40750 - "GET /review?batch_id=20260725-094035-SLMC-SECOND HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40750 - "GET /media/13 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40750 - "POST /review/approve HTTP/1.1" 303 See Other
+INFO:     127.0.0.1:40750 - "GET /review?batch_id=20260725-094035-SLMC-SECOND&queue=UNRESOLVED&item_id=20260725-094035-SLMC-SECOND-B2-002&notice=Approved.%20Next%20unfinished%20tape%20opened. HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40750 - "GET /media/18 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40750 - "POST /review/approve HTTP/1.1" 303 See Other
+INFO:     127.0.0.1:40750 - "GET /review?batch_id=20260725-094035-SLMC-SECOND&queue=DONE&notice=Review%20complete. HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40750 - "GET /media/13 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40750 - "GET /publish?batch_id=20260725-094035-SLMC-SECOND&simulate=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40750 - "GET /publish/csv/20260725-094035-SLMC-SECOND HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40750 - "GET /diagnostics HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [9666]
+INFO:     Started server process [9826]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8894 (Press CTRL+C to quit)
+INFO:     127.0.0.1:40816 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40820 - "GET /review?batch_id=20260725-094035-SLMC-SECOND&queue=DONE HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40842 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40820 - "GET /static/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40836 - "GET /media/13 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40820 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [9826]
