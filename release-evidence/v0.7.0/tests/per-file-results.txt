@@ -1,0 +1,14 @@
+=== tests/test_catalog_admin.py ===
+..........                                                               [100%]
+PASS tests/test_catalog_admin.py
+=== tests/test_catalog_live_wikipedia.py ===
+s                                                                        [100%]
+PASS tests/test_catalog_live_wikipedia.py
+=== tests/test_catalog_module.py ===
+.....................                                                    [100%]
+PASS tests/test_catalog_module.py
+=== tests/test_csv.py ===
+..                                                                       [100%]
+PASS tests/test_csv.py
+=== tests/test_csv_extended.py ===
+......

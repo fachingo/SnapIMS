@@ -1,0 +1,31 @@
+{
+  "version": "0.7.0",
+  "viewport": "1440x1000",
+  "scenarios": [
+    "Home metrics render values, not Python objects",
+    "20-item preview and durable import completed",
+    "Empty Title is inline, focused first, and one Enter completes Review",
+    "Ambiguous Movie candidates require operator selection, then persist as a local match",
+    "Production UI hides Mock and missing key becomes BLOCKED",
+    "Price \u2192 Enter approves exactly one item and refocuses the next quick field",
+    "Batch Editor arrows, Ctrl+A, Ctrl+1, descriptions and reorder operate from the keyboard-first grid",
+    "20-row bulk Price completes atomically through the same preview dialog",
+    "CSV remains staged until diff confirmation, then applies atomically",
+    "External review and explicit test-mode Shopify simulation complete",
+    "Saved values and immutable batch identity survive process restart",
+    "Diagnostics exposes schema, WAL, staging, checkpoint and provenance facts"
+  ],
+  "console_errors": [],
+  "page_errors": [],
+  "failed_requests": [
+    "GET http://127.0.0.1:8897/publish/csv/20260725-115650: net::ERR_ABORTED"
+  ],
+  "http_errors": [],
+  "batch_id": "20260725-115650",
+  "expected_download_aborts": [
+    "GET http://127.0.0.1:8897/publish/csv/20260725-115650: net::ERR_ABORTED"
+  ],
+  "relevant_failed_requests": [],
+  "passed": true,
+  "relevant_http_errors": []
+}

@@ -1,0 +1,8 @@
+{
+  "version": "0.7.0",
+  "passed": 174,
+  "skipped": 1,
+  "failed": 0,
+  "skip_reason": "Set SNAPIMS_LIVE_WIKIPEDIA_TEST=1 to run the bounded live English Wikipedia integration test.",
+  "log": "full-pytest.log"
+}
