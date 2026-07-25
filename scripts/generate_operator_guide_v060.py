@@ -5,7 +5,6 @@ from typing import Iterable
 
 from PIL import Image
 from docx import Document
-from docx.enum.section import WD_SECTION_START
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.oxml import OxmlElement

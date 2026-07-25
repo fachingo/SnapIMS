@@ -707,7 +707,7 @@ Secrets, `.env`, databases, browser profiles, temporary camera fixtures, tempora
 Real Pixel, live AI, live Shopify, physical CSV reconciliation, independent first-time human, and multi-user/remote operation remain outside {VERSION} local verification.
 """)
 
-write("GITHUB_PUSH_STATUS.md", f"""
+write("GITHUB_PUSH_STATUS.md", """
 # GitHub Publication Status
 
 Target repository: `fachingo/SnapIMS`  

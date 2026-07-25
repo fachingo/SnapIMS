@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from snapims.demo import create_demo_batch
+from snapims.demo import create_demo_batch  # noqa: E402
 
 AUDIT = ROOT / "operator-audit-assets" / "v0.5.1-browser"
 SHOTS = AUDIT / "screenshots"
