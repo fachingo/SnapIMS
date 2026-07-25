@@ -15,3 +15,10 @@
 .nested-grid { margin-top: .8rem; }
 .data-grid td small { display:block; margin-top:.25rem; color:var(--muted); max-width:18rem; }
 .status-pill + small { max-width:12rem; }
+
+.quick-fields-three{grid-template-columns:minmax(220px,2fr) minmax(130px,1fr) minmax(110px,.8fr)}
+.catalog-match{margin:.65rem 0;padding:.58rem .72rem;border:1px solid var(--line);border-radius:12px;display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;background:var(--panel2)}
+.catalog-match strong{color:var(--accent)}.catalog-match span{color:var(--muted)}.catalog-match code{margin-left:auto}
+.catalog-candidates{margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel2)}
+.candidate-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--line)}.candidate-row small{display:block;color:var(--muted)}
+@media(max-width:760px){.quick-fields-three{grid-template-columns:1fr}.catalog-match code{margin-left:0}.candidate-row{align-items:flex-start;flex-direction:column}}

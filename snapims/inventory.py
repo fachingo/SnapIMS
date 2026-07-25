@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from snapims import db
+from snapims.catalog.service import catalog_output_for_item
 from snapims.config import DataPaths
 from snapims.money import MoneyValueError, format_price_cents, parse_discount_percent, parse_price_cents
 from snapims.protocol import LOCATION_RE
@@ -23,11 +24,72 @@ CSV_FIELDS = (
     "Recognition confidence", "Review status", "Ready status", "Validation errors",
     "Shopify status", "Shopify product ID", "Shopify variant ID",
     "Shopify inventory item ID", "Shopify admin URL", "Last error", "Retry count",
+    "Local Movie ID", "Canonical Movie title", "Original Movie title",
+    "Film release year", "Runtime minutes", "Director", "Country", "Language",
+    "Genre", "Catalog match status", "Source page URL", "Provenance status",
 )
 
 
 class CSVImportError(ValueError):
     pass
+
+
+_HEADER_ALIASES = {
+    "item id": "Item ID",
+    "item_id": "Item ID",
+    "itemid": "Item ID",
+}
+
+
+def _normalize_header(value: str) -> str:
+    return " ".join(str(value or "").replace("\ufeff", "").replace("\u00a0", " ").strip().split())
+
+
+def _canonical_headers(fieldnames: list[str] | None) -> tuple[list[str], dict[str, str]]:
+    detected = [_normalize_header(name) for name in (fieldnames or [])]
+    mapping: dict[str, str] = {}
+    canonical: list[str] = []
+    seen: set[str] = set()
+    for original, cleaned in zip(fieldnames or [], detected, strict=False):
+        alias = _HEADER_ALIASES.get(cleaned.casefold(), cleaned)
+        if alias.casefold() == "item id":
+            alias = "Item ID"
+        elif alias.casefold() == "batch id":
+            alias = "Batch ID"
+        elif alias.casefold() == "sku":
+            alias = "SKU"
+        else:
+            # Preserve the current canonical display spelling when case-only differences occur.
+            match = next((name for name in CSV_FIELDS if name.casefold() == alias.casefold()), alias)
+            alias = match
+        if alias in seen:
+            raise CSVImportError(f"CSV contains duplicate or ambiguous column: {alias}")
+        seen.add(alias)
+        mapping[str(original)] = alias
+        canonical.append(alias)
+    return canonical, mapping
+
+
+def _csv_reader(csv_text: str) -> tuple[csv.DictReader[str], list[str]]:
+    import io
+
+    text = csv_text.lstrip("\ufeff")
+    sample = text[:8192]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t") if sample.strip() else csv.excel
+    except csv.Error:
+        dialect = csv.excel
+    raw = csv.DictReader(io.StringIO(text), dialect=dialect)
+    canonical, mapping = _canonical_headers(raw.fieldnames)
+
+    class CanonicalReader:
+        fieldnames = canonical
+
+        def __iter__(self):
+            for row in raw:
+                yield {mapping.get(str(key), _normalize_header(str(key))): value for key, value in row.items()}
+
+    return CanonicalReader(), canonical
 
 
 def _bool_text(value: Any) -> str:
@@ -122,8 +184,19 @@ def export_inventory_csv(db_file: Path, batch_id: str, destination: Path) -> Pat
     with destination.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
         writer.writeheader()
+        paths = DataPaths.from_root(db_file.parent.parent).ensure()
         for item in rows:
             image_folder = str(Path(item["front_image"]).parent) if item.get("front_image") else ""
+            try:
+                movie = catalog_output_for_item(paths, item["item_id"])
+            except Exception:
+                movie = {
+                    "movie_id": "", "canonical_title": "", "original_title": "",
+                    "release_year": None, "runtime_minutes": None, "directors": [],
+                    "countries": [], "languages": [], "genres": [],
+                    "catalog_match_status": "CATALOG_UNAVAILABLE",
+                    "source_page_url": "", "provenance_status": "UNAVAILABLE",
+                }
             try:
                 errors = "; ".join(json.loads(item["validation_errors"]))
             except (json.JSONDecodeError, TypeError):
@@ -148,6 +221,18 @@ def export_inventory_csv(db_file: Path, batch_id: str, destination: Path) -> Pat
                 "Shopify inventory item ID": item["shopify_inventory_item_id"],
                 "Shopify admin URL": item["shopify_admin_url"], "Last error": item["last_error"],
                 "Retry count": item["retry_count"],
+                "Local Movie ID": movie["movie_id"],
+                "Canonical Movie title": movie["canonical_title"],
+                "Original Movie title": movie["original_title"],
+                "Film release year": movie["release_year"] or "",
+                "Runtime minutes": movie["runtime_minutes"] or "",
+                "Director": "; ".join(movie["directors"]),
+                "Country": "; ".join(movie["countries"]),
+                "Language": "; ".join(movie["languages"]),
+                "Genre": "; ".join(movie["genres"]),
+                "Catalog match status": movie["catalog_match_status"],
+                "Source page URL": movie["source_page_url"],
+                "Provenance status": movie["provenance_status"],
             })
     return destination
 
@@ -176,15 +261,15 @@ COLUMN_MAP: dict[str, tuple[str, Any]] = {
 def import_inventory_csv(db_file: Path, csv_path: Path, *, paths: DataPaths | None = None) -> int:
     if paths:
         db.backup_database(paths, "before-csv-import")
-    with csv_path.open("r", newline="", encoding="utf-8-sig") as handle:
-        reader = csv.DictReader(handle)
-        fields = reader.fieldnames or []
-        if "Item ID" not in fields:
-            raise CSVImportError("Missing required CSV column: Item ID")
-        editable_columns = [column for column in fields if column in COLUMN_MAP]
-        if not editable_columns:
-            raise CSVImportError("CSV contains no editable SnapIMS columns")
-        rows = list(reader)
+    text = csv_path.read_text(encoding="utf-8-sig")
+    reader, fields = _csv_reader(text)
+    if "Item ID" not in fields:
+        detected = ", ".join(fields) or "none"
+        raise CSVImportError(f"Expected 'Item ID'. Detected columns: {detected}")
+    editable_columns = [column for column in fields if column in COLUMN_MAP]
+    if not editable_columns:
+        raise CSVImportError("CSV contains no editable SnapIMS columns")
+    rows = list(reader)
     if len(rows) > MAX_CSV_ROWS:
         raise CSVImportError(f"CSV exceeds the {MAX_CSV_ROWS:,}-row safety limit")
     identifiers = [row["Item ID"].strip() for row in rows]
@@ -234,14 +319,15 @@ def preview_inventory_csv(
     csv_text: str,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
     """Parse a SnapIMS CSV without mutating the working batch."""
-    import io
-
-    reader = csv.DictReader(io.StringIO(csv_text.lstrip("\ufeff")))
-    fields = reader.fieldnames or []
+    try:
+        reader, fields = _csv_reader(csv_text)
+    except CSVImportError as exc:
+        return [], {"total_rows": 0, "matched": 0, "changed": 0}, [str(exc)]
     blocking: list[str] = []
     for required in ("Item ID",):
         if required not in fields:
-            blocking.append(f"Missing required CSV column: {required}")
+            detected = ", ".join(fields) or "none"
+            blocking.append(f"Expected '{required}'. Detected columns: {detected}")
     if blocking:
         return [], {"total_rows": 0, "matched": 0, "changed": 0}, blocking
 

@@ -94,7 +94,7 @@
     <form method="post" action="/review/save" class="editor-grid">
       <input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><input type="hidden" name="queue" value="{{ queue }}"><input type="hidden" name="revision" value="{{ current.record_revision }}">
       <fieldset class="span-2 editor-section"><legend>Required</legend>
-        <label>Title<input autofocus name="title" value="{{ current.title }}" placeholder="{{ suggestion.suggested_title if suggestion else 'Required' }}"></label>
+        <label>Title<input autofocus name="title" value="{{ current.title or (catalog_status.canonical_title if catalog_status and catalog_status.canonical_title else '') }}" placeholder="{{ suggestion.suggested_title if suggestion else 'Required' }}"></label>
         <label>Price CAD<input name="price" type="number" min="0" step="0.01" value="{{ '%.2f'|format(current.price_cents/100) if current.price_cents is not none else '' }}" placeholder="{{ '%.2f'|format(suggestion.suggested_price_cents/100) if suggestion and suggestion.suggested_price_cents is not none else '0.00' }}"></label>
         <label>Quantity<input name="quantity" type="number" min="0" value="{{ current.quantity }}"></label>
         <label>Shelf<input name="shelf" value="{{ current.shelf }}"></label>
@@ -102,7 +102,7 @@
         <label>Discount %<input name="discount" type="number" min="0" max="100" step="0.01" value="{{ current.discount_percent }}"></label>
       </fieldset>
       <fieldset class="span-2 editor-section"><legend>Common optional</legend>
-        <label>Release year<input name="release_year" value="{{ current.release_year or '' }}" placeholder="{{ suggestion.release_year if suggestion else '' }}"></label><label>Barcode<input name="barcode" value="{{ current.barcode }}"></label>
+        <label>Release year<input name="release_year" value="{{ current.release_year or (catalog_status.primary_release_year if catalog_status and catalog_status.primary_release_year else '') }}" placeholder="{{ suggestion.release_year if suggestion else '' }}"></label><label>Barcode<input name="barcode" value="{{ current.barcode }}"></label>
         <label>Studio / distributor<input name="distributor" value="{{ current.distributor }}" placeholder="{{ suggestion.distributor if suggestion else '' }}"></label><label>Edition / format<input name="edition" value="{{ current.edition }}" placeholder="{{ suggestion.edition if suggestion else '' }}"></label>
         <label>Location-change reason<input name="location_reason" placeholder="Required only when shelf changes"></label>
         <label class="check"><input type="checkbox" name="rare" value="true" {% if current.rare %}checked{% endif %}> Rare</label><label class="check"><input type="checkbox" name="review" value="true" {% if current.review %}checked{% endif %}> Physical Review</label>
@@ -118,19 +118,22 @@
   {% else %}
     <div class="identity">
       <p class="eyebrow">{{ current.value_state }}{% if current.suggestion_source_kind=='TEST' %} · TEST SOURCE{% endif %}</p>
-      <h1>{{ current.title or (suggestion.suggested_title if suggestion else 'Title required') }}</h1>
+      <h1>{{ display_title }}</h1>
       <p>{% if current.title %}Saved working title{% elif suggestion %}AI suggestion — not saved until approval{% else %}Manual title required before approval{% endif %}</p>
+      {% if catalog_status %}<div class="catalog-match catalog-{{ catalog_status.status|lower|replace('_','-') }}"><strong>Catalog: {{ catalog_status.label }}</strong>{% if catalog_status.canonical_title %}<span>{{ catalog_status.canonical_title }}{% if catalog_status.primary_release_year %} ({{ catalog_status.primary_release_year }}){% endif %}</span>{% elif catalog_status.candidate_count %}<span>{{ catalog_status.candidate_count }} possible films</span>{% elif catalog_status.error %}<span>{{ catalog_status.error }}</span>{% endif %}{% if catalog_status.movie_id %}<code>{{ catalog_status.movie_id }}</code>{% endif %}</div>{% endif %}
       {% if suggestion %}<div class="confidence"><strong>{{ (suggestion.confidence * 100)|round|int }}%</strong><span>Latest suggestion confidence</span></div>{% elif current.review_status=='DONE' %}<div class="confidence"><strong>Manual</strong><span>No AI confidence</span></div>{% endif %}
     </div>
     <form id="quick-approve-form" method="post" action="/review/approve" class="quick-approve" data-quick-review>
       <input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}">
-      <div class="quick-fields">
+      <div class="quick-fields quick-fields-three">
+        <label>Title<input id="quick-title" name="title" type="text" autocomplete="off" required value="{{ current.title or (catalog_status.canonical_title if catalog_status and catalog_status.canonical_title else '') or (suggestion.suggested_title if suggestion else '') }}" placeholder="Title required"></label>
         <label>Price CAD<input id="quick-price" name="price" type="text" inputmode="decimal" autocomplete="off" value="{{ '%.2f'|format((current.price_cents if current.price_cents is not none else (suggestion.suggested_price_cents if suggestion and suggestion.suggested_price_cents is not none else 0))/100) }}"></label>
-        <label>Discount %<input name="discount" type="number" min="0" max="100" step="0.01" value="{{ current.discount_percent if current.discount_percent else (suggestion.suggested_discount_percent if suggestion else 0) }}"></label>
+        <label>Discount %<input id="quick-discount" name="discount" type="number" min="0" max="100" step="0.01" value="{{ current.discount_percent if current.discount_percent else (suggestion.suggested_discount_percent if suggestion else 0) }}"></label>
       </div>
       <button id="approve-next-button" class="approve" type="submit" {% if not current.title and not suggestion %}aria-describedby="manual-required"{% endif %}>✓ Approve & Next</button>
     </form>
-    {% if not current.title and not suggestion %}<p id="manual-required" class="alert warning">No title is available. Open Edit details, enter the title and required values, then save.</p>{% endif %}
+    {% if not current.title and not suggestion and not (catalog_status and catalog_status.canonical_title) %}<p id="manual-required" class="alert warning">Type the title above, then press Enter once to approve and open the next tape.</p>{% endif %}
+    {% if catalog_candidates and catalog_job %}<details class="catalog-candidates" open><summary>Resolve ambiguous movie match</summary><p>The photograph remains authoritative. Select only the matching film, or edit the title.</p>{% for candidate in catalog_candidates %}<form method="post" action="/catalog/jobs/{{ catalog_job.job_id }}/select" class="candidate-row"><input type="hidden" name="candidate_id" value="{{ candidate.candidate_id }}"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="queue" value="{{ queue }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><span><strong>{{ candidate.canonical_title }}</strong>{% if candidate.release_year %} ({{ candidate.release_year }}){% endif %}<small>{{ candidate.media_type }} · evidence {{ '%.2f'|format(candidate.score) }}</small></span><button type="submit">Use this movie</button></form>{% endfor %}</details>{% endif %}
     <div class="secondary-actions">
       <a class="button" href="/review?batch_id={{ batch_id }}&queue={{ queue }}&item_id={{ current.item_id }}&edit=true">Edit details</a>
       {% if current.review_status!='DONE' %}<form method="post" action="/review/later"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><button>Later</button></form>{% endif %}
@@ -142,6 +145,7 @@
 <div class="review-navigation"><form method="post" action="/review/navigate"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="queue" value="{{ queue }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><button name="direction" value="previous">← Previous</button><button name="direction" value="next">Next →</button></form></div>
 <details class="panel"><summary>Recognition details and provenance</summary>
   {% if suggestion %}<p><strong>Latest suggestion: {{ suggestion.suggested_title or 'No title' }}</strong></p><p><strong>{{ suggestion.provider }}</strong>{% if suggestion.model_name %} · {{ suggestion.model_name }}{% endif %} · {{ suggestion.source_kind or 'LIVE' }} · {{ suggestion.created_at }}</p><p>Pricing source: {{ suggestion.pricing_source }}</p>{% else %}<p>No recognition result is stored for this item.</p>{% endif %}
+  {% if catalog_status and catalog_status.source_url %}<p><strong>Catalog source:</strong> <a href="{{ catalog_status.source_url }}" rel="noreferrer" target="_blank">Wikipedia source page</a></p>{% endif %}
   {% if item_history %}<table><thead><tr><th>Time</th><th>Field</th><th>Source</th></tr></thead><tbody>{% for change in item_history[:20] %}<tr><td>{{ change.occurred_at }}</td><td>{{ change.field_name }}</td><td>{{ change.source }}</td></tr>{% endfor %}</tbody></table>{% endif %}
 </details>
 {% else %}<section class="empty"><h2>No items in this queue</h2><p>Choose another queue or continue to the logical next step.</p></section>{% endif %}

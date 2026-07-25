@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -113,7 +114,11 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) -> 
         from snapims.catalog.service import queue_recognition_lookup
 
         paths = DataPaths.from_root(db_file.parent.parent).ensure()
-        queue_recognition_lookup(paths, recognition_result_id)
+        queue_recognition_lookup(
+            paths,
+            recognition_result_id,
+            start_worker=not bool(os.getenv("PYTEST_CURRENT_TEST")),
+        )
     except Exception as exc:
         try:
             db.mark_item_catalog_unavailable(db_file, item_id, recognition_result_id, str(exc))
@@ -399,12 +404,13 @@ def _accept_values(
     price_cents: int | None,
     discount_percent: float,
     review_source: str,
+    title_override: str | None = None,
 ) -> dict[str, Any]:
     candidates = json.loads(suggestion["barcode_candidates_json"]) if suggestion else []
     provider = suggestion["provider"] if suggestion else item.get("recognition_provider", "")
     confidence = suggestion["confidence"] if suggestion else item.get("recognition_confidence")
     return {
-        "title": str(item.get("title") or (suggestion["suggested_title"] if suggestion else "")).strip(),
+        "title": str(title_override or item.get("title") or (suggestion["suggested_title"] if suggestion else "")).strip(),
         "release_year": item.get("release_year") or (suggestion["release_year"] if suggestion else None),
         "edition": item.get("edition") or (suggestion["edition"] if suggestion else ""),
         "distributor": item.get("distributor") or (suggestion["distributor"] if suggestion else ""),
@@ -436,6 +442,7 @@ def accept_item_in_connection(
     price_cents: int | None,
     discount_percent: float,
     review_source: str,
+    title_override: str | None = None,
 ) -> None:
     values = _accept_values(
         item,
@@ -443,6 +450,7 @@ def accept_item_in_connection(
         price_cents=price_cents,
         discount_percent=discount_percent,
         review_source=review_source,
+        title_override=title_override,
     )
     db.update_item_in_connection(
         connection,
@@ -477,6 +485,7 @@ def accept_item(
     price_cents: int | None,
     discount_percent: float,
     review_source: str = "AI_ACCEPTED",
+    title_override: str | None = None,
 ) -> list[str]:
     item = db.get_item(db_file, item_id)
     if item is None:
@@ -488,6 +497,7 @@ def accept_item(
         price_cents=price_cents,
         discount_percent=discount_percent,
         review_source=review_source,
+        title_override=title_override,
     )
     candidate = {**item, **values}
     errors = validate_items_for_candidate(db_file, candidate)
