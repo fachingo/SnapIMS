@@ -20,7 +20,7 @@
       <a href="/settings">Settings</a>
       <a href="/diagnostics">Diagnostics</a>
     </nav>
-    <button class="command-trigger" type="button" data-command-open title="Command palette (Ctrl+Shift+P)">⌘</button>
+    <button class="command-trigger" type="button" data-command-open title="Command palette (Ctrl+Shift+P; Ctrl+K fallback)">⌘</button>
   </header>
   <main class="page">{% block content %}{% endblock %}</main>
   <footer>SnapIMS {{ version }} · Exception-handling inventory workstation</footer>
@@ -37,7 +37,7 @@
       <button type="button" data-command data-command-action="bulk-price">Set selected prices</button>
       <button type="button" data-command data-command-action="approve-selected">Approve selected</button>
     </div>
-    <small>Ctrl+Shift+P · Esc closes</small>
+    <small>Ctrl+Shift+P · Ctrl+K fallback · Esc closes</small>
   </dialog>
 </body>
 </html>

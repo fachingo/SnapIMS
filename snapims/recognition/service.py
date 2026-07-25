@@ -516,6 +516,7 @@ def accept_item(
             price_cents=price_cents,
             discount_percent=discount_percent,
             review_source=review_source,
+            title_override=title_override,
         )
     return []
 

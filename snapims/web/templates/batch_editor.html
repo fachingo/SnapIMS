@@ -41,7 +41,7 @@
   <label class="threshold">Confidence below <input id="confidence-threshold" type="number" min="0" max="100" value="70">%</label>
   <button type="button" data-select-visible>Select visible</button><button type="button" data-clear-selection>Clear</button><span id="selection-count">0 selected</span>
 </section>
-<section class="bulk-bar">
+<section class="bulk-bar" data-quick-actions aria-label="Batch Editor quick actions">
   <button type="button" data-bulk="set_price">Bulk Price</button>
   <button type="button" data-bulk="add_price">Add to price</button>
   <button type="button" data-bulk="subtract_percent">Subtract %</button>
@@ -57,7 +57,8 @@
   <button type="button" data-save-all>Save All Pending</button>
   <span id="editor-save-state" role="status">Saved</span>
 </section>
-<p class="shortcut-hint">Keyboard: Enter saves and moves down · Tab moves right · Esc cancels · Ctrl+S saves all · Ctrl+F searches · Ctrl+A selects visible · Ctrl+Z / Ctrl+Y undo and redo · F2 edits the active cell</p>
+<div class="quick-action-tools"><button type="button" data-reset-quick-order>Reset quick-action order</button></div>
+<p class="shortcut-hint">Keyboard: Arrow keys move between cells · Enter saves and moves down · Tab moves normally · Esc cancels · Shift+Arrow selects a row range · Ctrl+A selects visible rows · Ctrl+1–9 opens quick actions · Alt+Left/Right reorders a focused quick action · Ctrl+S saves all · Ctrl+Z / Ctrl+Y undo and redo · F2 edits</p>
 <div class="data-grid-wrap"><table class="data-grid" id="batch-grid"><thead><tr><th><input type="checkbox" data-select-all aria-label="Select all visible"></th><th>Photo</th><th>Item</th><th>Confidence</th><th>Title</th><th>Price</th><th>Discount</th><th>Description</th><th>Location</th><th>Flags</th><th>Status</th></tr></thead><tbody>
 {% for item in items %}<tr data-item-id="{{ item.item_id }}" data-sequence="{{ item.sequence }}" data-confidence="{{ item.display_confidence if item.display_confidence is not none else -1 }}" data-value-state="{{ item.value_state }}" data-review-status="{{ item.review_status }}" data-recognition-status="{{ item.recognition_status }}" data-rare="{{ item.rare }}" data-review="{{ item.review }}" data-revision="{{ item.record_revision }}" data-updated="{{ item.updated_at }}">
 <td><input type="checkbox" class="row-select" aria-label="Select {{ item.item_id }}"></td>
@@ -73,7 +74,7 @@
 <td><span class="status-pill {{ item.review_status|lower }}">{{ item.value_state }}</span><small>{{ item.working_source }}{% if item.suggestion_source_kind=='TEST' %} · TEST SOURCE{% endif %}</small></td>
 </tr>{% endfor %}</tbody></table></div>
 <section class="panel"><div class="section-head"><div><p class="eyebrow">ROLLBACK</p><h2>Batch checkpoints</h2></div></div>{% if checkpoints %}<div class="checkpoint-list">{% for checkpoint in checkpoints %}<article><div><strong>{{ checkpoint.reason }}</strong><span>{{ checkpoint.created_at }} · {{ checkpoint.item_count }} items · {{ checkpoint.source }}</span></div><button type="button" data-restore-checkpoint="{{ checkpoint.checkpoint_id }}">Restore</button></article>{% endfor %}</div>{% else %}<p class="muted">A checkpoint is created before CSV replacement and every large bulk edit.</p>{% endif %}</section>
-<dialog id="bulk-dialog"><form method="dialog"><div class="palette-head"><strong id="bulk-title">Bulk action</strong><button value="cancel">×</button></div><p id="bulk-summary"></p><label id="bulk-value-label">Value<input id="bulk-value"></label><label>Reason<input id="bulk-reason" value="Batch Editor bulk change"></label><div class="actions"><button value="cancel">Cancel</button><button id="bulk-apply" type="button" class="primary">Preview and apply</button></div></form></dialog>
+<dialog id="bulk-dialog"><form method="dialog"><div class="palette-head"><strong id="bulk-title">Bulk action</strong><button value="cancel">×</button></div><p id="bulk-summary"></p><p id="bulk-description" class="muted"></p><label id="bulk-value-label">Value<input id="bulk-value"></label><label>Reason<input id="bulk-reason" value="Batch Editor bulk change"></label><div class="actions"><button value="cancel">Cancel</button><button id="bulk-apply" type="button" class="primary">Preview and apply</button></div></form></dialog>
 <dialog id="evidence-dialog"><div class="palette-head"><strong>Recognition evidence</strong><button type="button" data-close-dialog>×</button></div><div id="evidence-content"></div></dialog>
 <dialog id="media-dialog"><div class="palette-head"><strong>Item media</strong><button type="button" data-close-dialog>×</button></div><div id="media-content"></div></dialog>
 <script id="batch-items-json" type="application/json">{{ items|tojson }}</script>

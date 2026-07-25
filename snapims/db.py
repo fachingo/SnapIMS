@@ -11,7 +11,7 @@ from typing import Any
 
 from snapims.config import DataPaths
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def now() -> str:
@@ -680,7 +680,7 @@ def _rebuild_recognition_jobs_if_needed(connection: sqlite3.Connection) -> bool:
     """Repair legacy recognition_jobs tables that allowed duplicate batch rows.
 
     SnapIMS 0.5-era databases used an autoincrement row id and only a non-unique
-    batch index.  The v0.6.1 contract is exactly one durable job row per batch.
+    batch index.  The v0.7.0 contract is exactly one durable job row per batch.
     The newest legacy row wins, which matches the read behaviour used before this
     migration.
     """
@@ -1003,6 +1003,11 @@ def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
             # Add columns before rebuilding legacy tables whose constraints cannot be altered.
             _upgrade_legacy(connection)
             _rebuild_core_tables_if_needed(connection)
+            # v0.5.x used a per-item recognition_job_items table keyed to the old
+            # recognition_jobs.recognition_job_id parent. v0.6+ stores one durable
+            # job per batch and no current code reads the legacy child rows. Drop it
+            # before rebuilding the parent so SQLite never observes a mismatched FK.
+            connection.execute("DROP TABLE IF EXISTS recognition_job_items")
             _rebuild_recognition_jobs_if_needed(connection)
             _base_schema(connection)
             _upgrade_legacy(connection)
@@ -1049,7 +1054,7 @@ def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
             connection.execute(
                 "INSERT OR REPLACE INTO schema_migrations(version, applied_at, description) "
                 "VALUES(?, ?, ?)",
-                (SCHEMA_VERSION, timestamp, "SnapIMS v0.6.1 stabilization schema"),
+                (SCHEMA_VERSION, timestamp, "SnapIMS v0.7.0 keyboard and local Movie catalog schema"),
             )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         with connect(db_file) as connection:

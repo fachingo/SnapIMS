@@ -21,7 +21,7 @@ from snapims.catalog.models import MovieCandidate
 from snapims.catalog.normalization import normalize_title, strip_leading_article
 
 API_URL = "https://en.wikipedia.org/w/api.php"
-DEFAULT_USER_AGENT = "SnapIMS-SLMC/0.1.0 (Canada VHS local movie catalog)"
+DEFAULT_USER_AGENT = "SnapIMS/0.7.0 (Canada VHS local movie catalog; configure SNAPIMS_WIKIPEDIA_USER_AGENT)"
 _LOCK = threading.Lock()
 _LAST_REQUEST_AT = 0.0
 
@@ -94,6 +94,8 @@ def _infobox_fields(wikitext: str) -> dict[str, str]:
             current_key = field_match.group(1).strip().casefold().replace(" ", "_")
             current = [field_match.group(2)]
         elif current_key:
+            if re.match(r"\s*\}\}\s*$", line):
+                break
             current.append(line)
     if current_key:
         fields[current_key] = "\n".join(current).strip()

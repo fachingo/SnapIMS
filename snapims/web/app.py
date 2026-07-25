@@ -187,6 +187,7 @@ def import_page(
     batch_name: str = "",
     message: str = "",
     notice: str = "",
+    manual: bool = False,
 ) -> HTMLResponse:
     paths = get_paths()
     configured = db.get_setting(paths.db_file, "incoming_folder", str(paths.incoming))
@@ -207,6 +208,7 @@ def import_page(
             imported=None,
             message=message or (folder_error if selected and source_folder else ""),
             notice=notice,
+            manual=manual,
         ),
     )
 
@@ -230,8 +232,11 @@ def use_folder(
 def browse_folder(current_folder: str = Form("")) -> RedirectResponse:
     try:
         selected = choose_folder(current_folder)
-    except FolderPickerUnavailable as exc:
-        return redirect(f"/import?source_folder={quote(current_folder)}&message={quote(str(exc))}")
+    except FolderPickerUnavailable:
+        notice = "Native folder picker is unavailable. Paste the folder path below."
+        return redirect(
+            f"/import?source_folder={quote(current_folder)}&manual=true&notice={quote(notice)}"
+        )
     if not selected:
         return redirect(f"/import?source_folder={quote(current_folder)}&notice={quote('Folder selection cancelled.')}")
     resolved, error = validate_folder(selected)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -420,7 +421,12 @@ def _inventory_link(
         movie_id=movie_id,
         link_status=status,
         link_method=method,
-        recognition_result_id=request.recognition_result_id,
+        # Negative IDs are stable catalog-only identities for manual title jobs.
+        # They are not rows in inventory.recognition_results and must never be
+        # persisted as an inventory recognition foreign reference.
+        recognition_result_id=(
+            request.recognition_result_id if request.recognition_result_id > 0 else None
+        ),
         match_score=score,
         operator_confirmed=operator_confirmed,
         catalog_revision=int(movie["catalog_revision"]),
@@ -909,7 +915,15 @@ def queue_operator_title_correction(paths: DataPaths, item_id: str, title: str, 
             "SELECT recognition_result_id FROM recognition_results WHERE item_id=? ORDER BY recognition_result_id DESC LIMIT 1",
             (item_id,),
         ).fetchone()
-    synthetic_recognition_id = int(latest[0]) if latest else 0
+    # catalog_lookup_jobs requires one stable, unique request identity. Manual
+    # records have no recognition_results row, so derive a deterministic negative
+    # identifier from the immutable Item ID. It cannot collide with SQLite
+    # AUTOINCREMENT recognition IDs, which are always positive.
+    synthetic_recognition_id = (
+        int(latest[0])
+        if latest
+        else -max(1, int.from_bytes(hashlib.sha256(item_id.encode("utf-8")).digest()[:8], "big") & ((1 << 63) - 1))
+    )
     request = CatalogLookupRequest(
         item_id=item_id,
         recognition_result_id=synthetic_recognition_id,
@@ -939,7 +953,10 @@ def queue_operator_title_correction(paths: DataPaths, item_id: str, title: str, 
             )
             job_id = int(existing[0])
         else:
-            job_id = _ensure_job(paths.catalog_db_file, request, "SEARCHING_LOCAL")
+            job_id = 0
+    # Never open a nested SQLite write transaction: that blocks Review for the full busy timeout.
+    if not job_id:
+        job_id = _ensure_job(paths.catalog_db_file, request, "SEARCHING_LOCAL")
     matches = search_local(paths.catalog_db_file, title, year)
     if matches and matches[0].unique:
         match = matches[0]

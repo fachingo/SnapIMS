@@ -31,25 +31,35 @@
     setTimeout(poll, 300);
   }
 
-  // Tinder-fast Review: price is selected; Enter executes Approve & Next.
+  // One-enter Review: focus the first required empty quick field, otherwise Price.
+  const quickTitle = qs("#quick-title");
   const quickPrice = qs("#quick-price");
+  const quickDiscount = qs("#quick-discount");
   const quickForm = qs("#quick-approve-form");
   const quickButton = qs("#approve-next-button");
-  if (quickPrice && quickForm && quickButton) {
+  if (quickForm && quickButton) {
+    const quickFields = [quickTitle, quickPrice, quickDiscount].filter(Boolean);
+    const focusTarget = quickFields.find((input) => input.required && !input.value.trim()) || quickPrice || quickTitle;
     requestAnimationFrame(() => {
-      quickPrice.focus();
-      quickPrice.select();
+      focusTarget?.focus();
+      focusTarget?.select?.();
     });
-    quickPrice.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter") return;
+    const submitQuickReview = (event) => {
+      if (event.key !== "Enter" || event.isComposing) return;
       event.preventDefault();
       if (quickForm.dataset.submitting === "true") return;
       if (!quickForm.reportValidity()) return;
       quickForm.dataset.submitting = "true";
       quickButton.disabled = true;
       quickForm.requestSubmit(quickButton);
+    };
+    quickFields.forEach((input) => input.addEventListener("keydown", submitQuickReview));
+    quickForm.addEventListener("submit", () => {
+      quickForm.dataset.submitting = "true";
+      quickButton.disabled = true;
     });
   }
+
 
   qsa("form[data-prevent-double-submit]").forEach((form) => {
     form.addEventListener("submit", () => {
@@ -80,15 +90,26 @@
   qs("[data-command-open]")?.addEventListener("click", openPalette);
   qs("[data-command-close]")?.addEventListener("click", () => palette?.close());
   document.addEventListener("keydown", (event) => {
-    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "p") {
+    const paletteShortcut = (event.ctrlKey || event.metaKey) && event.shiftKey &&
+      (event.code === "KeyP" || event.key.toLowerCase() === "p");
+    const fallbackShortcut = (event.ctrlKey || event.metaKey) && !event.shiftKey && event.code === "KeyK";
+    if ((paletteShortcut || fallbackShortcut) && !event.repeat) {
       event.preventDefault();
+      event.stopPropagation();
       openPalette();
+      paletteSearch?.select?.();
+      return;
     }
-    if (event.ctrlKey && event.key.toLowerCase() === "f" && qs("#batch-search")) {
+    if (event.key === "Escape" && palette?.open) {
+      event.preventDefault();
+      palette.close();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f" && qs("#batch-search")) {
       event.preventDefault();
       qs("#batch-search").focus();
     }
-  });
+  }, true);
   paletteSearch?.addEventListener("input", () => {
     const query = paletteSearch.value.toLowerCase();
     qsa("[data-command]", palette).forEach((command) => {
@@ -151,6 +172,7 @@
   const redoStack = [];
   let lowThreshold = 0.70;
   let activeInput = null;
+  let selectionAnchor = null;
 
   const escapeHtml = (value) => String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -185,7 +207,43 @@
     qs("#selection-count").textContent = `${count} selected`;
     rows().forEach((row) => row.classList.toggle("selected", qs(".row-select", row).checked));
   };
-  qsa(".row-select", grid).forEach((box) => box.addEventListener("change", updateSelectionCount));
+  const visibleRows = () => rows().filter((row) => !row.classList.contains("hidden"));
+  const selectRange = (fromRow, toRow, selected = true) => {
+    const visible = visibleRows();
+    const start = visible.indexOf(fromRow);
+    const end = visible.indexOf(toRow);
+    if (start < 0 || end < 0) return;
+    const [low, high] = start <= end ? [start, end] : [end, start];
+    visible.slice(low, high + 1).forEach((row) => {
+      const box = qs(".row-select", row);
+      if (box) box.checked = selected;
+    });
+    updateSelectionCount();
+  };
+  qsa(".row-select", grid).forEach((box) => {
+    box.addEventListener("click", (event) => {
+      const row = box.closest("tr");
+      if (event.shiftKey && selectionAnchor) {
+        event.preventDefault();
+        selectRange(selectionAnchor, row, true);
+        box.checked = true;
+      } else {
+        selectionAnchor = row;
+      }
+      updateSelectionCount();
+    });
+    box.addEventListener("change", updateSelectionCount);
+  });
+  rows().forEach((row) => {
+    row.tabIndex = -1;
+    row.addEventListener("click", (event) => {
+      if (!(event.ctrlKey || event.metaKey || event.shiftKey) || event.target.closest("input,textarea,select,button,a")) return;
+      const box = qs(".row-select", row);
+      if (!box) return;
+      if (event.shiftKey && selectionAnchor) selectRange(selectionAnchor, row, true);
+      else { box.checked = !box.checked; selectionAnchor = row; updateSelectionCount(); }
+    });
+  });
   qs("[data-select-all]")?.addEventListener("change", (event) => {
     rows().filter((row) => !row.classList.contains("hidden")).forEach((row) => {
       qs(".row-select", row).checked = event.target.checked;
@@ -262,8 +320,39 @@
     return saved;
   };
 
+  const editableInputs = (row) => qsa("[data-field]", row).filter((input) => !input.disabled && !input.hidden);
+  const focusSameField = (row, field) => {
+    const target = qs(`[data-field="${CSS.escape(field)}"]`, row);
+    if (!target || target.disabled || target.hidden) return false;
+    target.focus();
+    target.select?.();
+    return true;
+  };
+  const moveVertical = (input, direction) => {
+    const visible = visibleRows();
+    const index = visible.indexOf(input.closest("tr"));
+    const target = visible[index + direction];
+    return target ? focusSameField(target, input.dataset.field) : false;
+  };
+  const moveHorizontal = (input, direction) => {
+    const cells = editableInputs(input.closest("tr"));
+    const index = cells.indexOf(input);
+    const target = cells[index + direction];
+    if (!target) return false;
+    target.focus();
+    target.select?.();
+    return true;
+  };
+  const caretAtBoundary = (input, direction) => {
+    if (input.type === "checkbox" || input.tagName === "SELECT") return true;
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    if (start == null || end == null || start !== end) return false;
+    return direction < 0 ? start === 0 : end === input.value.length;
+  };
+
   qsa("[data-field]", grid).forEach((input) => {
-    input.addEventListener("focus", () => { activeInput = input; persistView(); });
+    input.addEventListener("focus", () => { activeInput = input; selectionAnchor = selectionAnchor || input.closest("tr"); persistView(); });
     const schedule = () => {
       clearTimeout(pending.get(input));
       input.classList.add("dirty");
@@ -275,6 +364,29 @@
       if (input.classList.contains("dirty")) sendEdit(input);
     });
     input.addEventListener("keydown", (event) => {
+      if (event.shiftKey && ["ArrowUp", "ArrowDown"].includes(event.key)) {
+        event.preventDefault();
+        const currentRow = input.closest("tr");
+        selectionAnchor = selectionAnchor || currentRow;
+        const visible = visibleRows();
+        const index = visible.indexOf(currentRow);
+        const target = visible[index + (event.key === "ArrowUp" ? -1 : 1)];
+        if (target) {
+          selectRange(selectionAnchor, target, true);
+          focusSameField(target, input.dataset.field);
+        }
+        return;
+      }
+      if (!event.shiftKey && event.key === "ArrowUp") { event.preventDefault(); moveVertical(input, -1); return; }
+      if (!event.shiftKey && event.key === "ArrowDown") { event.preventDefault(); moveVertical(input, 1); return; }
+      if (!event.shiftKey && event.key === "ArrowLeft" && caretAtBoundary(input, -1)) {
+        if (moveHorizontal(input, -1)) event.preventDefault();
+        return;
+      }
+      if (!event.shiftKey && event.key === "ArrowRight" && caretAtBoundary(input, 1)) {
+        if (moveHorizontal(input, 1)) event.preventDefault();
+        return;
+      }
       if (event.key === "Escape") {
         const item = byId.get(input.closest("tr").dataset.itemId);
         setInputValue(input, item?.[input.dataset.field]);
@@ -375,6 +487,70 @@
   const bulkDialog = qs("#bulk-dialog");
   let bulkAction = "";
   const actionsWithoutValue = ["flag_review", "clear_review", "mark_rare", "clear_rare", "approve"];
+  const bulkDescriptions = {
+    set_price: "Replaces Price on the selected rows. A checkpoint is created before applying.",
+    add_price: "Adds this amount to each selected Price. Existing prices are retained and adjusted.",
+    subtract_percent: "Reduces each selected Price by the entered percentage. A checkpoint is created first.",
+    round_price: "Rounds selected prices to the entered increment without changing other fields.",
+    set_discount: "Replaces Discount on the selected rows. The change can be restored from the checkpoint.",
+    set_location: "Moves selected tapes to this shelf. Physical Item IDs do not change.",
+    append_tags: "Appends tags to selected rows without replacing existing tags.",
+    prefix_description: "Adds text to the beginning of each selected description.",
+    replace_description: "Replaces matching text inside selected descriptions.",
+    flag_review: "Adds the Physical Review flag to selected rows.",
+    approve: "Marks valid selected rows reviewed. Invalid rows are reported and remain unchanged.",
+  };
+  const quickActionsBar = qs("[data-quick-actions]");
+  const quickOrderKey = "snapims-quick-actions-v1";
+  const actionButtons = () => qsa(":scope > button", quickActionsBar).filter((button) => !button.hidden);
+  const actionKey = (button) => button.dataset.bulk || (button.hasAttribute("data-fill-down") ? "fill_down" : button.hasAttribute("data-save-all") ? "save_all" : button.textContent.trim());
+  const refreshActionShortcuts = () => {
+    actionButtons().forEach((button, index) => {
+      button.dataset.actionKey = actionKey(button);
+      button.draggable = true;
+      const label = button.dataset.baseLabel || button.textContent.replace(/\s*Ctrl\+\d$/, "").trim();
+      button.dataset.baseLabel = label;
+      button.textContent = index < 9 ? `${label}  Ctrl+${index + 1}` : label;
+      button.title = index < 9 ? `${label} — Ctrl+${index + 1}. Alt+Left/Right reorders.` : `${label} — Alt+Left/Right reorders.`;
+    });
+    localStorage.setItem(quickOrderKey, JSON.stringify(actionButtons().map(actionKey)));
+  };
+  try {
+    const order = JSON.parse(localStorage.getItem(quickOrderKey) || "[]");
+    order.forEach((key) => {
+      const button = actionButtons().find((candidate) => actionKey(candidate) === key);
+      if (button) quickActionsBar.append(button);
+    });
+  } catch (_) {}
+  let draggedAction = null;
+  actionButtons().forEach((button) => {
+    button.addEventListener("dragstart", () => { draggedAction = button; });
+    button.addEventListener("dragover", (event) => event.preventDefault());
+    button.addEventListener("drop", (event) => {
+      event.preventDefault();
+      if (!draggedAction || draggedAction === button) return;
+      const rect = button.getBoundingClientRect();
+      quickActionsBar.insertBefore(draggedAction, event.clientX < rect.left + rect.width / 2 ? button : button.nextSibling);
+      refreshActionShortcuts();
+    });
+    button.addEventListener("keydown", (event) => {
+      if (!event.altKey || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      event.preventDefault();
+      const buttons = actionButtons();
+      const index = buttons.indexOf(button);
+      const target = buttons[index + (event.key === "ArrowLeft" ? -1 : 1)];
+      if (!target) return;
+      quickActionsBar.insertBefore(button, event.key === "ArrowLeft" ? target : target.nextSibling);
+      refreshActionShortcuts();
+      button.focus();
+    });
+  });
+  refreshActionShortcuts();
+  qs("[data-reset-quick-order]")?.addEventListener("click", () => {
+    localStorage.removeItem(quickOrderKey);
+    window.location.reload();
+  });
+
   qsa("[data-bulk]").forEach((button) => {
     button.addEventListener("click", () => {
       const count = selectedRows().length;
@@ -382,8 +558,9 @@
       bulkAction = button.dataset.bulk;
       const needsValue = !actionsWithoutValue.includes(bulkAction);
       qs("#bulk-value-label").hidden = !needsValue;
-      qs("#bulk-title").textContent = button.textContent;
+      qs("#bulk-title").textContent = button.dataset.baseLabel || button.textContent;
       qs("#bulk-summary").textContent = `${count} selected items will be affected. A rollback checkpoint will be created first.`;
+      qs("#bulk-description").textContent = bulkDescriptions[bulkAction] || "Applies this action to the selected visible rows after preview and confirmation.";
       qs("#bulk-value").value = bulkAction === "round_price" ? "0.50" : "";
       bulkDialog.showModal();
       if (needsValue) qs("#bulk-value").focus();
@@ -489,21 +666,28 @@
 
   document.addEventListener("keydown", async (event) => {
     const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
-    if (event.ctrlKey && event.key.toLowerCase() === "s") {
+    const modifier = event.ctrlKey || event.metaKey;
+    if (modifier && !event.shiftKey && !event.altKey && /^Digit[1-9]$/.test(event.code) && !typing) {
+      const index = Number(event.code.slice(-1)) - 1;
+      const button = actionButtons()[index];
+      if (button && !button.disabled) { event.preventDefault(); button.click(); }
+      return;
+    }
+    if (modifier && event.key.toLowerCase() === "s") {
       event.preventDefault();
       await saveAll();
     }
-    if (event.ctrlKey && event.key.toLowerCase() === "a" && !typing) {
+    if (modifier && event.key.toLowerCase() === "a" && !typing && !qs("dialog[open]")) {
       event.preventDefault();
       rows().filter((row) => !row.classList.contains("hidden")).forEach((row) => { qs(".row-select", row).checked = true; });
       updateSelectionCount();
     }
-    if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === "z") {
+    if (modifier && !event.shiftKey && event.key.toLowerCase() === "z") {
       event.preventDefault();
       const entry = undoStack.pop();
       if (entry && await applyHistory(entry, true)) redoStack.push(entry);
     }
-    if ((event.ctrlKey && event.key.toLowerCase() === "y") || (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "z")) {
+    if ((modifier && event.key.toLowerCase() === "y") || (modifier && event.shiftKey && event.key.toLowerCase() === "z")) {
       event.preventDefault();
       const entry = redoStack.pop();
       if (entry && await applyHistory(entry, false)) undoStack.push(entry);
