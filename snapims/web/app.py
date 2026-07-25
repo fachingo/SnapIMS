@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 from snapims import __version__, db
 from snapims.config import DataPaths, ShopifyConfig
 from snapims.catalog import db as catalog_db
+from snapims.catalog.admin import reconcile_maintenance_jobs
 from snapims.catalog.service import (
     get_catalog_status,
     latest_job as latest_catalog_job,
@@ -71,6 +72,7 @@ async def lifespan(app: FastAPI):
     try:
         catalog_db.initialize(paths.catalog_db_file, paths=paths)
         reconcile_pending_links(paths)
+        reconcile_maintenance_jobs(paths)
         recover_catalog_jobs(paths, start_workers=not bool(os.getenv("PYTEST_CURRENT_TEST")))
     except Exception as exc:
         app.state.catalog_error = str(exc)

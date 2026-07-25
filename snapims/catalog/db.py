@@ -542,13 +542,47 @@ def catalog_summary(db_file: Path) -> dict[str, Any]:
                WHERE provider_name='wikipedia' AND status='SUCCESS'
                ORDER BY attempt_id DESC LIMIT 1"""
         ).fetchone()
+        latest_external = connection.execute(
+            """SELECT status,error_code,error_message,finished_at FROM catalog_lookup_attempts
+               WHERE provider_name='wikipedia' ORDER BY attempt_id DESC LIMIT 1"""
+        ).fetchone()
+        suspected_duplicates = int(connection.execute(
+            """SELECT COUNT(*) FROM (
+                   SELECT normalized_title,primary_release_year,media_type
+                   FROM movies WHERE active=1
+                   GROUP BY normalized_title,primary_release_year,media_type
+                   HAVING COUNT(*) > 1
+               )"""
+        ).fetchone()[0])
+        pending_maintenance = int(connection.execute(
+            "SELECT COUNT(*) FROM catalog_maintenance_jobs WHERE status NOT IN ('COMPLETE','FAILED')"
+        ).fetchone()[0])
+        fts_rows = 0
+        if fts == "1":
+            try:
+                fts_rows = int(connection.execute("SELECT COUNT(*) FROM movie_search").fetchone()[0])
+            except sqlite3.OperationalError:
+                fts_rows = -1
+    backup_dir = db_file.parent.parent / "backups"
+    backups = sorted(backup_dir.glob("movie-catalog-*.sqlite3"), key=lambda path: path.stat().st_mtime)
+    rate_limit_state = "CLEAR"
+    if latest_external and str(latest_external[1] or "") == "RATE_LIMIT":
+        rate_limit_state = "RATE_LIMITED"
+    elif latest_external and str(latest_external[0] or "") == "FAILED":
+        rate_limit_state = "LAST_LOOKUP_FAILED"
     return {
         **counts,
         "integrity": integrity,
         "foreign_key_violations": foreign,
         "schema_version": schema,
         "fts_available": fts == "1",
+        "fts_index_rows": fts_rows,
+        "fts_index_healthy": (fts != "1") or fts_rows == counts["movies"],
+        "suspected_duplicate_movies": suspected_duplicates,
+        "pending_maintenance_jobs": pending_maintenance,
+        "rate_limit_state": rate_limit_state,
         "database_size_bytes": db_file.stat().st_size if db_file.exists() else 0,
+        "last_backup": str(backups[-1]) if backups else "",
         "last_successful_external_lookup": str(last_external[0]) if last_external else "",
     }
 
