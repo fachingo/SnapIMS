@@ -6,9 +6,19 @@ from pathlib import Path
 
 from snapims import db
 from snapims.catalog import db as catalog_db
-from snapims.catalog.admin import add_alias, import_catalog_json, merge_movies, split_movie
+from snapims.catalog import admin as catalog_admin
+from snapims.catalog.admin import (
+    add_alias,
+    import_catalog_json,
+    merge_movies,
+    reconcile_maintenance_jobs,
+    refresh_movie_source,
+    split_movie,
+    update_movie_fields,
+)
 from snapims.catalog.models import MovieCandidate
 from snapims.catalog.service import create_or_update_movie, get_catalog_status, queue_recognition_lookup, search_local
+from snapims.catalog.wikipedia import FixtureTransport, WikipediaClient
 from snapims.demo import create_demo_batch
 from snapims.processor import process_batch
 from snapims.recognition.base import BaseRecognizer, RecognitionResult
@@ -170,3 +180,100 @@ def test_import_rejects_incompatible_schema(data_paths, tmp_path: Path) -> None:
         assert "incompatible" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("incompatible import was accepted")
+
+
+def test_update_movie_fields_preserves_identity_and_old_title_alias(data_paths) -> None:
+    catalog_db.initialize(data_paths.catalog_db_file, paths=data_paths)
+    movie_id, _ = create_or_update_movie(data_paths.catalog_db_file, movie("Old Title", 1984, "1301"))
+    result = update_movie_fields(
+        data_paths,
+        movie_id,
+        canonical_title="Corrected Title",
+        runtime_minutes=111,
+    )
+    assert result["movie_id"] == movie_id
+    assert result["changed_fields"] == ["canonical_title", "runtime_minutes"]
+    assert search_local(data_paths.catalog_db_file, "Corrected Title", 1984)[0].movie_id == movie_id
+    assert search_local(data_paths.catalog_db_file, "Old Title", 1984)[0].movie_id == movie_id
+    with catalog_db.connect(data_paths.catalog_db_file, readonly=True) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM catalog_events WHERE movie_id=? AND event_type='MOVIE_FIELDS_CORRECTED'",
+            (movie_id,),
+        ).fetchone()[0] == 1
+
+
+def test_refresh_movie_source_replaces_source_facts_without_changing_id(data_paths) -> None:
+    catalog_db.initialize(data_paths.catalog_db_file, paths=data_paths)
+    stale = movie("Old Demo Title", 1992, "2002")
+    movie_id, _ = create_or_update_movie(data_paths.catalog_db_file, stale)
+    client = WikipediaClient(
+        data_paths.catalog_db_file,
+        transport=FixtureTransport(Path("tests/fixtures/wikipedia")),
+        min_interval=0,
+        max_retries=0,
+    )
+    result = refresh_movie_source(data_paths, movie_id, client=client)
+    assert result["movie_id"] == movie_id
+    assert result["canonical_title"] == "Demo VHS 002"
+    with catalog_db.connect(data_paths.catalog_db_file, readonly=True) as connection:
+        refreshed = connection.execute(
+            "SELECT canonical_title,runtime_minutes,catalog_revision FROM movies WHERE movie_id=?",
+            (movie_id,),
+        ).fetchone()
+        languages = [row[0] for row in connection.execute(
+            "SELECT language FROM movie_languages WHERE movie_id=?", (movie_id,)
+        )]
+    assert tuple(refreshed) == ("Demo VHS 002", 95, 2)
+    assert languages == ["English"]
+
+
+def test_split_link_pending_reconciles_after_restart(tmp_path: Path, data_paths, monkeypatch) -> None:
+    catalog_db.initialize(data_paths.catalog_db_file, paths=data_paths)
+    source, _ = create_or_update_movie(data_paths.catalog_db_file, movie("Crash", 1996, "1202"))
+    item = linked_item(tmp_path, data_paths, "Crash", 1996)
+    assert get_catalog_status(data_paths, item["item_id"]).movie_id == source
+    original_set_link = catalog_admin.inventory_db.set_item_movie_link
+    calls = {"count": 0}
+
+    def fail_once(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise OSError("simulated inventory link outage")
+        return original_set_link(*args, **kwargs)
+
+    monkeypatch.setattr(catalog_admin.inventory_db, "set_item_movie_link", fail_once)
+    try:
+        split_movie(
+            data_paths,
+            source,
+            canonical_title="Crash",
+            release_year=1978,
+            item_ids=[item["item_id"]],
+        )
+    except OSError:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("simulated split link failure did not surface")
+    with catalog_db.connect(data_paths.catalog_db_file, readonly=True) as connection:
+        pending = connection.execute(
+            "SELECT maintenance_job_id,status,result_json FROM catalog_maintenance_jobs ORDER BY maintenance_job_id DESC LIMIT 1"
+        ).fetchone()
+    assert pending["status"] == "LINK_PENDING"
+    new_movie_id = json.loads(pending["result_json"])["new_movie_id"]
+    monkeypatch.setattr(catalog_admin.inventory_db, "set_item_movie_link", original_set_link)
+    assert reconcile_maintenance_jobs(data_paths) == 1
+    assert get_catalog_status(data_paths, item["item_id"]).movie_id == new_movie_id
+    with catalog_db.connect(data_paths.catalog_db_file, readonly=True) as connection:
+        assert connection.execute(
+            "SELECT status FROM catalog_maintenance_jobs WHERE maintenance_job_id=?",
+            (pending["maintenance_job_id"],),
+        ).fetchone()[0] == "COMPLETE"
+
+
+def test_catalog_summary_exposes_operations_health(data_paths) -> None:
+    catalog_db.initialize(data_paths.catalog_db_file, paths=data_paths)
+    summary = catalog_db.catalog_summary(data_paths.catalog_db_file)
+    assert summary["suspected_duplicate_movies"] == 0
+    assert summary["pending_maintenance_jobs"] == 0
+    assert summary["rate_limit_state"] == "CLEAR"
+    assert summary["fts_index_healthy"] is True
