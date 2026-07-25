@@ -185,7 +185,7 @@ Never delete the operator database to resolve a migration problem. Use Diagnosti
 - Passed: **174**
 - Skipped: **1** — bounded live English Wikipedia integration, enabled only with `SNAPIMS_LIVE_WIKIPEDIA_TEST=1`.
 - Failures: **0**
-- Full log: `release-evidence/v0.7.0/tests/full-pytest.log`
+- Full log: `release-evidence/v0.7.0/tests/full-pytest.txt`
 
 Coverage includes:
 
