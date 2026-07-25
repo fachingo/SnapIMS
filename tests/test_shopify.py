@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -7,205 +8,257 @@ import pytest
 
 from snapims import db
 from snapims.config import ShopifyConfig
-from snapims.demo import create_demo_batch
-from snapims.inventory import validate_items
-from snapims.processor import process_batch
-from snapims.shopify.client import ShopifyClient
 from snapims.shopify.service import ShopifyService
+from tests.helpers import ready_item
 
 
-class FakeShopifyTransport:
-    def __init__(self, *, duplicate_sku: bool = False) -> None:
-        self.duplicate_sku = duplicate_sku
-        self.operations: list[str] = []
-        self.uploads: list[Path] = []
+class FakeShopifyClient:
+    def __init__(self, *, fail_at: str | None = None, media_sequence: list[list[str]] | None = None) -> None:
+        self.fail_at = fail_at
+        self.calls: Counter[str] = Counter()
+        self.product_id = "gid://shopify/Product/100"
+        self.variant_id = "gid://shopify/ProductVariant/200"
+        self.inventory_item_id = "gid://shopify/InventoryItem/300"
+        self.remote_product = False
+        self.inventory: int | None = None
+        self.attached = False
+        self.media_sequence = list(media_sequence or [["READY"]])
 
-    def graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
-        if "VariantBySku" in query:
-            self.operations.append("sku_check")
-            nodes = []
-            if self.duplicate_sku:
-                nodes = [
-                    {
-                        "id": "gid://shopify/ProductVariant/99",
-                        "sku": variables["query"].removeprefix("sku:"),
-                        "inventoryItem": {"id": "gid://shopify/InventoryItem/99"},
-                        "product": {
-                            "id": "gid://shopify/Product/99",
-                            "title": "Existing tape",
-                            "status": "ACTIVE",
-                        },
-                    }
-                ]
-            return {"data": {"productVariants": {"nodes": nodes}}}
-        if "CreateDraft" in query:
-            self.operations.append("create_product")
-            return {
-                "data": {
-                    "productCreate": {
-                        "product": {
-                            "id": "gid://shopify/Product/1",
-                            "handle": "demo-tape",
-                            "variants": {
-                                "nodes": [
-                                    {
-                                        "id": "gid://shopify/ProductVariant/2",
-                                        "inventoryItem": {
-                                            "id": "gid://shopify/InventoryItem/3"
-                                        },
-                                    }
-                                ]
-                            },
-                        },
-                        "userErrors": [],
-                    }
-                }
-            }
-        if "ConfigureVariant" in query:
-            self.operations.append("configure_variant")
-            return {
-                "data": {
-                    "productVariantsBulkUpdate": {
-                        "productVariants": [],
-                        "userErrors": [],
-                    }
-                }
-            }
-        if "ActivateInventory" in query:
-            self.operations.append("activate_inventory")
-            return {
-                "data": {
-                    "inventoryActivate": {
-                        "inventoryLevel": {"id": "gid://shopify/InventoryLevel/4"},
-                        "userErrors": [],
-                    }
-                }
-            }
-        if "StageImages" in query:
-            self.operations.append("stage_images")
-            targets = [
-                {
-                    "url": f"https://uploads.example/{index}",
-                    "resourceUrl": f"https://cdn.example/{index}.jpg",
-                    "parameters": [],
-                }
-                for index, _ in enumerate(variables["input"], start=1)
-            ]
-            return {
-                "data": {
-                    "stagedUploadsCreate": {
-                        "stagedTargets": targets,
-                        "userErrors": [],
-                    }
-                }
-            }
-        if "AttachMedia" in query:
-            self.operations.append("attach_media")
-            return {
-                "data": {
-                    "productUpdate": {
-                        "product": {"id": "gid://shopify/Product/1"},
-                        "userErrors": [],
-                    }
-                }
-            }
-        raise AssertionError(f"Unexpected Shopify operation: {query}")
+    def _call(self, name: str) -> None:
+        self.calls[name] += 1
+        if self.fail_at == name:
+            self.fail_at = None
+            raise RuntimeError(f"forced {name} failure")
 
-    def upload(
-        self, url: str, parameters: list[dict[str, str]], file_path: Path
-    ) -> None:
-        assert url.startswith("https://uploads.example/")
-        assert parameters == []
-        assert file_path.is_file()
-        self.uploads.append(file_path)
+    def find_variant_by_sku(self, sku: str) -> dict[str, Any] | None:
+        self._call("find_variant_by_sku")
+        if not self.remote_product:
+            return None
+        return {
+            "id": self.variant_id,
+            "sku": sku,
+            "inventoryItem": {"id": self.inventory_item_id},
+            "product": {"id": self.product_id, "title": "Remote Draft", "status": "DRAFT"},
+        }
+
+    def create_draft_product(self, item: dict[str, Any]) -> dict[str, str]:
+        self._call("create_draft_product")
+        self.remote_product = True
+        return {
+            "product_id": self.product_id,
+            "variant_id": self.variant_id,
+            "inventory_item_id": self.inventory_item_id,
+        }
+
+    def configure_variant(self, item, product_id, variant_id) -> None:
+        self._call("configure_variant")
+
+    def inventory_quantity(self, inventory_item_id: str) -> int | None:
+        self._call("inventory_quantity")
+        return self.inventory
+
+    def activate_inventory(self, inventory_item_id: str, quantity: int) -> None:
+        self._call("activate_inventory")
+        self.inventory = quantity
+
+    def stage_images(self, image_paths: list[Path]) -> list[dict[str, Any]]:
+        self._call("stage_images")
+        return [
+            {"url": f"https://upload/{index}", "parameters": [], "resourceUrl": f"https://cdn/{index}.jpg"}
+            for index, _ in enumerate(image_paths)
+        ]
+
+    def upload_staged_images(self, image_paths, targets) -> list[str]:
+        self._call("upload_staged_images")
+        return [target["resourceUrl"] for target in targets]
+
+    def attach_media(self, product_id: str, resource_urls: list[str], title: str) -> None:
+        self._call("attach_media")
+        self.attached = True
+
+    def media_status(self, product_id: str) -> list[str]:
+        self._call("media_status")
+        if not self.attached:
+            return []
+        if len(self.media_sequence) > 1:
+            return self.media_sequence.pop(0)
+        return self.media_sequence[0]
 
 
-def _ready_item(tmp_path, data_paths) -> str:
-    source = create_demo_batch(tmp_path / "camera")
-    result = process_batch(source, paths=data_paths)
-    item = db.list_items(data_paths.db_file, batch_id_value=result.batch_id)[0]
-    db.update_item(
-        data_paths.db_file,
-        item["item_id"],
-        {
-            "title": "Synthetic VHS Test Tape",
-            "price_cents": 1299,
-            "condition": "Very Good",
-            "ready": 1,
-        },
-    )
-    validate_items(data_paths.db_file, [item["item_id"]])
-    return str(item["item_id"])
-
-
-def _config() -> ShopifyConfig:
+def valid_config() -> ShopifyConfig:
     return ShopifyConfig(
-        store_domain="canada-vhs.myshopify.com",
-        access_token="shpat_test_only",
-        location_id="gid://shopify/Location/123",
-        api_version="2026-07",
+        store_domain="example.myshopify.com",
+        access_token="token",
+        location_id="gid://shopify/Location/1",
+        draft_only=True,
     )
 
 
-def test_shopify_simulation_runs_without_credentials(tmp_path, data_paths) -> None:
-    item_id = _ready_item(tmp_path, data_paths)
+def service_for(tmp_path: Path, data_paths, *, client: FakeShopifyClient | None = None):
+    _, item = ready_item(tmp_path, data_paths)
+    assert item is not None
+    fake = client or FakeShopifyClient(media_sequence=[["READY", "READY"]])
+    return ShopifyService(data_paths.db_file, valid_config(), client=fake), fake, item
+
+
+def test_simulation_without_credentials(tmp_path: Path, data_paths) -> None:
+    _, item = ready_item(tmp_path, data_paths)
     service = ShopifyService(
         data_paths.db_file,
-        ShopifyConfig(store_domain="", access_token="", location_id=""),
+        ShopifyConfig("", "", ""),
+        client=FakeShopifyClient(),
     )
-    report = service.dry_run(item_id)
-    assert report.ready is True
+    report = service.dry_run(item["item_id"])
+    assert report.ready
     assert report.action == "SIMULATE_CREATE_DRAFT"
-    assert report.image_count == 2
-    assert report.warnings
+    assert report.payload["status"] == "DRAFT"
 
 
-def test_shopify_remote_dry_run_blocks_duplicate_sku(tmp_path, data_paths) -> None:
-    item_id = _ready_item(tmp_path, data_paths)
-    transport = FakeShopifyTransport(duplicate_sku=True)
-    service = ShopifyService(
-        data_paths.db_file,
-        _config(),
-        ShopifyClient(_config(), transport=transport),
-    )
-    report = service.dry_run(item_id, remote_check=True)
-    assert report.ready is False
-    assert report.action == "BLOCK"
-    assert any("SKU already exists" in error for error in report.errors)
+def test_live_requires_confirmation(tmp_path: Path, data_paths) -> None:
+    service, _, item = service_for(tmp_path, data_paths)
+    with pytest.raises(PermissionError, match="confirmation"):
+        service.upload_draft(item["item_id"])
 
 
-def test_shopify_live_boundary_requires_deliberate_confirmation(tmp_path, data_paths) -> None:
-    item_id = _ready_item(tmp_path, data_paths)
-    with pytest.raises(PermissionError, match="deliberate confirmation"):
-        ShopifyService(data_paths.db_file, _config()).upload_draft(item_id)
+def test_live_requires_valid_configuration(tmp_path: Path, data_paths) -> None:
+    _, item = ready_item(tmp_path, data_paths)
+    service = ShopifyService(data_paths.db_file, ShopifyConfig("", "", ""), client=FakeShopifyClient())
+    with pytest.raises(ValueError, match="configuration"):
+        service.upload_draft(item["item_id"], confirmed=True)
 
 
-def test_shopify_mock_upload_checkpoints_and_finishes_as_draft(tmp_path, data_paths) -> None:
-    item_id = _ready_item(tmp_path, data_paths)
-    transport = FakeShopifyTransport()
-    service = ShopifyService(
-        data_paths.db_file,
-        _config(),
-        ShopifyClient(_config(), transport=transport),
-    )
-    result = service.upload_draft(item_id, confirmed=True)
+def test_successful_upload_is_draft_and_checkpointed(tmp_path: Path, data_paths) -> None:
+    service, fake, item = service_for(tmp_path, data_paths)
+    result = service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)
     assert result["status"] == "UPLOADED_AS_DRAFT"
-    assert result["image_count"] == 2
-    assert len(transport.uploads) == 2
-    assert transport.operations == [
-        "sku_check",
-        "create_product",
+    saved = db.get_item(data_paths.db_file, item["item_id"])
+    assert saved["upload_status"] == "UPLOADED"
+    with db.connect(data_paths.db_file) as connection:
+        sync = connection.execute("SELECT * FROM shopify_sync WHERE item_id=?", (item["item_id"],)).fetchone()
+    assert sync["last_completed_step"] == "complete"
+    assert fake.calls["create_draft_product"] == 1
+    assert fake.calls["activate_inventory"] == 1
+    assert fake.calls["attach_media"] == 1
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "create_draft_product",
         "configure_variant",
         "activate_inventory",
         "stage_images",
+        "upload_staged_images",
         "attach_media",
-    ]
-    item = db.get_item(data_paths.db_file, item_id)
-    assert item is not None
-    assert item["upload_status"] == "UPLOADED"
-    assert item["shopify_product_id"] == "gid://shopify/Product/1"
-    with db.connect(data_paths.db_file) as connection:
-        attempt = connection.execute(
-            "SELECT status, step FROM upload_attempts WHERE item_id=?", (item_id,)
-        ).fetchone()
-        assert tuple(attempt) == ("SUCCESS", "attach_media")
+    ],
+)
+def test_retry_after_stage_failure_does_not_recreate_completed_product(tmp_path: Path, data_paths, stage: str) -> None:
+    fake = FakeShopifyClient(fail_at=stage, media_sequence=[["READY", "READY"]])
+    service, fake, item = service_for(tmp_path, data_paths, client=fake)
+    with pytest.raises(RuntimeError, match="forced"):
+        service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)
+    service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)
+    expected_create_calls = 2 if stage == "create_draft_product" else 1
+    assert fake.calls["create_draft_product"] == expected_create_calls
+    assert db.get_item(data_paths.db_file, item["item_id"])["upload_status"] == "UPLOADED"
+
+
+def test_reconcile_product_created_before_local_checkpoint(tmp_path: Path, data_paths, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeShopifyClient(media_sequence=[["READY", "READY"]])
+    service, fake, item = service_for(tmp_path, data_paths, client=fake)
+    original = service._checkpoint
+    tripped = False
+
+    def fail_first_checkpoint(item_id: str, step: str, **values):
+        nonlocal tripped
+        if step == "create_product" and not tripped:
+            tripped = True
+            raise RuntimeError("local checkpoint failure")
+        return original(item_id, step, **values)
+
+    monkeypatch.setattr(service, "_checkpoint", fail_first_checkpoint)
+    with pytest.raises(RuntimeError, match="local checkpoint"):
+        service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)
+    monkeypatch.setattr(service, "_checkpoint", original)
+    service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)
+    assert fake.calls["create_draft_product"] == 1
+    assert fake.calls["find_variant_by_sku"] >= 2
+
+
+def test_inventory_remote_reconciliation_avoids_double_activation(tmp_path: Path, data_paths, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeShopifyClient(media_sequence=[["READY", "READY"]])
+    service, fake, item = service_for(tmp_path, data_paths, client=fake)
+    original = service._checkpoint
+    tripped = False
+
+    def fail_inventory_checkpoint(item_id: str, step: str, **values):
+        nonlocal tripped
+        if step == "activate_inventory" and not tripped:
+            tripped = True
+            raise RuntimeError("inventory checkpoint failure")
+        return original(item_id, step, **values)
+
+    monkeypatch.setattr(service, "_checkpoint", fail_inventory_checkpoint)
+    with pytest.raises(RuntimeError):
+        service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)
+    monkeypatch.setattr(service, "_checkpoint", original)
+    service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)
+    assert fake.calls["activate_inventory"] == 1
+
+
+def test_media_remote_reconciliation_avoids_duplicate_attach(tmp_path: Path, data_paths, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeShopifyClient(media_sequence=[["READY", "READY"]])
+    service, fake, item = service_for(tmp_path, data_paths, client=fake)
+    original = service._checkpoint
+    tripped = False
+
+    def fail_media_checkpoint(item_id: str, step: str, **values):
+        nonlocal tripped
+        if step == "attach_media" and not tripped:
+            tripped = True
+            raise RuntimeError("media checkpoint failure")
+        return original(item_id, step, **values)
+
+    monkeypatch.setattr(service, "_checkpoint", fail_media_checkpoint)
+    with pytest.raises(RuntimeError):
+        service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)
+    monkeypatch.setattr(service, "_checkpoint", original)
+    service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)
+    assert fake.calls["attach_media"] == 1
+
+
+def test_media_processing_failure_is_recorded(tmp_path: Path, data_paths) -> None:
+    fake = FakeShopifyClient(media_sequence=[["FAILED", "READY"]])
+    service, fake, item = service_for(tmp_path, data_paths, client=fake)
+    with pytest.raises(RuntimeError, match="media processing failed"):
+        service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)
+    saved = db.get_item(data_paths.db_file, item["item_id"])
+    assert saved["upload_status"] == "FAILED"
+    assert "media processing failed" in saved["last_error"]
+
+
+def test_media_timeout_is_recoverable(tmp_path: Path, data_paths) -> None:
+    fake = FakeShopifyClient(media_sequence=[["PROCESSING", "PROCESSING"]])
+    service, fake, item = service_for(tmp_path, data_paths, client=fake)
+    with pytest.raises(TimeoutError):
+        service.upload_draft(item["item_id"], confirmed=True, media_timeout=0, poll_interval=0)
+    fake.media_sequence = [["READY", "READY"]]
+    result = service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)
+    assert result["status"] == "UPLOADED_AS_DRAFT"
+    assert fake.calls["attach_media"] == 1
+
+
+def test_existing_non_draft_sku_is_blocked(tmp_path: Path, data_paths) -> None:
+    fake = FakeShopifyClient(media_sequence=[["READY", "READY"]])
+    fake.remote_product = True
+
+    def non_draft(sku: str):
+        found = FakeShopifyClient.find_variant_by_sku(fake, sku)
+        assert found is not None
+        found["product"]["status"] = "ACTIVE"
+        return found
+
+    fake.find_variant_by_sku = non_draft  # type: ignore[method-assign]
+    service, _, item = service_for(tmp_path, data_paths, client=fake)
+    with pytest.raises(ValueError, match="non-draft"):
+        service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)

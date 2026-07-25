@@ -22,15 +22,8 @@ def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
-def scan_commands(
-    records: list[PhotoRecord], *, decoder: QRDecoder = decode_snapims_qr
-) -> list[PhotoRecord]:
-    scanned: list[PhotoRecord] = []
-    for record in records:
-        scanned.append(
-            replace(record, qr_payload=decoder(record.path), sha256=sha256_file(record.path))
-        )
-    return scanned
+def scan_commands(records: list[PhotoRecord], *, decoder: QRDecoder = decode_snapims_qr) -> list[PhotoRecord]:
+    return [replace(record, qr_payload=decoder(record.path), sha256=sha256_file(record.path)) for record in records]
 
 
 def source_fingerprint(records: list[PhotoRecord]) -> str:

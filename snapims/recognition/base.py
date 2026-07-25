@@ -13,6 +13,8 @@ class RecognitionResult:
     distributor: str = ""
     year: int | None = None
     barcode_candidates: tuple[str, ...] = ()
+    suggested_price_cents: int | None = None
+    suggested_discount_percent: float = 0
     confidence: float = 0.0
     uncertainty_reasons: tuple[str, ...] = ()
     provider_name: str = "unknown"

@@ -10,7 +10,7 @@ from snapims.protocol import CommandKind, parse_command
 
 
 class ProtocolError(RuntimeError):
-    """Raised when the command stream would require SnapIMS to guess."""
+    """Raised when a command stream would require SnapIMS to guess."""
 
 
 def sanitize_batch_name(value: str | None) -> str | None:
@@ -37,7 +37,6 @@ def interpret_stream(
 ) -> BatchRecord:
     if not records:
         raise ProtocolError("No supported photographs were found.")
-
     imported_at = imported_at or datetime.now()
     batch = BatchRecord(
         batch_id=batch_id or make_batch_id(imported_at, batch_name),
@@ -65,22 +64,17 @@ def interpret_stream(
 
     for record in records:
         command = parse_command(record.qr_payload) if record.qr_payload else None
-
         if command is None:
             if record.qr_payload and record.qr_payload.upper().startswith("CVHS1:"):
                 raise ProtocolError(f"Unknown CVHS1 command: {record.qr_payload}")
             if not batch.started:
-                batch.warnings.append(
-                    f"Excluded ordinary photo before START: {record.original_name}"
-                )
+                batch.warnings.append(f"Excluded ordinary photo before START: {record.original_name}")
                 continue
             if batch.ended:
                 batch.warnings.append(f"Ignored ordinary photo after END: {record.original_name}")
                 continue
             if active_location is None:
-                raise ProtocolError(
-                    f"Product photo appears before a shelf location: {record.original_name}"
-                )
+                raise ProtocolError(f"Product photo appears before a shelf location: {record.original_name}")
             if current_item is None:
                 current_item = ItemRecord(
                     sequence=len(batch.items) + 1,
@@ -94,7 +88,6 @@ def interpret_stream(
             continue
 
         batch.commands.append(replace(record, qr_payload=command.payload))
-
         if command.kind == CommandKind.BATCH_START:
             if batch.started:
                 batch.warnings.append(f"Duplicate START ignored: {record.original_name}")
@@ -103,58 +96,39 @@ def interpret_stream(
             else:
                 batch.started = True
             continue
-
         if not batch.started:
             raise ProtocolError(f"Command appears before START: {command.payload}")
         if batch.ended:
             batch.warnings.append(f"Ignored command after END: {command.payload}")
             continue
-
         if command.kind == CommandKind.BATCH_END:
             close_item()
             batch.ended = True
-            continue
-
-        if command.kind == CommandKind.ITEM_NEXT:
+        elif command.kind == CommandKind.ITEM_NEXT:
             if current_item is None:
-                batch.warnings.append(
-                    f"NEXT encountered while no item was open: {record.original_name}"
-                )
+                batch.warnings.append(f"NEXT encountered while no item was open: {record.original_name}")
                 if deferred_location is not None:
                     active_location = deferred_location
                     deferred_location = None
             else:
                 close_item()
-            continue
-
-        if command.kind == CommandKind.ITEM_CONT:
+        elif command.kind == CommandKind.ITEM_CONT:
             batch.warnings.append(f"CONT compatibility no-op: {record.original_name}")
-            continue
-
-        if command.kind == CommandKind.LOCATION:
+        elif command.kind == CommandKind.LOCATION:
             if current_item is not None:
                 deferred_location = command.value
                 batch.warnings.append(
-                    f"Location {command.value} was scanned inside item {current_item.sequence}; "
-                    "it will apply after NEXT."
+                    f"Location {command.value} was scanned inside item {current_item.sequence}; it applies after NEXT."
                 )
             else:
                 active_location = command.value
-            continue
-
-        if command.kind == CommandKind.FLAG_RARE:
+        elif command.kind == CommandKind.FLAG_RARE:
             if current_item is not None:
-                batch.warnings.append(
-                    f"RARE was scanned inside item {current_item.sequence}; it applies to the next item."
-                )
+                batch.warnings.append(f"RARE scanned inside item {current_item.sequence}; applies to next item.")
             pending_rare = True
-            continue
-
-        if command.kind == CommandKind.FLAG_REVIEW:
+        elif command.kind == CommandKind.FLAG_REVIEW:
             if current_item is not None:
-                batch.warnings.append(
-                    f"REVIEW was scanned inside item {current_item.sequence}; it applies to the next item."
-                )
+                batch.warnings.append(f"REVIEW scanned inside item {current_item.sequence}; applies to next item.")
             pending_review = True
 
     if not batch.started:
@@ -166,12 +140,7 @@ def interpret_stream(
         batch.warnings.append("Unused item flag remained at the end of the batch.")
     if not batch.items:
         raise ProtocolError("Batch contained no product items.")
-
-    fallback_count = sum(
-        record.timestamp_source == "filesystem_mtime" for record in records
-    )
+    fallback_count = sum(record.timestamp_source == "filesystem_mtime" for record in records)
     if fallback_count:
-        batch.warnings.append(
-            f"{fallback_count} photo(s) lacked EXIF/filename capture time; filesystem time was used."
-        )
+        batch.warnings.append(f"{fallback_count} photo(s) used filesystem modification time.")
     return batch

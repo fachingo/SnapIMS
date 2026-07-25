@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block title %}Import · SnapIMS{% endblock %}{% block content %}
+<div class="page-heading"><div><p class="eyebrow">IMPORT</p><h1>Import new batch</h1><p>Choose a camera roll, verify grouping, then preserve it.</p></div></div>
+{% if message %}<div class="alert error">{{ message }}</div>{% endif %}
+<section class="panel">
+  <form method="post" action="/import/preview">
+    <label>Incoming folder<select name="source_folder"> <option value="{{ selected }}">{{ selected }}</option>{% for folder in recent %}{% if folder != selected %}<option value="{{ folder }}">{{ folder }}</option>{% endif %}{% endfor %}</select></label>
+    {% if not available %}<div class="alert error">Folder not available. Select a valid folder under Advanced.</div>{% endif %}
+    <label>Optional batch name<input name="batch_name" value="{{ batch_name }}" placeholder="COMEDY"></label>
+    <label class="check"><input type="checkbox" name="recursive" value="true"> Include subfolders</label>
+    <button class="primary" {% if not available %}disabled{% endif %}>Preview batch</button>
+  </form>
+  <details class="advanced" {% if not available %}open{% endif %}><summary>Advanced · Choose another folder</summary><form method="post" action="/import/use-folder"><label>Manual path<input name="path" placeholder="/home/isaiah/Pictures/SnapIMS/incoming/session-001"></label><label class="check"><input type="checkbox" name="save_as_incoming" value="true" checked> Save as incoming folder</label><button>Use this folder</button></form></details>
+</section>
+{% if preview %}<section class="panel success-panel"><p class="eyebrow">PREVIEW · NOT IMPORTED YET</p><div class="metric-grid compact"><article><b>{{ preview["items"] }}</b><span>Items</span></article><article><b>{{ preview["photos"] }}</b><span>Product photos</span></article><article><b>{{ preview["commands"] }}</b><span>Commands</span></article><article><b>{{ preview["warnings"]|length }}</b><span>Warnings</span></article></div><form method="post" action="/import/commit"><input type="hidden" name="source_folder" value="{{ selected }}"><input type="hidden" name="batch_name" value="{{ batch_name }}">{% if preview["recursive"] %}<input type="hidden" name="recursive" value="true">{% endif %}<button class="primary">Preserve and import batch</button></form>{% if preview["warnings"] %}<details><summary>Warnings</summary><ul>{% for warning in preview["warnings"] %}<li>{{ warning }}</li>{% endfor %}</ul></details>{% endif %}</section>{% endif %}
+{% if imported %}<section class="panel success-panel"><p class="eyebrow">IMPORTED BATCH</p><h2><code>{{ imported.batch_id }}</code></h2><p>{{ imported.item_count }} items · {{ imported.product_photo_count }} product photos · {{ imported.command_count }} commands</p><a class="button primary" href="/review?batch_id={{ imported.batch_id }}">Continue to Review</a></section>{% endif %}
+{% endblock %}

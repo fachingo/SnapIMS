@@ -1,194 +1,184 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
-from dataclasses import dataclass, field
-from datetime import datetime
+import threading
+import time
 from pathlib import Path
+from typing import Any
 
 from snapims import db
 from snapims.recognition.base import BaseRecognizer, RecognitionResult
+from snapims.recognition.providers import recognizer_registry
+
+_ACTIVE: dict[str, threading.Thread] = {}
+_LOCK = threading.Lock()
 
 
-@dataclass(frozen=True, slots=True)
-class BatchRecognitionFailure:
-    item_id: str
-    message: str
-
-
-@dataclass(slots=True)
-class BatchRecognitionProgress:
-    batch_id: str
-    current_item_id: str = ""
-    total: int = 0
-    completed: int = 0
-    recognized: int = 0
-    review_required: int = 0
-    skipped: int = 0
-    failed: int = 0
-    failures: list[BatchRecognitionFailure] = field(default_factory=list)
-
-
-@dataclass(frozen=True, slots=True)
-class BatchRecognitionSummary:
-    batch_id: str
-    total: int
-    completed: int
-    recognized: int
-    review_required: int
-    skipped: int
-    failed: int
-    failures: tuple[BatchRecognitionFailure, ...]
-
-
-def _item_has_recognition_results(db_file: Path, item_id_value: str) -> bool:
-    with db.connect(db_file) as connection:
-        row = connection.execute(
-            "SELECT 1 FROM recognition_results WHERE item_id = ? LIMIT 1",
-            (item_id_value,),
-        ).fetchone()
-    return row is not None
-
-
-def _skip_reason(
-    item: dict,
-    *,
-    has_existing_result: bool,
-    skip_existing: bool,
-    only_missing_title: bool,
-    force_reprocess: bool,
-) -> str | None:
-    if only_missing_title and (item.get("title") or "").strip():
-        return "Item already has a title"
-    if not force_reprocess and skip_existing and has_existing_result:
-        return "Item already has a recognition result"
-    return None
-
-
-def run_recognition(
-    db_file: Path, item_id_value: str, recognizer: BaseRecognizer
-) -> tuple[int, RecognitionResult]:
-    item = db.get_item(db_file, item_id_value)
+def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) -> tuple[int, RecognitionResult]:
+    item = db.get_item(db_file, item_id)
     if item is None:
-        raise KeyError(f"Unknown Item ID: {item_id_value}")
-    photos = db.get_item_photos(db_file, item_id_value)
-    image_paths = [Path(photo["processed_path"]) for photo in photos]
-    result = recognizer.recognize(item, image_paths)
+        raise KeyError(f"Unknown Item ID: {item_id}")
+    photos = db.get_item_photos(db_file, item_id)
+    images = [Path(photo["processed_path"]) for photo in photos]
+    result = recognizer.recognize(item, images)
     with db.transaction(db_file) as connection:
         cursor = connection.execute(
-            """
-            INSERT INTO recognition_results(
-                item_id, provider, created_at, suggested_title, edition, distributor,
-                release_year, barcode_candidates_json, confidence,
-                uncertainty_reasons_json, raw_response_reference, requires_review
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                item_id_value, result.provider_name, datetime.now().isoformat(timespec="seconds"),
-                result.suggested_title, result.edition, result.distributor, result.year,
-                json.dumps(result.barcode_candidates), result.confidence,
-                json.dumps(result.uncertainty_reasons), result.raw_response_reference,
-                int(result.requires_review),
-            ),
+            """INSERT INTO recognition_results(item_id,provider,created_at,suggested_title,edition,distributor,release_year,barcode_candidates_json,suggested_price_cents,suggested_discount_percent,confidence,uncertainty_reasons_json,raw_response_reference,requires_review)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (item_id, result.provider_name, db.now(), result.suggested_title, result.edition, result.distributor, result.year, json.dumps(result.barcode_candidates), result.suggested_price_cents, result.suggested_discount_percent, result.confidence, json.dumps(result.uncertainty_reasons), result.raw_response_reference, int(result.requires_review)),
         )
-        if cursor.lastrowid is None:
-            raise RuntimeError("SQLite did not return a recognition result ID")
-        return cursor.lastrowid, result
+        connection.execute(
+            "UPDATE items SET recognition_status='COMPLETE',recognition_error='',updated_at=? WHERE item_id=?",
+            (db.now(), item_id),
+        )
+    return int(cursor.lastrowid), result
 
 
-def list_results(db_file: Path, item_id_value: str) -> list[dict]:
+def _recognition_worker(db_file: Path, batch_id: str, provider_name: str, delay: float) -> None:
+    provider = recognizer_registry()[provider_name]
+    items = db.list_items(db_file, batch_id=batch_id)
+    existing_job = db.get_recognition_job(db_file, batch_id) or {}
+    completed_ids: set[str] = set()
     with db.connect(db_file) as connection:
-        rows = connection.execute(
-            "SELECT * FROM recognition_results WHERE item_id=? ORDER BY created_at DESC",
-            (item_id_value,),
-        ).fetchall()
-    return [dict(row) for row in rows]
+        rows = connection.execute("SELECT DISTINCT item_id FROM recognition_results WHERE item_id IN (SELECT item_id FROM items WHERE batch_id=?)", (batch_id,)).fetchall()
+        completed_ids = {str(row[0]) for row in rows}
+    recognized = len(completed_ids)
+    failed = sum(1 for item in items if item["recognition_status"] == "FAILED")
+    db.upsert_recognition_job(db_file, batch_id, provider=provider_name, status="RUNNING", total=len(items), completed=recognized + failed, recognized=recognized, failed=failed, started_at=existing_job.get("started_at") or db.now(), finished_at=None)
+    try:
+        for item in items:
+            if item["item_id"] in completed_ids or item["recognition_status"] == "FAILED":
+                continue
+            db.upsert_recognition_job(db_file, batch_id, status="RUNNING", current_item_id=item["item_id"])
+            try:
+                run_recognition(db_file, item["item_id"], provider)
+            except Exception as exc:
+                failed += 1
+                db.update_item(db_file, item["item_id"], {"recognition_status": "FAILED", "recognition_error": str(exc)}, source="RECOGNITION")
+            else:
+                recognized += 1
+            completed = recognized + failed
+            db.upsert_recognition_job(db_file, batch_id, status="RUNNING", completed=completed, recognized=recognized, failed=failed, current_item_id=item["item_id"])
+            if delay:
+                time.sleep(delay)
+        status = "COMPLETE_WITH_FAILURE" if failed else "COMPLETE"
+        db.upsert_recognition_job(db_file, batch_id, status=status, completed=len(items), recognized=recognized, failed=failed, current_item_id="", finished_at=db.now())
+    finally:
+        with _LOCK:
+            _ACTIVE.pop(batch_id, None)
 
 
-def accept_result(db_file: Path, result_id: int) -> None:
-    with db.transaction(db_file) as connection:
-        row = connection.execute(
-            "SELECT * FROM recognition_results WHERE recognition_result_id=?", (result_id,)
-        ).fetchone()
-        if row is None:
-            raise KeyError(f"Unknown recognition result: {result_id}")
-        connection.execute(
-            """
-            UPDATE items SET title=CASE WHEN ?='' THEN title ELSE ? END,
-                edition=CASE WHEN ?='' THEN edition ELSE ? END,
-                distributor=CASE WHEN ?='' THEN distributor ELSE ? END,
-                recognition_provider=?, recognition_confidence=?, review=1, updated_at=?
-            WHERE item_id=?
-            """,
-            (
-                row["suggested_title"], row["suggested_title"],
-                row["edition"], row["edition"], row["distributor"], row["distributor"],
-                row["provider"], row["confidence"], datetime.now().isoformat(timespec="seconds"),
-                row["item_id"],
-            ),
-        )
-        connection.execute(
-            "UPDATE recognition_results SET accepted_at=? WHERE recognition_result_id=?",
-            (datetime.now().isoformat(timespec="seconds"), result_id),
-        )
-
-
-def run_batch_recognition(
+def start_batch_recognition(
     db_file: Path,
-    batch_id_value: str,
-    recognizer: BaseRecognizer,
+    batch_id: str,
+    provider_name: str = "mock",
     *,
-    skip_existing: bool = True,
-    only_missing_title: bool = False,
-    force_reprocess: bool = False,
-    progress_callback: Callable[[BatchRecognitionProgress], None] | None = None,
-) -> BatchRecognitionSummary:
-    if db.get_batch(db_file, batch_id_value) is None:
-        raise KeyError(f"Unknown batch: {batch_id_value}")
+    delay: float = 0,
+) -> bool:
+    if provider_name not in recognizer_registry():
+        raise KeyError(f"Unknown provider: {provider_name}")
+    with _LOCK:
+        existing = _ACTIVE.get(batch_id)
+        if existing and existing.is_alive():
+            return False
 
-    items = db.list_items(db_file, batch_id_value=batch_id_value)
-    progress = BatchRecognitionProgress(batch_id=batch_id_value, total=len(items))
-
-    def publish(current_item_id: str = "") -> None:
-        progress.current_item_id = current_item_id
-        if progress_callback is not None:
-            progress_callback(progress)
-
-    publish()
-    for item in items:
-        item_id_value = item["item_id"]
-        publish(item_id_value)
-        skip_message = _skip_reason(
-            item,
-            has_existing_result=_item_has_recognition_results(db_file, item_id_value),
-            skip_existing=skip_existing,
-            only_missing_title=only_missing_title,
-            force_reprocess=force_reprocess,
+        # Persist RUNNING before the background thread starts. This removes a race where a
+        # browser refresh could still observe READY and allow approval before suggestions exist.
+        items = db.list_items(db_file, batch_id=batch_id)
+        with db.connect(db_file) as connection:
+            rows = connection.execute(
+                "SELECT DISTINCT item_id FROM recognition_results "
+                "WHERE item_id IN (SELECT item_id FROM items WHERE batch_id=?)",
+                (batch_id,),
+            ).fetchall()
+        recognized = len(rows)
+        failed = sum(1 for item in items if item["recognition_status"] == "FAILED")
+        prior = db.get_recognition_job(db_file, batch_id) or {}
+        db.upsert_recognition_job(
+            db_file,
+            batch_id,
+            provider=provider_name,
+            status="RUNNING",
+            total=len(items),
+            completed=recognized + failed,
+            recognized=recognized,
+            failed=failed,
+            current_item_id="",
+            started_at=prior.get("started_at") or db.now(),
+            finished_at=None,
         )
-        if skip_message is not None:
-            progress.skipped += 1
-            progress.completed += 1
-            publish(item_id_value)
-            continue
-        try:
-            _, result = run_recognition(db_file, item_id_value, recognizer)
-        except Exception as exc:
-            progress.failed += 1
-            progress.failures.append(BatchRecognitionFailure(item_id=item_id_value, message=str(exc)))
-        else:
-            progress.recognized += 1
-            if result.requires_review:
-                progress.review_required += 1
-        progress.completed += 1
-        publish(item_id_value)
 
-    return BatchRecognitionSummary(
-        batch_id=batch_id_value,
-        total=progress.total,
-        completed=progress.completed,
-        recognized=progress.recognized,
-        review_required=progress.review_required,
-        skipped=progress.skipped,
-        failed=progress.failed,
-        failures=tuple(progress.failures),
-    )
+        thread = threading.Thread(
+            target=_recognition_worker,
+            args=(db_file, batch_id, provider_name, delay),
+            daemon=True,
+        )
+        _ACTIVE[batch_id] = thread
+        thread.start()
+    return True
+
+
+def retry_failed_item(db_file: Path, item_id: str, provider_name: str = "mock") -> None:
+    provider = recognizer_registry()[provider_name]
+    db.update_item(db_file, item_id, {"recognition_status": "PENDING", "recognition_error": ""}, source="RECOGNITION")
+    run_recognition(db_file, item_id, provider)
+    item = db.get_item(db_file, item_id)
+    if item:
+        batch_id = item["batch_id"]
+        items = db.list_items(db_file, batch_id=batch_id)
+        failed = sum(1 for row in items if row["recognition_status"] == "FAILED")
+        recognized = sum(1 for row in items if row["recognition_status"] == "COMPLETE")
+        status = "COMPLETE_WITH_FAILURE" if failed else "COMPLETE"
+        db.upsert_recognition_job(db_file, batch_id, status=status, completed=recognized + failed, recognized=recognized, failed=failed)
+
+
+def accept_item(
+    db_file: Path,
+    item_id: str,
+    *,
+    price_cents: int | None,
+    discount_percent: float,
+) -> list[str]:
+    item = db.get_item(db_file, item_id)
+    if item is None:
+        raise KeyError(f"Unknown Item ID: {item_id}")
+    suggestion = db.latest_recognition(db_file, item_id)
+    # Explicit operator values win, existing saved values win next, then AI suggestion.
+    values: dict[str, Any] = {
+        "title": item["title"] or (suggestion["suggested_title"] if suggestion else ""),
+        "release_year": item["release_year"] or (suggestion["release_year"] if suggestion else None),
+        "edition": item["edition"] or (suggestion["edition"] if suggestion else ""),
+        "distributor": item["distributor"] or (suggestion["distributor"] if suggestion else ""),
+        "barcode": item["barcode"] or ((json.loads(suggestion["barcode_candidates_json"])[0]) if suggestion and json.loads(suggestion["barcode_candidates_json"]) else ""),
+        "price_cents": price_cents if price_cents is not None else (item["price_cents"] or (suggestion["suggested_price_cents"] if suggestion else None)),
+        "discount_percent": discount_percent,
+        "recognition_provider": suggestion["provider"] if suggestion else item["recognition_provider"],
+        "recognition_confidence": suggestion["confidence"] if suggestion else item["recognition_confidence"],
+        "ready": 1,
+        "review_status": "DONE",
+        "postponed_at": None,
+    }
+    candidate = {**item, **values}
+    errors = validate_items_for_candidate(db_file, candidate)
+    if errors:
+        return errors
+    with db.transaction(db_file) as connection:
+        connection.execute(
+            """UPDATE items SET title=?,release_year=?,edition=?,distributor=?,barcode=?,price_cents=?,discount_percent=?,recognition_provider=?,recognition_confidence=?,ready=1,review_status='DONE',postponed_at=NULL,validation_status='READY',validation_errors='[]',updated_at=?,record_revision=record_revision+1 WHERE item_id=?""",
+            (values["title"], values["release_year"], values["edition"], values["distributor"], values["barcode"], values["price_cents"], values["discount_percent"], values["recognition_provider"], values["recognition_confidence"], db.now(), item_id),
+        )
+        if suggestion:
+            connection.execute("UPDATE recognition_results SET accepted_at=? WHERE recognition_result_id=?", (db.now(), suggestion["recognition_result_id"]))
+    remaining = db.list_items(db_file, batch_id=item["batch_id"], queue="UNRESOLVED")
+    if not remaining:
+        db.upsert_recognition_job(db_file, item["batch_id"], status="REVIEW_COMPLETE")
+    return []
+
+
+def validate_items_for_candidate(db_file: Path, candidate: dict[str, Any]) -> list[str]:
+    from snapims.inventory import validation_errors
+    return validation_errors(candidate, db.get_item_photos(db_file, candidate["item_id"]))
+
+
+def postpone_item(db_file: Path, item_id: str) -> None:
+    db.update_item(db_file, item_id, {"review_status": "UNFINISHED", "postponed_at": db.now()}, source="REVIEW")

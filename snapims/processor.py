@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -14,134 +13,89 @@ from snapims.inventory import export_inventory_csv
 from snapims.manifests import item_id, photo_name, write_manifests
 from snapims.models import BatchRecord, ImportResult, ProcessedPhoto
 from snapims.pipeline import QRDecoder, parse_batch
+from snapims.protocol import parse_command
 from snapims.qr import decode_snapims_qr
-
-LOGGER = logging.getLogger("snapims.processor")
 
 
 class ImportInterrupted(RuntimeError):
-    """Testable interruption used to verify resume behavior."""
-
-
-class JsonLogFormatter(logging.Formatter):
-    def format(self, record: logging.LogRecord) -> str:
-        payload = {
-            "timestamp": datetime.fromtimestamp(record.created).astimezone().isoformat(),
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-        }
-        if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
-        return json.dumps(payload, ensure_ascii=False)
-
-
-def configure_logging(paths: DataPaths) -> None:
-    paths.ensure()
-    root = logging.getLogger("snapims")
-    if root.handlers:
-        return
-    root.setLevel(logging.INFO)
-    handler = logging.FileHandler(paths.logs / "snapims.log", encoding="utf-8")
-    handler.setFormatter(JsonLogFormatter())
-    root.addHandler(handler)
-
-
-def _existing_manifest(paths: DataPaths, fingerprint: str) -> tuple[str, dict] | None:
-    if not paths.processed.exists():
-        return None
-    for manifest_path in sorted(paths.processed.glob("*/batch_manifest.json")):
-        try:
-            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if payload.get("source_fingerprint") == fingerprint:
-            return str(payload["batch_id"]), payload
-    return None
+    pass
 
 
 def _unique_batch_id(paths: DataPaths, created_at: datetime, batch_name: str | None) -> str:
-    candidate_time = created_at
+    candidate = created_at
     for _ in range(120):
-        candidate = make_batch_id(candidate_time, batch_name)
-        if not (paths.processed / candidate).exists() and not (paths.originals / candidate).exists():
-            return candidate
-        candidate_time += timedelta(seconds=1)
+        batch_id = make_batch_id(candidate, batch_name)
+        if not (paths.processed / batch_id).exists() and not (paths.originals / batch_id).exists():
+            return batch_id
+        candidate += timedelta(seconds=1)
     raise FileExistsError("Could not allocate a collision-free Batch ID within two minutes.")
 
 
 def _artifact_plan(batch: BatchRecord, paths: DataPaths) -> list[ProcessedPhoto]:
     original_root = paths.originals / batch.batch_id
     processed_root = paths.processed / batch.batch_id
-    product_by_stream: dict[int, tuple[str, int, str]] = {}
+    products: dict[int, tuple[str, int, str]] = {}
     for item in batch.items:
-        iid = item_id(batch.batch_id, item.shelf, item.sequence)
+        identifier = item_id(batch.batch_id, item.shelf, item.sequence)
         for order, photo in enumerate(item.photos, start=1):
-            product_by_stream[photo.stream_index] = (
-                iid, order, photo_name(batch.batch_id, item.shelf, item.sequence, order)
-            )
-
+            products[photo.stream_index] = (identifier, order, photo_name(batch.batch_id, item.shelf, item.sequence, order))
     command_streams = {photo.stream_index for photo in batch.commands}
-    records = sorted(batch.source_photos, key=lambda photo: photo.stream_index)
     artifacts: list[ProcessedPhoto] = []
-    for photo in records:
-        original_name = f"{photo.stream_index:04d}-{photo.original_name}"
-        original_copy = original_root / original_name
-        product = product_by_stream.get(photo.stream_index)
-        if product:
-            iid, order, proposed_name = product
-            artifacts.append(
-                ProcessedPhoto(
-                    item_id=iid,
-                    source=photo,
-                    kind="product",
-                    proposed_name=proposed_name,
-                    original_copy_path=original_copy,
-                    processed_path=processed_root / "images" / proposed_name,
-                    thumbnail_path=processed_root / "thumbnails" / proposed_name,
-                    photo_order=order,
-                )
-            )
+    for photo in sorted(batch.source_photos, key=lambda record: record.stream_index):
+        original_copy = original_root / f"{photo.stream_index:04d}-{photo.original_name}"
+        if photo.stream_index in products:
+            identifier, order, name = products[photo.stream_index]
+            artifacts.append(ProcessedPhoto(identifier, photo, "product", name, original_copy, processed_root / "images" / name, processed_root / "thumbnails" / name, order))
         elif photo.stream_index in command_streams:
             payload = (photo.qr_payload or "UNKNOWN").replace(":", "-")
-            command_name = f"{photo.stream_index:04d}-{payload}.jpg"
-            artifacts.append(
-                ProcessedPhoto(
-                    item_id=None,
-                    source=photo,
-                    kind="command",
-                    proposed_name=command_name,
-                    original_copy_path=original_copy,
-                    processed_path=processed_root / "commands" / command_name,
-                )
-            )
+            name = f"{photo.stream_index:04d}-{payload}.jpg"
+            artifacts.append(ProcessedPhoto(None, photo, "command", name, original_copy, processed_root / "commands" / name))
         else:
-            artifacts.append(
-                ProcessedPhoto(
-                    item_id=None,
-                    source=photo,
-                    kind="excluded",
-                    proposed_name="EXCLUDED",
-                    original_copy_path=original_copy,
-                )
-            )
+            artifacts.append(ProcessedPhoto(None, photo, "excluded", "EXCLUDED", original_copy))
     return artifacts
 
 
-def _stage_path(final: Path, staging_root: Path, final_root: Path) -> Path:
-    return staging_root / final.relative_to(final_root)
-
-
-def _write_progress(path: Path, batch_id: str, completed: int, total: int) -> None:
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps(
-            {"batch_id": batch_id, "completed_artifacts": completed, "total_artifacts": total},
-            indent=2,
-        ) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(temporary, path)
+def _insert_batch(db_file: Path, batch: BatchRecord, artifacts: list[ProcessedPhoto]) -> None:
+    timestamp = db.now()
+    with db.transaction(db_file) as connection:
+        connection.execute(
+            """INSERT INTO batches(batch_id,source_fingerprint,source_folder,created_at,imported_at,started,ended,status,item_count,product_photo_count,command_count,warning_count,warnings_json)
+               VALUES(?,?,?,?,?,?,?,'IMPORTED',?,?,?,?,?)""",
+            (batch.batch_id, batch.source_fingerprint, str(batch.source_folder), batch.created_at.isoformat(), timestamp, int(batch.started), int(batch.ended), len(batch.items), batch.photo_count, len(batch.commands), len(batch.warnings), json.dumps(batch.warnings)),
+        )
+        for item in batch.items:
+            identifier = item_id(batch.batch_id, item.shelf, item.sequence)
+            connection.execute(
+                """INSERT INTO items(item_id,sku,batch_id,sequence,shelf,rare,review,pool_mode,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (identifier, identifier, batch.batch_id, item.sequence, item.shelf, int(item.rare), int(item.review), "UNIQUE" if item.rare else "POOLED", timestamp, timestamp),
+            )
+            connection.execute("INSERT INTO shopify_sync(item_id) VALUES(?)", (identifier,))
+            connection.execute(
+                """INSERT INTO inventory_events(item_id,batch_id,occurred_at,event_type,to_location,quantity_delta,source,notes)
+                   VALUES(?,?,?,'ITEM_INTAKE',?,1,'QR_BATCH',?)""",
+                (identifier, batch.batch_id, timestamp, item.shelf, f"Imported as sequence {item.sequence}"),
+            )
+        photo_ids: dict[int, int] = {}
+        for artifact in artifacts:
+            cursor = connection.execute(
+                """INSERT INTO photos(batch_id,item_id,kind,stream_index,photo_order,original_name,captured_at,timestamp_source,sha256,qr_payload,source_path,original_copy_path,proposed_name,processed_path,thumbnail_path)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (batch.batch_id, artifact.item_id, artifact.kind, artifact.source.stream_index, artifact.photo_order, artifact.source.original_name, artifact.source.captured_at.isoformat(), artifact.source.timestamp_source, artifact.source.sha256, artifact.source.qr_payload, str(artifact.source.path), str(artifact.original_copy_path), artifact.proposed_name, str(artifact.processed_path) if artifact.processed_path else None, str(artifact.thumbnail_path) if artifact.thumbnail_path else None),
+            )
+            photo_ids[artifact.source.stream_index] = int(cursor.lastrowid)
+        for command_photo in batch.commands:
+            command = parse_command(command_photo.qr_payload or "")
+            if command:
+                connection.execute(
+                    """INSERT INTO command_events(batch_id,stream_index,occurred_at,payload,command_kind,command_value,source_photo_id)
+                       VALUES(?,?,?,?,?,?,?)""",
+                    (batch.batch_id, command_photo.stream_index, command_photo.captured_at.isoformat(), command.payload, command.kind.value, command.value, photo_ids.get(command_photo.stream_index)),
+                )
+        connection.execute(
+            "INSERT INTO recognition_jobs(batch_id,provider,status,total,updated_at) VALUES(?, 'mock','READY',?,?)",
+            (batch.batch_id, len(batch.items), timestamp),
+        )
 
 
 def process_batch(
@@ -154,116 +108,60 @@ def process_batch(
     interrupt_after: int | None = None,
 ) -> ImportResult:
     paths = (paths or DataPaths.from_root()).ensure()
-    configure_logging(paths)
-    db.initialize(paths.db_file)
+    db.initialize(paths.db_file, paths=paths)
     db.backup_database(paths, "before-import")
-    LOGGER.info("Import preview started source=%s", source_folder)
-
-    batch = parse_batch(
-        source_folder,
-        batch_name=batch_name,
-        decoder=decoder,
-        recursive=recursive,
-    )
-    existing_db = db.find_batch_by_fingerprint(paths.db_file, batch.source_fingerprint)
-    if existing_db:
-        batch_id_value = existing_db["batch_id"]
-        output = paths.processed / batch_id_value
-        LOGGER.info("Duplicate import skipped batch=%s", batch_id_value)
-        return ImportResult(
-            batch_id=batch_id_value,
-            item_count=int(existing_db["item_count"]),
-            product_photo_count=int(existing_db["product_photo_count"]),
-            command_count=int(existing_db["command_count"]),
-            output_folder=output,
-            work_csv=output / "inventory_work.csv",
-            warnings=tuple(json.loads(existing_db["warnings_json"])),
-            duplicate=True,
-        )
-
-    recovered_manifest = _existing_manifest(paths, batch.source_fingerprint)
-    if recovered_manifest:
-        batch.batch_id = recovered_manifest[0]
-        artifacts = _artifact_plan(batch, paths)
-        missing = [
-            str(artifact.processed_path)
-            for artifact in artifacts
-            if artifact.processed_path and not artifact.processed_path.exists()
-        ]
-        if missing:
-            raise FileNotFoundError(
-                "A matching prior manifest exists but processed files are incomplete: " + missing[0]
-            )
-        db.insert_batch(paths.db_file, batch, artifacts)
-        work_csv = export_inventory_csv(paths.db_file, batch.batch_id, paths.processed / batch.batch_id / "inventory_work.csv")
-        return ImportResult(
-            batch_id=batch.batch_id, item_count=len(batch.items),
-            product_photo_count=batch.photo_count, command_count=len(batch.commands),
-            output_folder=paths.processed / batch.batch_id, work_csv=work_csv,
-            warnings=tuple(batch.warnings), duplicate=False,
-        )
-
+    batch = parse_batch(source_folder, batch_name=batch_name, decoder=decoder, recursive=recursive)
+    existing = db.find_batch_by_fingerprint(paths.db_file, batch.source_fingerprint)
+    if existing:
+        batch_id = str(existing["batch_id"])
+        return ImportResult(batch_id, int(existing["item_count"]), int(existing["product_photo_count"]), int(existing["command_count"]), paths.processed / batch_id, paths.processed / batch_id / "inventory_work.csv", tuple(json.loads(existing["warnings_json"])), True)
+    batch.batch_id = _unique_batch_id(paths, batch.created_at, batch_name)
+    artifacts = _artifact_plan(batch, paths)
     suffix = batch.source_fingerprint[:16]
     staging_originals = paths.originals / f".staging-{suffix}"
     staging_processed = paths.processed / f".staging-{suffix}"
     progress_path = staging_processed / "progress.json"
     if progress_path.exists():
         try:
-            batch.batch_id = str(json.loads(progress_path.read_text(encoding="utf-8"))["batch_id"])
+            batch.batch_id = json.loads(progress_path.read_text(encoding="utf-8"))["batch_id"]
+            artifacts = _artifact_plan(batch, paths)
         except (OSError, KeyError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"Invalid resume marker: {progress_path}") from exc
-    else:
-        batch.batch_id = _unique_batch_id(paths, batch.created_at, batch_name)
-    artifacts = _artifact_plan(batch, paths)
     staging_originals.mkdir(parents=True, exist_ok=True)
     staging_processed.mkdir(parents=True, exist_ok=True)
-
-    try:
-        for completed, artifact in enumerate(artifacts, start=1):
-            original_destination = _stage_path(
-                artifact.original_copy_path, staging_originals, paths.originals / batch.batch_id
-            )
-            copy_original(artifact.source.path, original_destination, artifact.source.sha256)
-            if artifact.processed_path:
-                processed_destination = _stage_path(
-                    artifact.processed_path, staging_processed, paths.processed / batch.batch_id
-                )
-                create_safe_jpeg(artifact.source.path, processed_destination)
-            if artifact.thumbnail_path:
-                thumbnail_destination = _stage_path(
-                    artifact.thumbnail_path, staging_processed, paths.processed / batch.batch_id
-                )
-                create_safe_jpeg(artifact.source.path, thumbnail_destination, max_dimension=640)
-            _write_progress(progress_path, batch.batch_id, completed, len(artifacts))
-            if interrupt_after is not None and completed >= interrupt_after:
-                raise ImportInterrupted(f"Simulated interruption after {completed} artifacts")
-
-        write_manifests(staging_processed, batch, artifacts)
-        progress_path.unlink(missing_ok=True)
-        final_originals = paths.originals / batch.batch_id
-        final_processed = paths.processed / batch.batch_id
-        if final_originals.exists() or final_processed.exists():
-            raise FileExistsError(f"Refusing to overwrite existing batch output: {batch.batch_id}")
-        os.replace(staging_originals, final_originals)
-        os.replace(staging_processed, final_processed)
-        db.insert_batch(paths.db_file, batch, artifacts)
-        work_csv = export_inventory_csv(
-            paths.db_file, batch.batch_id, final_processed / "inventory_work.csv"
-        )
-    except ImportInterrupted:
-        LOGGER.warning("Import interrupted; staging retained for resume batch=%s", batch.batch_id)
-        raise
-    except Exception:
-        LOGGER.exception("Import failed source=%s", source_folder)
-        raise
-
-    LOGGER.info("Import completed batch=%s items=%d", batch.batch_id, len(batch.items))
-    return ImportResult(
-        batch_id=batch.batch_id,
-        item_count=len(batch.items),
-        product_photo_count=batch.photo_count,
-        command_count=len(batch.commands),
-        output_folder=final_processed,
-        work_csv=work_csv,
-        warnings=tuple(batch.warnings),
-    )
+    for completed, artifact in enumerate(artifacts, start=1):
+        original_destination = staging_originals / artifact.original_copy_path.relative_to(paths.originals / batch.batch_id)
+        copy_original(artifact.source.path, original_destination, artifact.source.sha256)
+        if artifact.processed_path:
+            processed_destination = staging_processed / artifact.processed_path.relative_to(paths.processed / batch.batch_id)
+            create_safe_jpeg(artifact.source.path, processed_destination)
+        if artifact.thumbnail_path:
+            thumb_destination = staging_processed / artifact.thumbnail_path.relative_to(paths.processed / batch.batch_id)
+            create_safe_jpeg(artifact.source.path, thumb_destination, max_dimension=640)
+        temporary = progress_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"batch_id": batch.batch_id, "completed_artifacts": completed, "total_artifacts": len(artifacts)}), encoding="utf-8")
+        os.replace(temporary, progress_path)
+        if interrupt_after is not None and completed >= interrupt_after:
+            raise ImportInterrupted(f"Simulated interruption after {completed} artifacts")
+    write_manifests(staging_processed, batch, artifacts)
+    progress_path.unlink(missing_ok=True)
+    final_originals = paths.originals / batch.batch_id
+    final_processed = paths.processed / batch.batch_id
+    if final_originals.exists() or final_processed.exists():
+        raise FileExistsError(f"Refusing to overwrite existing batch output: {batch.batch_id}")
+    os.replace(staging_originals, final_originals)
+    os.replace(staging_processed, final_processed)
+    # Rewrite artifact paths to final locations before database insert.
+    final_artifacts: list[ProcessedPhoto] = []
+    for artifact in artifacts:
+        final_artifacts.append(ProcessedPhoto(
+            artifact.item_id, artifact.source, artifact.kind, artifact.proposed_name,
+            final_originals / artifact.original_copy_path.relative_to(paths.originals / batch.batch_id),
+            final_processed / artifact.processed_path.relative_to(paths.processed / batch.batch_id) if artifact.processed_path else None,
+            final_processed / artifact.thumbnail_path.relative_to(paths.processed / batch.batch_id) if artifact.thumbnail_path else None,
+            artifact.photo_order,
+        ))
+    _insert_batch(paths.db_file, batch, final_artifacts)
+    work_csv = export_inventory_csv(paths.db_file, batch.batch_id, final_processed / "inventory_work.csv")
+    db.remember_folder(paths.db_file, source_folder)
+    return ImportResult(batch.batch_id, len(batch.items), batch.photo_count, len(batch.commands), final_processed, work_csv, tuple(batch.warnings))

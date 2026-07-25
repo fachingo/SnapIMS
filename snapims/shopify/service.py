@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,116 +20,206 @@ class ShopifyDryRun:
     errors: tuple[str, ...]
     warnings: tuple[str, ...]
     image_count: int
+    payload: dict[str, Any]
 
 
 class ShopifyService:
-    def __init__(
-        self,
-        db_file: Path,
-        config: ShopifyConfig,
-        client: ShopifyClient | None = None,
-    ) -> None:
+    def __init__(self, db_file: Path, config: ShopifyConfig, client: ShopifyClient | None = None) -> None:
         self.db_file = db_file
         self.config = config
         self.client = client or ShopifyClient(config)
 
-    def dry_run(self, item_id_value: str, *, remote_check: bool = False) -> ShopifyDryRun:
-        item = db.get_item(self.db_file, item_id_value)
+    def dry_run(self, item_id: str, *, remote_check: bool = False) -> ShopifyDryRun:
+        item = db.get_item(self.db_file, item_id)
         if item is None:
-            return ShopifyDryRun(item_id_value, False, "BLOCK", ("Unknown Item ID",), (), 0)
-        photos = db.get_item_photos(self.db_file, item_id_value)
+            return ShopifyDryRun(item_id, False, "BLOCK", ("Unknown Item ID",), (), 0, {})
+        photos = db.get_item_photos(self.db_file, item_id)
         config_problems = self.config.problems()
         errors = list(config_problems) if remote_check else []
         errors.extend(validation_errors(item, photos))
-        warnings: list[str] = (
-            [f"Simulation only: {problem}" for problem in config_problems]
-            if not remote_check else []
-        )
-        action = "CREATE_DRAFT" if not config_problems else "SIMULATE_CREATE_DRAFT"
+        if not item["ready"] or item["review_status"] != "DONE":
+            errors.append("Item is not completed and READY")
         if item["upload_status"] == "UPLOADED":
             action = "SKIP_ALREADY_UPLOADED"
-        if not item["ready"]:
-            errors.append("Item is not marked READY")
-        if remote_check and not self.config.problems():
+        else:
+            action = "CREATE_DRAFT" if not config_problems else "SIMULATE_CREATE_DRAFT"
+        if remote_check and not config_problems:
             existing = self.client.find_variant_by_sku(item["sku"])
             if existing and not item["shopify_product_id"]:
                 errors.append(f"SKU already exists in Shopify on {existing['product']['title']}")
-        return ShopifyDryRun(
-            item_id=item_id_value,
-            ready=not errors and action in {"CREATE_DRAFT", "SIMULATE_CREATE_DRAFT"},
-            action=action if not errors else "BLOCK",
-            errors=tuple(dict.fromkeys(errors)),
-            warnings=tuple(warnings),
-            image_count=len(photos),
-        )
+        final_price = int(round(int(item["price_cents"] or 0) * (1 - float(item["discount_percent"] or 0) / 100)))
+        payload = {
+            "item_id": item["item_id"], "sku": item["sku"], "title": item["title"],
+            "price_cents": item["price_cents"], "discount_percent": item["discount_percent"],
+            "final_price_cents": final_price, "quantity": item["quantity"], "barcode": item["barcode"],
+            "vendor": item["vendor"], "product_type": item["product_type"], "tags": item["tags"],
+            "image_count": len(photos), "status": "DRAFT",
+        }
+        warnings = tuple(f"Simulation only: {problem}" for problem in config_problems) if not remote_check else ()
+        return ShopifyDryRun(item_id, not errors and action in {"CREATE_DRAFT", "SIMULATE_CREATE_DRAFT"}, action if not errors else "BLOCK", tuple(dict.fromkeys(errors)), warnings, len(photos), payload)
 
-    def upload_draft(self, item_id_value: str, *, confirmed: bool = False) -> dict[str, Any]:
+    def upload_draft(
+        self,
+        item_id: str,
+        *,
+        confirmed: bool = False,
+        media_timeout: float = 30,
+        poll_interval: float = 0.5,
+    ) -> dict[str, Any]:
         if not confirmed:
             raise PermissionError("Live Shopify writes require deliberate confirmation.")
-        report = self.dry_run(item_id_value, remote_check=True)
+        if self.config.problems():
+            raise ValueError("Shopify configuration blocked upload: " + "; ".join(self.config.problems()))
+        report = self.dry_run(item_id, remote_check=False)
         if not report.ready:
             raise ValueError("Shopify dry-run blocked upload: " + "; ".join(report.errors))
+
         paths = DataPaths.from_root(self.db_file.parent.parent).ensure()
         db.backup_database(paths, "before-shopify-upload")
-        item = db.get_item(self.db_file, item_id_value)
+        item = db.get_item(self.db_file, item_id)
         assert item is not None
-        photos = db.get_item_photos(self.db_file, item_id_value)
+        photos = db.get_item_photos(self.db_file, item_id)
         image_paths = [Path(photo["processed_path"]) for photo in photos]
-        attempt = db.start_upload_attempt(self.db_file, item_id_value)
-        step = "start"
+        with db.connect(self.db_file) as connection:
+            sync_row = connection.execute(
+                "SELECT * FROM shopify_sync WHERE item_id=?", (item_id,)
+            ).fetchone()
+        checkpoint = dict(sync_row) if sync_row else {}
+        step = str(checkpoint.get("last_completed_step") or "")
+        order = {"": 0, "create_product": 1, "configure_variant": 2, "activate_inventory": 3, "attach_media": 4, "complete": 5}
+
+        with db.transaction(self.db_file) as connection:
+            cursor = connection.execute(
+                "INSERT INTO upload_attempts(item_id,started_at,status) VALUES(?,?,'RUNNING')",
+                (item_id, db.now()),
+            )
+            attempt = int(cursor.lastrowid)
+
         try:
-            product_id = item["shopify_product_id"]
-            variant_id = item["shopify_variant_id"]
-            inventory_item_id = item["shopify_inventory_item_id"]
+            product_id = str(checkpoint.get("product_id") or item["shopify_product_id"] or "")
+            variant_id = str(checkpoint.get("variant_id") or item["shopify_variant_id"] or "")
+            inventory_item_id = str(
+                checkpoint.get("inventory_item_id") or item["shopify_inventory_item_id"] or ""
+            )
+
             if not product_id:
+                existing = self.client.find_variant_by_sku(item["sku"])
+                if existing:
+                    product = existing.get("product") or {}
+                    if str(product.get("status", "DRAFT")).upper() != "DRAFT":
+                        raise ValueError(
+                            f"SKU already exists on a non-draft Shopify product: {product.get('title', item['sku'])}"
+                        )
+                    product_id = str(product["id"])
+                    variant_id = str(existing["id"])
+                    inventory_item_id = str((existing.get("inventoryItem") or {})["id"])
+                else:
+                    created = self.client.create_draft_product(item)
+                    product_id = created["product_id"]
+                    variant_id = created["variant_id"]
+                    inventory_item_id = created["inventory_item_id"]
                 step = "create_product"
-                db.set_upload_step(self.db_file, attempt, step)
-                created = self.client.create_draft_product(item)
-                product_id = created["product_id"]
-                variant_id = created["variant_id"]
-                inventory_item_id = created["inventory_item_id"]
-                db.save_shopify_checkpoint(
-                    self.db_file, item_id_value, "PRODUCT_CREATED",
-                    product_id=product_id, variant_id=variant_id,
+                self._checkpoint(
+                    item_id,
+                    step,
+                    product_id=product_id,
+                    variant_id=variant_id,
                     inventory_item_id=inventory_item_id,
                 )
 
-            step = "configure_variant"
-            db.set_upload_step(self.db_file, attempt, step)
-            self.client.configure_variant(item, product_id, variant_id)
-            db.save_shopify_checkpoint(self.db_file, item_id_value, "VARIANT_CONFIGURED")
+            if order.get(step, 0) < order["configure_variant"]:
+                self.client.configure_variant(item, product_id, variant_id)
+                step = "configure_variant"
+                self._checkpoint(item_id, step)
 
-            step = "activate_inventory"
-            db.set_upload_step(self.db_file, attempt, step)
-            key = str(uuid.uuid5(uuid.NAMESPACE_URL, f"snapims:{item_id_value}:inventory"))
-            self.client.activate_inventory(inventory_item_id, int(item["quantity"]), key)
-            db.save_shopify_checkpoint(
-                self.db_file, item_id_value, "INVENTORY_SET", idempotency_key=key
+            if order.get(step, 0) < order["activate_inventory"]:
+                desired_quantity = int(item["quantity"])
+                current_quantity = self.client.inventory_quantity(inventory_item_id)
+                if current_quantity != desired_quantity:
+                    self.client.activate_inventory(inventory_item_id, desired_quantity)
+                step = "activate_inventory"
+                self._checkpoint(
+                    item_id,
+                    step,
+                    idempotency_key=str(
+                        uuid.uuid5(uuid.NAMESPACE_URL, f"snapims:{item_id}:inventory")
+                    ),
+                )
+
+            if order.get(step, 0) < order["attach_media"]:
+                statuses = self.client.media_status(product_id)
+                remote_media_exists = len(statuses) >= len(image_paths) and not any(
+                    status in {"FAILED", "ERROR"} for status in statuses
+                )
+                if not remote_media_exists:
+                    targets = self.client.stage_images(image_paths)
+                    urls = self.client.upload_staged_images(image_paths, targets)
+                    self.client.attach_media(product_id, urls, item["title"])
+                step = "attach_media"
+                self._checkpoint(item_id, step)
+
+            deadline = time.monotonic() + media_timeout
+            while time.monotonic() < deadline:
+                statuses = self.client.media_status(product_id)
+                if len(statuses) >= len(image_paths) and all(
+                    status == "READY" for status in statuses[: len(image_paths)]
+                ):
+                    break
+                if any(status in {"FAILED", "ERROR"} for status in statuses):
+                    raise RuntimeError(f"Shopify media processing failed: {statuses}")
+                time.sleep(max(0, poll_interval))
+            else:
+                raise TimeoutError("Shopify media did not reach READY before timeout")
+
+            admin_url = (
+                f"https://{self.config.store_domain}/admin/products/"
+                f"{product_id.rsplit('/', 1)[-1]}"
             )
-
-            step = "stage_images"
-            db.set_upload_step(self.db_file, attempt, step)
-            targets = self.client.stage_images(image_paths)
-            resource_urls = self.client.upload_staged_images(image_paths, targets)
-
-            step = "attach_media"
-            db.set_upload_step(self.db_file, attempt, step)
-            self.client.attach_media(product_id, resource_urls, item["title"])
-            db.save_shopify_checkpoint(self.db_file, item_id_value, "MEDIA_ATTACHED")
-
-            numeric_product_id = product_id.rsplit("/", 1)[-1]
-            admin_url = f"https://{self.config.store_domain}/admin/products/{numeric_product_id}"
             result = {
-                "product_id": product_id, "variant_id": variant_id,
-                "inventory_item_id": inventory_item_id, "admin_url": admin_url,
-                "image_count": len(image_paths), "status": "UPLOADED_AS_DRAFT",
+                "product_id": product_id,
+                "variant_id": variant_id,
+                "inventory_item_id": inventory_item_id,
+                "admin_url": admin_url,
+                "image_count": len(image_paths),
+                "status": "UPLOADED_AS_DRAFT",
             }
-            db.finish_upload_success(
-                self.db_file, attempt, item_id_value, product_id=product_id,
-                variant_id=variant_id, inventory_item_id=inventory_item_id,
-                admin_url=admin_url, response=result,
-            )
+            with db.transaction(self.db_file) as connection:
+                connection.execute(
+                    "UPDATE upload_attempts SET finished_at=?,status='SUCCESS',step=?,response_json=? WHERE attempt_id=?",
+                    (db.now(), step, __import__("json").dumps(result), attempt),
+                )
+                connection.execute(
+                    "UPDATE items SET upload_status='UPLOADED',shopify_product_id=?,shopify_variant_id=?,shopify_inventory_item_id=?,shopify_admin_url=?,last_error='',updated_at=? WHERE item_id=?",
+                    (product_id, variant_id, inventory_item_id, admin_url, db.now(), item_id),
+                )
+                connection.execute(
+                    "UPDATE shopify_sync SET status='UPLOADED',product_id=?,variant_id=?,inventory_item_id=?,admin_url=?,media_count=?,last_synced_at=?,last_error='',last_completed_step='complete' WHERE item_id=?",
+                    (product_id, variant_id, inventory_item_id, admin_url, len(image_paths), db.now(), item_id),
+                )
             return result
         except Exception as exc:
-            db.finish_upload_failure(self.db_file, attempt, item_id_value, step, str(exc))
+            with db.transaction(self.db_file) as connection:
+                connection.execute(
+                    "UPDATE upload_attempts SET finished_at=?,status='FAILED',step=?,error=? WHERE attempt_id=?",
+                    (db.now(), step, str(exc), attempt),
+                )
+                connection.execute(
+                    "UPDATE items SET upload_status='FAILED',last_error=?,retry_count=retry_count+1,updated_at=? WHERE item_id=?",
+                    (str(exc), db.now(), item_id),
+                )
+                connection.execute(
+                    "UPDATE shopify_sync SET status='FAILED',last_error=?,retry_count=retry_count+1 WHERE item_id=?",
+                    (str(exc), item_id),
+                )
             raise
+
+    def _checkpoint(self, item_id: str, step: str, *, product_id: str = "", variant_id: str = "", inventory_item_id: str = "", idempotency_key: str = "") -> None:
+        with db.transaction(self.db_file) as connection:
+            connection.execute(
+                """UPDATE items SET upload_status=?,shopify_product_id=CASE WHEN ?='' THEN shopify_product_id ELSE ? END,shopify_variant_id=CASE WHEN ?='' THEN shopify_variant_id ELSE ? END,shopify_inventory_item_id=CASE WHEN ?='' THEN shopify_inventory_item_id ELSE ? END,updated_at=? WHERE item_id=?""",
+                (step.upper(), product_id, product_id, variant_id, variant_id, inventory_item_id, inventory_item_id, db.now(), item_id),
+            )
+            connection.execute(
+                """UPDATE shopify_sync SET status=?,product_id=CASE WHEN ?='' THEN product_id ELSE ? END,variant_id=CASE WHEN ?='' THEN variant_id ELSE ? END,inventory_item_id=CASE WHEN ?='' THEN inventory_item_id ELSE ? END,idempotency_key=CASE WHEN ?='' THEN idempotency_key ELSE ? END,last_completed_step=? WHERE item_id=?""",
+                (step.upper(), product_id, product_id, variant_id, variant_id, inventory_item_id, inventory_item_id, idempotency_key, idempotency_key, step, item_id),
+            )

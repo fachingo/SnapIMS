@@ -3,46 +3,26 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
-
-TimestampSource = Literal[
-    "exif_original",
-    "exif_digitized",
-    "exif_datetime",
-    "filename",
-    "filesystem_mtime",
-]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class PhotoRecord:
     path: Path
-    captured_at: datetime
-    timestamp_source: TimestampSource
     original_name: str
-    sequence_hint: int | None = None
+    captured_at: datetime
+    timestamp_source: str
+    stream_index: int
+    sha256: str = ""
     qr_payload: str | None = None
-    stream_index: int = 0
-    sha256: str | None = None
-
-    @property
-    def is_command(self) -> bool:
-        return self.qr_payload is not None
 
 
 @dataclass(slots=True)
 class ItemRecord:
     sequence: int
     shelf: str
-    photos: list[PhotoRecord] = field(default_factory=list)
     rare: bool = False
     review: bool = False
-
-    @property
-    def front(self) -> PhotoRecord:
-        if not self.photos:
-            raise ValueError("Item has no product photographs.")
-        return self.photos[0]
+    photos: list[PhotoRecord] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -51,12 +31,12 @@ class BatchRecord:
     source_folder: Path
     created_at: datetime
     source_fingerprint: str = ""
+    started: bool = False
+    ended: bool = False
     items: list[ItemRecord] = field(default_factory=list)
     commands: list[PhotoRecord] = field(default_factory=list)
     source_photos: list[PhotoRecord] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    started: bool = False
-    ended: bool = False
 
     @property
     def photo_count(self) -> int:
@@ -67,7 +47,7 @@ class BatchRecord:
 class ProcessedPhoto:
     item_id: str | None
     source: PhotoRecord
-    kind: Literal["product", "command", "excluded"]
+    kind: str
     proposed_name: str
     original_copy_path: Path
     processed_path: Path | None = None

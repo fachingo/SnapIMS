@@ -36,8 +36,14 @@ class DataPaths:
 
     def ensure(self) -> DataPaths:
         for folder in (
-            self.root, self.incoming, self.originals, self.processed,
-            self.database, self.exports, self.backups, self.logs,
+            self.root,
+            self.incoming,
+            self.originals,
+            self.processed,
+            self.database,
+            self.exports,
+            self.backups,
+            self.logs,
         ):
             folder.mkdir(parents=True, exist_ok=True)
         return self
@@ -66,12 +72,12 @@ class ShopifyConfig:
         problems: list[str] = []
         if not self.store_domain or not self.store_domain.endswith(".myshopify.com"):
             problems.append("SHOPIFY_STORE_DOMAIN must end in .myshopify.com")
-        if not self.access_token or self.access_token == "shpat_replace_me":
+        if not self.access_token:
             problems.append("SHOPIFY_ADMIN_ACCESS_TOKEN is not configured")
         if not self.location_id.startswith("gid://shopify/Location/"):
             problems.append("SHOPIFY_LOCATION_ID is not a Shopify Location GID")
         if not re.fullmatch(r"\d{4}-\d{2}", self.api_version):
             problems.append("SHOPIFY_API_VERSION must look like 2026-07")
         if not self.draft_only:
-            problems.append("This prototype permits Shopify draft-only mode")
+            problems.append("SnapIMS v0.5.1 permits Shopify draft-only mode")
         return problems

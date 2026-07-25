@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}SnapIMS{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <script defer src="{{ url_for('static', path='app.js') }}"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">SnapIMS <span>v{{ version }}</span></a>
+    <nav>
+      <a href="/">Home</a><a href="/import">Import</a><a href="/review">Review</a><a href="/publish">Publish</a><a href="/settings">Settings</a><a href="/diagnostics">Diagnostics</a>
+    </nav>
+  </header>
+  <main class="page">{% block content %}{% endblock %}</main>
+  <footer>SnapIMS {{ version }} · Local inventory ingestion</footer>
+</body>
+</html>

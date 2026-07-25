@@ -21,29 +21,23 @@ class ShopifyTransport(Protocol):
 
 
 class HTTPShopifyTransport:
-    def __init__(self, config: ShopifyConfig, timeout: int = 60):
+    def __init__(self, config: ShopifyConfig, timeout: int = 60) -> None:
         self.config = config
         self.timeout = timeout
-        self.endpoint = (
-            f"https://{config.store_domain}/admin/api/{config.api_version}/graphql.json"
-        )
+        self.endpoint = f"https://{config.store_domain}/admin/api/{config.api_version}/graphql.json"
 
     def graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
         request = urllib.request.Request(
             self.endpoint,
-            data=json.dumps({"query": query, "variables": variables}).encode("utf-8"),
+            data=json.dumps({"query": query, "variables": variables}).encode(),
             method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "X-Shopify-Access-Token": self.config.access_token,
-                "User-Agent": "SnapIMS/0.3",
-            },
+            headers={"Content-Type": "application/json", "X-Shopify-Access-Token": self.config.access_token, "User-Agent": "SnapIMS/0.5.1"},
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
+                return json.loads(response.read().decode())
         except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")[:1000]
+            body = exc.read().decode(errors="replace")[:1000]
             raise ShopifyAPIError(f"Shopify HTTP {exc.code}: {body}") from exc
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise ShopifyAPIError(f"Shopify connection failed: {exc}") from exc
@@ -53,25 +47,16 @@ class HTTPShopifyTransport:
         body = bytearray()
         for parameter in parameters:
             body.extend(f"--{boundary}\r\n".encode())
-            body.extend(
-                f'Content-Disposition: form-data; name="{parameter["name"]}"\r\n\r\n'.encode()
-            )
+            body.extend(f'Content-Disposition: form-data; name="{parameter["name"]}"\r\n\r\n'.encode())
             body.extend(parameter["value"].encode())
             body.extend(b"\r\n")
-        mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        mime = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
         body.extend(f"--{boundary}\r\n".encode())
-        body.extend(
-            f'Content-Disposition: form-data; name="file"; filename="{file_path.name}"\r\n'.encode()
-        )
-        body.extend(f"Content-Type: {mime_type}\r\n\r\n".encode())
+        body.extend(f'Content-Disposition: form-data; name="file"; filename="{file_path.name}"\r\n'.encode())
+        body.extend(f"Content-Type: {mime}\r\n\r\n".encode())
         body.extend(file_path.read_bytes())
         body.extend(f"\r\n--{boundary}--\r\n".encode())
-        request = urllib.request.Request(
-            url,
-            data=bytes(body),
-            method="POST",
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-        )
+        request = urllib.request.Request(url, data=bytes(body), method="POST", headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 if response.status not in {200, 201, 204}:
@@ -81,9 +66,7 @@ class HTTPShopifyTransport:
 
 
 class ShopifyClient:
-    def __init__(
-        self, config: ShopifyConfig, transport: ShopifyTransport | None = None
-    ) -> None:
+    def __init__(self, config: ShopifyConfig, transport: ShopifyTransport | None = None) -> None:
         self.config = config
         self.transport = transport or HTTPShopifyTransport(config)
 
@@ -96,143 +79,71 @@ class ShopifyClient:
             raise ShopifyAPIError(f"Shopify response did not contain {field}")
         user_errors = data.get("userErrors") or []
         if user_errors:
-            raise ShopifyAPIError(
-                "; ".join(error.get("message", "Shopify user error") for error in user_errors)
-            )
+            raise ShopifyAPIError("; ".join(error.get("message", "Shopify user error") for error in user_errors))
         return data
-
-    def shop_identity(self) -> dict[str, Any]:
-        payload = self.transport.graphql(
-            "query ShopIdentity { shop { id name myshopifyDomain } }", {}
-        )
-        if payload.get("errors"):
-            raise ShopifyAPIError(payload["errors"][0].get("message", "GraphQL error"))
-        return payload["data"]["shop"]
-
-    def locations(self) -> list[dict[str, Any]]:
-        payload = self.transport.graphql(
-            "query Locations { locations(first: 50) { nodes { id name isActive } } }", {}
-        )
-        if payload.get("errors"):
-            raise ShopifyAPIError(payload["errors"][0].get("message", "GraphQL error"))
-        return payload["data"]["locations"]["nodes"]
 
     def find_variant_by_sku(self, sku: str) -> dict[str, Any] | None:
         payload = self.transport.graphql(
-            """
-            query VariantBySku($query: String!) {
-              productVariants(first: 2, query: $query) {
-                nodes { id sku inventoryItem { id } product { id title status } }
-              }
-            }
-            """,
+            """query VariantBySku($query:String!){productVariants(first:2,query:$query){nodes{id sku inventoryItem{id} product{id title status}}}}""",
             {"query": f"sku:{sku}"},
         )
-        if payload.get("errors"):
-            raise ShopifyAPIError(payload["errors"][0].get("message", "GraphQL error"))
-        nodes = payload["data"]["productVariants"]["nodes"]
+        nodes = payload.get("data", {}).get("productVariants", {}).get("nodes", [])
         return nodes[0] if nodes else None
 
     def create_draft_product(self, item: dict[str, Any]) -> dict[str, str]:
         data = self._call(
-            """
-            mutation CreateDraft($product: ProductCreateInput!) {
-              productCreate(product: $product) {
-                product {
-                  id handle
-                  variants(first: 1) { nodes { id inventoryItem { id } } }
-                }
-                userErrors { field message }
-              }
-            }
-            """,
-            {
-                "product": {
-                    "title": item["title"], "descriptionHtml": item["description"],
-                    "vendor": item["vendor"], "productType": item["product_type"],
-                    "tags": [tag.strip() for tag in item["tags"].split(",") if tag.strip()],
-                    "status": "DRAFT",
-                }
-            },
+            """mutation CreateDraft($product:ProductCreateInput!){productCreate(product:$product){product{id variants(first:1){nodes{id inventoryItem{id}}}} userErrors{field message}}}""",
+            {"product": {"title": item["title"], "descriptionHtml": item["description"], "vendor": item["vendor"], "productType": item["product_type"], "tags": [tag.strip() for tag in item["tags"].split(",") if tag.strip()], "status": "DRAFT"}},
             "productCreate",
         )
         product = data["product"]
         variant = product["variants"]["nodes"][0]
-        return {
-            "product_id": product["id"], "variant_id": variant["id"],
-            "inventory_item_id": variant["inventoryItem"]["id"],
-        }
+        return {"product_id": product["id"], "variant_id": variant["id"], "inventory_item_id": variant["inventoryItem"]["id"]}
 
     def configure_variant(self, item: dict[str, Any], product_id: str, variant_id: str) -> None:
+        price = int(item["price_cents"])
+        discount = float(item.get("discount_percent") or 0)
+        final_price = price * (1 - discount / 100)
         variant: dict[str, Any] = {
             "id": variant_id,
-            "price": f"{item['price_cents'] / 100:.2f}",
+            "price": f"{final_price / 100:.2f}",
             "taxable": True,
-            "inventoryItem": {
-                "sku": item["sku"], "tracked": True, "requiresShipping": True,
-            },
+            "inventoryItem": {"sku": item["sku"], "tracked": True, "requiresShipping": True},
         }
         if item["barcode"]:
             variant["barcode"] = item["barcode"]
         self._call(
-            """
-            mutation ConfigureVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-              productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-                productVariants { id inventoryItem { id tracked sku } price barcode }
-                userErrors { field message }
-              }
-            }
-            """,
+            """mutation ConfigureVariant($productId:ID!,$variants:[ProductVariantsBulkInput!]!){productVariantsBulkUpdate(productId:$productId,variants:$variants){productVariants{id} userErrors{field message}}}""",
             {"productId": product_id, "variants": [variant]},
             "productVariantsBulkUpdate",
         )
 
-    def activate_inventory(
-        self, inventory_item_id: str, quantity: int, idempotency_key: str
-    ) -> None:
+    def activate_inventory(self, inventory_item_id: str, quantity: int) -> None:
         self._call(
-            """
-            mutation ActivateInventory(
-              $inventoryItemId: ID!, $locationId: ID!, $available: Int!, $key: String!
-            ) {
-              inventoryActivate(
-                inventoryItemId: $inventoryItemId,
-                locationId: $locationId,
-                available: $available
-              ) @idempotent(key: $key) {
-                inventoryLevel { id quantities(names: ["available"]) { name quantity } }
-                userErrors { field message }
-              }
-            }
-            """,
-            {
-                "inventoryItemId": inventory_item_id,
-                "locationId": self.config.location_id,
-                "available": quantity,
-                "key": idempotency_key,
-            },
+            """mutation ActivateInventory($inventoryItemId:ID!,$locationId:ID!,$available:Int!){inventoryActivate(inventoryItemId:$inventoryItemId,locationId:$locationId,available:$available){inventoryLevel{id} userErrors{field message}}}""",
+            {"inventoryItemId": inventory_item_id, "locationId": self.config.location_id, "available": quantity},
             "inventoryActivate",
         )
 
+
+    def inventory_quantity(self, inventory_item_id: str) -> int | None:
+        payload = self.transport.graphql(
+            """query InventoryQuantity($id:ID!){inventoryItem(id:$id){inventoryLevels(first:50){nodes{location{id} quantities(names:[\"available\"]){name quantity}}}}}""",
+            {"id": inventory_item_id},
+        )
+        nodes = payload.get("data", {}).get("inventoryItem", {}).get("inventoryLevels", {}).get("nodes", [])
+        for node in nodes:
+            if node.get("location", {}).get("id") != self.config.location_id:
+                continue
+            for quantity in node.get("quantities", []):
+                if quantity.get("name") == "available":
+                    return int(quantity.get("quantity", 0))
+        return None
+
     def stage_images(self, image_paths: list[Path]) -> list[dict[str, Any]]:
-        inputs = [
-            {
-                "filename": path.name,
-                "mimeType": mimetypes.guess_type(path.name)[0] or "image/jpeg",
-                "httpMethod": "POST",
-                "resource": "PRODUCT_IMAGE",
-            }
-            for path in image_paths
-        ]
+        inputs = [{"filename": path.name, "mimeType": mimetypes.guess_type(path.name)[0] or "image/jpeg", "httpMethod": "POST", "resource": "PRODUCT_IMAGE"} for path in image_paths]
         data = self._call(
-            """
-            mutation StageImages($input: [StagedUploadInput!]!) {
-              stagedUploadsCreate(input: $input) {
-                stagedTargets { url resourceUrl parameters { name value } }
-                userErrors { field message }
-              }
-            }
-            """,
+            """mutation StageImages($input:[StagedUploadInput!]!){stagedUploadsCreate(input:$input){stagedTargets{url resourceUrl parameters{name value}} userErrors{field message}}}""",
             {"input": inputs},
             "stagedUploadsCreate",
         )
@@ -241,30 +152,23 @@ class ShopifyClient:
             raise ShopifyAPIError("Shopify returned the wrong number of staged upload targets")
         return targets
 
-    def upload_staged_images(
-        self, image_paths: list[Path], targets: list[dict[str, Any]]
-    ) -> list[str]:
+    def upload_staged_images(self, image_paths: list[Path], targets: list[dict[str, Any]]) -> list[str]:
         for path, target in zip(image_paths, targets, strict=True):
             self.transport.upload(target["url"], target["parameters"], path)
         return [target["resourceUrl"] for target in targets]
 
     def attach_media(self, product_id: str, resource_urls: list[str], title: str) -> None:
-        media = [
-            {
-                "originalSource": url, "alt": f"{title} - image {index}",
-                "mediaContentType": "IMAGE",
-            }
-            for index, url in enumerate(resource_urls, start=1)
-        ]
+        media = [{"originalSource": url, "alt": f"{title} - image {index}", "mediaContentType": "IMAGE"} for index, url in enumerate(resource_urls, start=1)]
         self._call(
-            """
-            mutation AttachMedia($product: ProductUpdateInput!, $media: [CreateMediaInput!]) {
-              productUpdate(product: $product, media: $media) {
-                product { id media(first: 100) { nodes { id preview { status } } } }
-                userErrors { field message }
-              }
-            }
-            """,
+            """mutation AttachMedia($product:ProductUpdateInput!,$media:[CreateMediaInput!]){productUpdate(product:$product,media:$media){product{id} userErrors{field message}}}""",
             {"product": {"id": product_id}, "media": media},
             "productUpdate",
         )
+
+    def media_status(self, product_id: str) -> list[str]:
+        payload = self.transport.graphql(
+            """query MediaStatus($id:ID!){product(id:$id){media(first:100){nodes{preview{status}}}}}""",
+            {"id": product_id},
+        )
+        nodes = payload.get("data", {}).get("product", {}).get("media", {}).get("nodes", [])
+        return [str(node.get("preview", {}).get("status", "UNKNOWN")) for node in nodes]

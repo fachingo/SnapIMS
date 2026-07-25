@@ -17,7 +17,7 @@ def copy_original(source: Path, destination: Path, expected_sha256: str | None =
     if destination.exists():
         if expected_sha256 and sha256_file(destination) == expected_sha256:
             return destination
-        raise FileExistsError(f"Refusing to overwrite an existing original: {destination}")
+        raise FileExistsError(f"Refusing to overwrite existing original: {destination}")
     shutil.copy2(source, destination)
     if expected_sha256 and sha256_file(destination) != expected_sha256:
         destination.unlink(missing_ok=True)
@@ -26,22 +26,17 @@ def copy_original(source: Path, destination: Path, expected_sha256: str | None =
 
 
 def create_safe_jpeg(source: Path, destination: Path, *, max_dimension: int | None = None) -> Path:
-    """Create an oriented RGB JPEG without carrying EXIF/GPS metadata forward."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists():
-        try:
-            with Image.open(destination) as existing:
-                existing.verify()
-            return destination
-        except OSError as exc:
-            raise FileExistsError(f"Existing processed image is invalid: {destination}") from exc
+        with Image.open(destination) as existing:
+            existing.verify()
+        return destination
     try:
         with Image.open(source) as opened:
             image = ImageOps.exif_transpose(opened)
             if image.mode in {"RGBA", "LA"}:
                 background = Image.new("RGB", image.size, "white")
-                alpha = image.getchannel("A")
-                background.paste(image.convert("RGB"), mask=alpha)
+                background.paste(image.convert("RGB"), mask=image.getchannel("A"))
                 image = background
             elif image.mode != "RGB":
                 image = image.convert("RGB")

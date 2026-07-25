@@ -1,0 +1,5 @@
+858b45eec6b0173b01aa3cd0897fade274f8cea55eebcae7caf7dd34abb83a46  SnapIMS_Operator_Guide.docx
+e251ad65848955faa8cc5f9a465a79a8c9a10e903bf519f42b5acc532ffa1c77  SnapIMS_Operator_Guide.pdf
+7e1eac8924029c68580e425d2dabc94e447c551e59337b6f45bcdc9b45c0a742  operator-audit-assets/v0.5.1-browser/browser-metrics.json
+1533bded8d04bae95cd8ce1fc0e2a42ccf7855465b5bc1024b4fbe1a71f5bd0a  operator-audit-assets/v0.5.1-browser/inventory_work-browser-download.csv
+7e1eac8924029c68580e425d2dabc94e447c551e59337b6f45bcdc9b45c0a742  operator-audit-assets/v0.5.1-browser/native-browser-results.json
