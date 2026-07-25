@@ -62,6 +62,9 @@ def _clean_wiki_value(value: str) -> str:
     text = text.replace("{{end plainlist}}", "")
     text = re.sub(r"\[\[(?:[^\]|]+\|)?([^\]]+)\]\]", r"\1", text)
     text = re.sub(r"\{\{[^{}]*\}\}", "", text)
+    # The closing braces of an infobox may be appended to the final field
+    # value by the line-oriented parser. They are markup, never metadata.
+    text = re.sub(r"\s*\}\}\s*$", "", text)
     text = re.sub(r"<[^>]+>", " ", text)
     text = html.unescape(text)
     text = re.sub(r"\s+", " ", text)

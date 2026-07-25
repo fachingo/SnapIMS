@@ -186,6 +186,19 @@ def test_wikipedia_fixture_parses_film_metadata(data_paths) -> None:
     assert movie.source_revision_id == "123456"
 
 
+def test_wikipedia_final_infobox_field_does_not_include_closing_markup(data_paths) -> None:
+    catalog_db.initialize(data_paths.catalog_db_file, paths=data_paths)
+    client = WikipediaClient(
+        data_paths.catalog_db_file,
+        transport=FixtureTransport(Path("tests/fixtures/wikipedia")),
+        min_interval=0,
+        max_retries=0,
+    )
+    movies = client.search_candidates("Demo VHS 002", 1992)
+    assert len(movies) == 1
+    assert movies[0].languages == ("English",)
+
+
 def test_wikipedia_nonfilm_contamination_is_rejected(data_paths) -> None:
     catalog_db.initialize(data_paths.catalog_db_file, paths=data_paths)
     client = WikipediaClient(
