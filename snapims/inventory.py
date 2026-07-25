@@ -3,16 +3,18 @@ from __future__ import annotations
 import csv
 import json
 from datetime import datetime
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from snapims import db
 from snapims.config import DataPaths
+from snapims.money import MoneyValueError, format_price_cents, parse_discount_percent, parse_price_cents
 from snapims.protocol import LOCATION_RE
 
 CONDITIONS = ("Not Graded", "Fair", "Good", "Very Good", "Like New", "Sealed", "Damaged", "Mold Review")
 POOL_MODES = ("POOLED", "UNIQUE")
+MAX_CSV_ROWS = 10_000
 CSV_FIELDS = (
     "Item ID", "SKU", "Batch ID", "Shelf", "Sequence", "Rare flag", "Review flag",
     "Title", "Release year", "Edition", "Distributor", "Barcode", "Condition",
@@ -42,18 +44,14 @@ def _parse_bool(value: str) -> int:
 
 
 def _price_to_cents(value: str) -> int | None:
-    cleaned = value.strip().replace("$", "").replace(",", "")
-    if not cleaned:
-        return None
     try:
-        amount = Decimal(cleaned).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    except InvalidOperation as exc:
-        raise CSVImportError(f"Invalid price: {value!r}") from exc
-    return int(amount * 100)
+        return parse_price_cents(value)
+    except MoneyValueError as exc:
+        raise CSVImportError(str(exc)) from exc
 
 
 def _price_text(cents: int | None) -> str:
-    return "" if cents is None else f"{Decimal(cents) / 100:.2f}"
+    return format_price_cents(cents)
 
 
 def validation_errors(item: dict[str, Any], photos: list[dict[str, Any]]) -> list[str]:
@@ -64,9 +62,10 @@ def validation_errors(item: dict[str, Any], photos: list[dict[str, Any]]) -> lis
         errors.append("Title must be 255 characters or fewer")
     if item.get("price_cents") is None or int(item["price_cents"]) <= 0:
         errors.append("Price must be greater than zero")
-    discount = float(item.get("discount_percent") or 0)
-    if not 0 <= discount <= 100:
-        errors.append("Discount must be between 0 and 100 percent")
+    try:
+        parse_discount_percent(item.get("discount_percent") or 0)
+    except MoneyValueError as exc:
+        errors.append(str(exc))
     if int(item.get("quantity") or 0) < 0:
         errors.append("Quantity cannot be negative")
     if item.get("condition") not in CONDITIONS:
@@ -163,7 +162,7 @@ COLUMN_MAP: dict[str, tuple[str, Any]] = {
     "Condition": ("condition", lambda value: value.strip() or "Not Graded"),
     "Condition notes": ("condition_notes", str.strip),
     "Price": ("price_cents", _price_to_cents),
-    "Discount percent": ("discount_percent", lambda value: float(value.strip() or 0)),
+    "Discount percent": ("discount_percent", parse_discount_percent),
     "Quantity": ("quantity", int),
     "Tags": ("tags", str.strip),
     "Product type": ("product_type", lambda value: value.strip() or "VHS Tape"),
@@ -186,6 +185,8 @@ def import_inventory_csv(db_file: Path, csv_path: Path, *, paths: DataPaths | No
         if not editable_columns:
             raise CSVImportError("CSV contains no editable SnapIMS columns")
         rows = list(reader)
+    if len(rows) > MAX_CSV_ROWS:
+        raise CSVImportError(f"CSV exceeds the {MAX_CSV_ROWS:,}-row safety limit")
     identifiers = [row["Item ID"].strip() for row in rows]
     if any(not identifier for identifier in identifiers):
         raise CSVImportError("Every CSV row must contain an Item ID.")
@@ -203,30 +204,27 @@ def import_inventory_csv(db_file: Path, csv_path: Path, *, paths: DataPaths | No
         for column in editable_columns:
             try:
                 updates[COLUMN_MAP[column][0]] = COLUMN_MAP[column][1](row.get(column, ""))
-            except (ValueError, TypeError) as exc:
+            except (ValueError, TypeError, CSVImportError, MoneyValueError) as exc:
                 raise CSVImportError(f"Invalid {column} for {item_id}") from exc
-        prepared.append((item_id, updates, current[item_id]))
-    timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
-    with db.transaction(db_file) as connection:
-        for item_id, updates, previous in prepared:
-            assignments = ",".join(f"{field}=?" for field in updates)
-            connection.execute(
-                f"UPDATE items SET {assignments},updated_at=?,record_revision=record_revision+1 WHERE item_id=?",
-                [*updates.values(), timestamp, item_id],
+        candidate = {**current[item_id], **updates}
+        errors = validation_errors(candidate, db.get_item_photos(db_file, item_id))
+        updates["validation_status"] = (
+            "READY" if candidate.get("ready") and not errors else (
+                "BLOCKED" if candidate.get("ready") else "INCOMPLETE"
             )
-            if "shelf" in updates and updates["shelf"] != previous["shelf"]:
-                connection.execute(
-                    """INSERT INTO inventory_events(item_id,batch_id,occurred_at,event_type,from_location,to_location,source,notes)
-                       VALUES(?,?,?,'LOCATION_CHANGED',?,?, 'CSV_IMPORT','CSV import')""",
-                    (item_id, previous["batch_id"], timestamp, previous["shelf"], updates["shelf"]),
-                )
-            if "quantity" in updates and int(updates["quantity"]) != int(previous["quantity"]):
-                connection.execute(
-                    """INSERT INTO inventory_events(item_id,batch_id,occurred_at,event_type,to_location,quantity_delta,source,notes)
-                       VALUES(?,?,?,'QUANTITY_ADJUSTED',?,?,'CSV_IMPORT','CSV import')""",
-                    (item_id, previous["batch_id"], timestamp, updates.get("shelf", previous["shelf"]), int(updates["quantity"]) - int(previous["quantity"])),
-                )
-    validate_items(db_file, identifiers)
+        )
+        updates["validation_errors"] = json.dumps(errors)
+        updates["working_source"] = "CSV_IMPORT"
+        prepared.append((item_id, updates, current[item_id]))
+    with db.transaction(db_file) as connection:
+        for item_id, updates, _previous in prepared:
+            db.update_item_in_connection(
+                connection,
+                item_id,
+                updates,
+                source="CSV_IMPORT",
+                reason=f"CSV import: {csv_path.name}",
+            )
     return len(prepared)
 
 
@@ -248,6 +246,10 @@ def preview_inventory_csv(
         return [], {"total_rows": 0, "matched": 0, "changed": 0}, blocking
 
     rows = list(reader)
+    if len(rows) > MAX_CSV_ROWS:
+        return [], {"total_rows": len(rows), "matched": 0, "changed": 0}, [
+            f"CSV exceeds the {MAX_CSV_ROWS:,}-row safety limit"
+        ]
     identifiers = [str(row.get("Item ID") or "").strip() for row in rows]
     if any(not identifier for identifier in identifiers):
         blocking.append("Every CSV row must contain an Item ID.")
@@ -367,45 +369,102 @@ def apply_staged_csv(
     token: str,
     *,
     paths: DataPaths | None = None,
+    fail_after: int | None = None,
 ) -> tuple[str, int, int]:
     stage = db.get_csv_staging(db_file, token)
     if stage is None:
-        raise CSVImportError("CSV preview expired or no longer exists")
+        raise CSVImportError("CSV preview expired, was cancelled, was already applied, or no longer exists")
     if stage["blocking_errors"]:
         raise CSVImportError("Resolve blocking CSV errors before applying changes")
     batch_id = str(stage["batch_id"])
-    if paths:
-        db.backup_database(paths, "before-csv-apply")
-    checkpoint_id = db.create_batch_checkpoint(
-        db_file,
-        batch_id,
-        reason=f"Before CSV upload {stage['filename']}",
-        source="CSV_UPLOAD",
-    )
-    changed = 0
-    identifiers: list[str] = []
+    current = {item["item_id"]: item for item in db.list_items(db_file, batch_id=batch_id)}
+    prepared: list[tuple[str, dict[str, Any], list[str]]] = []
     for row in stage["payload"]:
         if row["errors"] or not row["updates"]:
             continue
-        item_id = row["item_id"]
-        identifiers.append(item_id)
+        item_id = str(row["item_id"])
+        item = current.get(item_id)
+        if item is None:
+            raise CSVImportError(f"Item no longer belongs to this batch: {item_id}")
+        for change in row.get("changes", []):
+            field = str(change["field"])
+            if item.get(field) != change.get("old"):
+                raise CSVImportError(
+                    f"{item_id} changed after the CSV preview. Generate a new difference preview."
+                )
         updates = dict(row["updates"])
         updates["working_source"] = "CSV_UPLOAD"
-        db.update_item(
-            db_file,
-            item_id,
-            updates,
-            source="CSV_UPLOAD",
-            reason=f"CSV upload: {stage['filename']}",
+        candidate = {**item, **updates}
+        errors = validation_errors(candidate, db.get_item_photos(db_file, item_id))
+        status = "READY" if candidate.get("ready") and not errors else (
+            "BLOCKED" if candidate.get("ready") else "INCOMPLETE"
         )
-        if row["changes"]:
-            changed += 1
-    validate_items(db_file, identifiers)
-    db.delete_csv_staging(db_file, token)
-    return batch_id, changed, checkpoint_id
+        updates["validation_status"] = status
+        updates["validation_errors"] = json.dumps(errors)
+        prepared.append((item_id, updates, errors))
+    if paths:
+        db.backup_database(paths, "before-csv-apply")
+    changed = 0
+    request_id = f"csv:{token}"
+    try:
+        with db.transaction(db_file) as connection:
+            timestamp = db.now()
+            connection.execute(
+                """INSERT INTO operation_requests(
+                       request_id,operation_type,batch_id,status,result_json,error_message,
+                       created_at,updated_at,completed_at
+                   ) VALUES(?,?,?,'RUNNING','{}','',?,?,NULL)
+                   ON CONFLICT(request_id) DO UPDATE SET
+                       status='RUNNING',error_message='',updated_at=excluded.updated_at,completed_at=NULL""",
+                (request_id, "CSV_APPLY", batch_id, timestamp, timestamp),
+            )
+            checkpoint_id = db.create_batch_checkpoint_in_connection(
+                connection,
+                batch_id,
+                reason=f"Before CSV upload {stage['filename']}",
+                source="CSV_UPLOAD",
+            )
+            for item_id, updates, _errors in prepared:
+                db.update_item_in_connection(
+                    connection,
+                    item_id,
+                    updates,
+                    source="CSV_UPLOAD",
+                    reason=f"CSV upload: {stage['filename']}",
+                )
+                changed += 1
+                if fail_after is not None and changed >= fail_after:
+                    raise RuntimeError(f"Injected CSV failure after {changed} item(s)")
+            db.mark_csv_staging_applied_in_connection(connection, token)
+            completed = db.now()
+            connection.execute(
+                "UPDATE operation_requests SET status='SUCCESS',result_json=?,updated_at=?,completed_at=? "
+                "WHERE request_id=?",
+                (json.dumps({"changed": changed, "checkpoint_id": checkpoint_id}), completed, completed, request_id),
+            )
+        return batch_id, changed, checkpoint_id
+    except Exception as exc:
+        timestamp = db.now()
+        with db.transaction(db_file) as connection:
+            connection.execute(
+                """INSERT INTO operation_requests(
+                       request_id,operation_type,batch_id,status,result_json,error_message,
+                       created_at,updated_at,completed_at
+                   ) VALUES(?,?,?,'FAILED','{}',?,?,?,?)
+                   ON CONFLICT(request_id) DO UPDATE SET
+                       status='FAILED',error_message=excluded.error_message,
+                       updated_at=excluded.updated_at,completed_at=excluded.completed_at""",
+                (request_id, "CSV_APPLY", batch_id, str(exc), timestamp, timestamp, timestamp),
+            )
+        raise
 
 
-def mark_batch_externally_reviewed(db_file: Path, batch_id: str) -> tuple[int, list[str]]:
+def mark_batch_externally_reviewed(
+    db_file: Path,
+    batch_id: str,
+    *,
+    fail_after: int | None = None,
+) -> tuple[int, list[str]]:
     items = db.list_items(db_file, batch_id=batch_id)
     blockers: list[str] = []
     valid_ids: list[str] = []
@@ -417,25 +476,64 @@ def mark_batch_externally_reviewed(db_file: Path, batch_id: str) -> tuple[int, l
             valid_ids.append(item["item_id"])
     if blockers:
         return 0, blockers
-    db.create_batch_checkpoint(
-        db_file,
-        batch_id,
-        reason="Before external CSV review confirmation",
-        source="CSV_EXTERNAL_REVIEW",
-    )
-    for item_id in valid_ids:
-        db.update_item(
-            db_file,
-            item_id,
-            {
-                "ready": 1,
-                "review_status": "DONE",
-                "validation_status": "READY",
-                "validation_errors": "[]",
-                "review_source": "CSV_EXTERNAL_REVIEW",
-                "working_source": "CSV_UPLOAD",
-            },
-            source="CSV_EXTERNAL_REVIEW",
-        )
-    db.upsert_recognition_job(db_file, batch_id, status="REVIEW_COMPLETE")
-    return len(valid_ids), []
+    request_id = f"external-review:{batch_id}:{uuid4().hex}"
+    try:
+        with db.transaction(db_file) as connection:
+            timestamp = db.now()
+            connection.execute(
+                """INSERT INTO operation_requests(
+                       request_id,operation_type,batch_id,status,result_json,error_message,
+                       created_at,updated_at,completed_at
+                   ) VALUES(?,?,?,'RUNNING','{}','',?,?,NULL)""",
+                (request_id, "EXTERNAL_REVIEW", batch_id, timestamp, timestamp),
+            )
+            checkpoint_id = db.create_batch_checkpoint_in_connection(
+                connection,
+                batch_id,
+                reason="Before external CSV review confirmation",
+                source="CSV_EXTERNAL_REVIEW",
+            )
+            completed = 0
+            for item_id in valid_ids:
+                db.update_item_in_connection(
+                    connection,
+                    item_id,
+                    {
+                        "ready": 1,
+                        "review_status": "DONE",
+                        "validation_status": "READY",
+                        "validation_errors": "[]",
+                        "review_source": "CSV_EXTERNAL_REVIEW",
+                        "working_source": "CSV_UPLOAD",
+                    },
+                    source="CSV_EXTERNAL_REVIEW",
+                    reason="Batch values reviewed outside SnapIMS",
+                )
+                completed += 1
+                if fail_after is not None and completed >= fail_after:
+                    raise RuntimeError(f"Injected external-review failure after {completed} item(s)")
+            connection.execute(
+                "UPDATE recognition_jobs SET status='REVIEW_COMPLETE',updated_at=?,finished_at=COALESCE(finished_at,?) WHERE batch_id=?",
+                (db.now(), db.now(), batch_id),
+            )
+            finished = db.now()
+            connection.execute(
+                "UPDATE operation_requests SET status='SUCCESS',result_json=?,updated_at=?,completed_at=? "
+                "WHERE request_id=?",
+                (json.dumps({"completed": completed, "checkpoint_id": checkpoint_id}), finished, finished, request_id),
+            )
+        return len(valid_ids), []
+    except Exception as exc:
+        timestamp = db.now()
+        with db.transaction(db_file) as connection:
+            connection.execute(
+                """INSERT INTO operation_requests(
+                       request_id,operation_type,batch_id,status,result_json,error_message,
+                       created_at,updated_at,completed_at
+                   ) VALUES(?,?,?,'FAILED','{}',?,?,?,?)
+                   ON CONFLICT(request_id) DO UPDATE SET
+                       status='FAILED',error_message=excluded.error_message,
+                       updated_at=excluded.updated_at,completed_at=excluded.completed_at""",
+                (request_id, "EXTERNAL_REVIEW", batch_id, str(exc), timestamp, timestamp, timestamp),
+            )
+        raise

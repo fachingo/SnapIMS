@@ -9,6 +9,8 @@ from typing import Any
 from snapims import db
 from snapims.config import DataPaths, ShopifyConfig
 from snapims.inventory import validation_errors
+from snapims.money import final_price_cents
+from snapims.runtime import is_test_provider, test_providers_enabled
 from snapims.shopify.client import ShopifyClient
 
 
@@ -39,6 +41,20 @@ class ShopifyService:
         errors.extend(validation_errors(item, photos))
         if not item["ready"] or item["review_status"] != "DONE":
             errors.append("Item is not completed and READY")
+        test_provenance = (
+            str(item.get("suggestion_source_kind") or "").upper() == "TEST"
+            or is_test_provider(item.get("recognition_provider"))
+            or is_test_provider(item.get("suggestion_provider"))
+        )
+        manually_replaced = (
+            str(item.get("working_source") or "") == "INDIVIDUAL_REVIEW"
+            or str(item.get("review_source") or "") == "CSV_EXTERNAL_REVIEW"
+        )
+        if test_provenance and not (manually_replaced or test_providers_enabled()):
+            errors.append(
+                "Test-sourced recognition is not eligible for Shopify draft creation. "
+                "Replace it with a live-provider result or complete a documented manual review."
+            )
         if item["upload_status"] == "UPLOADED":
             action = "SKIP_ALREADY_UPLOADED"
         else:
@@ -47,7 +63,7 @@ class ShopifyService:
             existing = self.client.find_variant_by_sku(item["sku"])
             if existing and not item["shopify_product_id"]:
                 errors.append(f"SKU already exists in Shopify on {existing['product']['title']}")
-        final_price = int(round(int(item["price_cents"] or 0) * (1 - float(item["discount_percent"] or 0) / 100)))
+        final_price = final_price_cents(int(item["price_cents"] or 0), item["discount_percent"] or 0)
         payload = {
             "item_id": item["item_id"], "sku": item["sku"], "title": item["title"],
             "price_cents": item["price_cents"], "discount_percent": item["discount_percent"],

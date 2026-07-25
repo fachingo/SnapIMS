@@ -9,6 +9,7 @@ from typing import Any
 from snapims import db
 from snapims.recognition.base import BaseRecognizer, RecognitionResult
 from snapims.recognition.providers import recognizer_registry
+from snapims.runtime import is_test_provider, require_provider_allowed
 
 _ACTIVE: dict[str, threading.Thread] = {}
 _LOCK = threading.Lock()
@@ -69,14 +70,17 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) -> 
     with db.transaction(db_file) as connection:
         cursor = connection.execute(
             """INSERT INTO recognition_results(
-                   item_id,provider,created_at,suggested_title,edition,distributor,release_year,
-                   barcode_candidates_json,suggested_price_cents,suggested_discount_percent,
-                   confidence,uncertainty_reasons_json,raw_response_reference,pricing_source,
-                   input_tokens,output_tokens,requires_review
-               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   item_id,provider,source_kind,model_name,created_at,suggested_title,edition,
+                   distributor,release_year,barcode_candidates_json,suggested_price_cents,
+                   suggested_discount_percent,confidence,uncertainty_reasons_json,
+                   raw_response_reference,pricing_source,input_tokens,output_tokens,
+                   input_image_count,input_image_bytes,requires_review
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 item_id,
                 result.provider_name,
+                "TEST" if is_test_provider(result.provider_name) else "LIVE",
+                getattr(recognizer, "model_name", lambda: "")(),
                 db.now(),
                 result.suggested_title,
                 result.edition,
@@ -91,6 +95,8 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) -> 
                 result.pricing_source,
                 result.input_tokens,
                 result.output_tokens,
+                len(images),
+                sum(path.stat().st_size for path in images if path.is_file()),
                 int(result.requires_review),
             ),
         )
@@ -183,7 +189,7 @@ def _recognition_worker(db_file: Path, batch_id: str, provider_name: str, delay:
         if failed and not recognized:
             status = "FAILED"
         elif failed:
-            status = "COMPLETE_WITH_FAILURE"
+            status = "COMPLETE_WITH_FAILURES"
         else:
             status = "COMPLETE"
         db.upsert_recognition_job(
@@ -204,11 +210,12 @@ def _recognition_worker(db_file: Path, batch_id: str, provider_name: str, delay:
 def start_batch_recognition(
     db_file: Path,
     batch_id: str,
-    provider_name: str = "mock",
+    provider_name: str = "openai",
     *,
     delay: float = 0,
     retry_failed: bool = False,
 ) -> bool:
+    require_provider_allowed(provider_name)
     providers = recognizer_registry()
     if provider_name not in providers:
         raise KeyError(f"Unknown provider: {provider_name}")
@@ -217,39 +224,57 @@ def start_batch_recognition(
     if not available:
         code, message = classify_recognition_error(RuntimeError(reason))
         items = db.list_items(db_file, batch_id=batch_id)
-        db.upsert_recognition_job(
-            db_file,
-            batch_id,
-            provider=provider_name,
-            status="FAILED",
-            total=len(items),
-            completed=0,
-            recognized=0,
-            failed=len(items),
-            error_code=code,
-            error_message=message,
-            error_at=db.now(),
-            model_name=getattr(provider, "model_name", lambda: "")(),
-            started_at=db.now(),
-            finished_at=db.now(),
-        )
-        for item in items:
-            db.update_item(
-                db_file,
-                item["item_id"],
-                {"recognition_status": "FAILED", "recognition_error": message},
-                source="RECOGNITION",
+        timestamp = db.now()
+        with db.transaction(db_file) as connection:
+            for item in items:
+                if item["recognition_status"] == "COMPLETE":
+                    continue
+                db.update_item_in_connection(
+                    connection,
+                    item["item_id"],
+                    {"recognition_status": "BLOCKED", "recognition_error": message},
+                    source="RECOGNITION_BLOCKED",
+                )
+            connection.execute(
+                """INSERT INTO recognition_jobs(
+                       batch_id,provider,status,total,completed,recognized,failed,current_item_id,
+                       started_at,updated_at,finished_at,model_name,error_code,error_message,error_at
+                   ) VALUES(?,?, 'BLOCKED', ?,0,0,0,'',?,?,?,?,?,?,?)
+                   ON CONFLICT(batch_id) DO UPDATE SET
+                       provider=excluded.provider,status='BLOCKED',total=excluded.total,
+                       completed=0,recognized=0,failed=0,current_item_id='',
+                       updated_at=excluded.updated_at,finished_at=excluded.finished_at,
+                       model_name=excluded.model_name,error_code=excluded.error_code,
+                       error_message=excluded.error_message,error_at=excluded.error_at""",
+                (
+                    batch_id,
+                    provider_name,
+                    len(items),
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                    getattr(provider, "model_name", lambda: "")(),
+                    code,
+                    message,
+                    timestamp,
+                ),
             )
         return False
 
-    if retry_failed:
-        for item in db.list_items(db_file, batch_id=batch_id, queue="FAILED"):
-            db.update_item(
-                db_file,
-                item["item_id"],
-                {"recognition_status": "PENDING", "recognition_error": ""},
-                source="SYSTEM_RECOVERY",
-            )
+    retryable = {"FAILED"} if retry_failed else {"FAILED", "BLOCKED", "SKIPPED"}
+    candidates = [
+        item for item in db.list_items(db_file, batch_id=batch_id)
+        if item["recognition_status"] in retryable
+    ]
+    if candidates:
+        with db.transaction(db_file) as connection:
+            for item in candidates:
+                db.update_item_in_connection(
+                    connection,
+                    item["item_id"],
+                    {"recognition_status": "PENDING", "recognition_error": ""},
+                    source="SYSTEM_RECOVERY",
+                )
 
     with _LOCK:
         existing = _ACTIVE.get(batch_id)
@@ -284,8 +309,12 @@ def start_batch_recognition(
     return True
 
 
-def retry_failed_item(db_file: Path, item_id: str, provider_name: str = "mock") -> None:
-    provider = recognizer_registry()[provider_name]
+def retry_failed_item(db_file: Path, item_id: str, provider_name: str = "openai") -> None:
+    require_provider_allowed(provider_name)
+    providers = recognizer_registry()
+    if provider_name not in providers:
+        raise KeyError(f"Unknown or disabled provider: {provider_name}")
+    provider = providers[provider_name]
     available, reason = provider.available()
     if not available:
         raise RuntimeError(reason)
@@ -300,7 +329,7 @@ def retry_failed_item(db_file: Path, item_id: str, provider_name: str = "mock") 
     if item:
         batch_id = item["batch_id"]
         items, recognized, failed = _job_counts(db_file, batch_id)
-        status = "COMPLETE_WITH_FAILURE" if failed else "COMPLETE"
+        status = "COMPLETE_WITH_FAILURES" if failed else "COMPLETE"
         values: dict[str, Any] = {
             "status": status,
             "completed": recognized + failed,
@@ -314,52 +343,65 @@ def retry_failed_item(db_file: Path, item_id: str, provider_name: str = "mock") 
 
 def skip_batch_recognition(db_file: Path, batch_id: str) -> None:
     items = db.list_items(db_file, batch_id=batch_id)
-    for item in items:
-        if item["recognition_status"] != "COMPLETE":
-            db.update_item(
-                db_file,
+    timestamp = db.now()
+    with db.transaction(db_file) as connection:
+        for item in items:
+            if item["recognition_status"] == "COMPLETE":
+                continue
+            db.update_item_in_connection(
+                connection,
                 item["item_id"],
                 {"recognition_status": "SKIPPED", "recognition_error": ""},
                 source="SYSTEM_RECOVERY",
+                reason="Recognition skipped by operator",
             )
-    db.upsert_recognition_job(
-        db_file,
-        batch_id,
-        status="PAUSED",
-        current_item_id="",
-        error_code="SKIPPED_BY_OPERATOR",
-        error_message="Recognition was skipped. Items remain unfinished for manual review.",
-        error_at=db.now(),
-    )
+        connection.execute(
+            """INSERT INTO recognition_jobs(
+                   batch_id,provider,status,total,completed,recognized,failed,current_item_id,
+                   started_at,updated_at,finished_at,error_code,error_message,error_at
+               ) VALUES(?, '', 'SKIPPED', ?,0,0,0,'',?,?,?,?,?,?)
+               ON CONFLICT(batch_id) DO UPDATE SET
+                   status='SKIPPED',current_item_id='',updated_at=excluded.updated_at,
+                   finished_at=excluded.finished_at,error_code=excluded.error_code,
+                   error_message=excluded.error_message,error_at=excluded.error_at""",
+            (
+                batch_id,
+                len(items),
+                timestamp,
+                timestamp,
+                timestamp,
+                "SKIPPED_BY_OPERATOR",
+                "Recognition was skipped. Items remain unfinished for manual review.",
+                timestamp,
+            ),
+        )
 
 
-def accept_item(
-    db_file: Path,
-    item_id: str,
+def _accept_values(
+    item: dict[str, Any],
+    suggestion: dict[str, Any] | None,
     *,
     price_cents: int | None,
     discount_percent: float,
-    review_source: str = "INDIVIDUAL_REVIEW",
-) -> list[str]:
-    item = db.get_item(db_file, item_id)
-    if item is None:
-        raise KeyError(f"Unknown Item ID: {item_id}")
-    suggestion = db.latest_recognition(db_file, item_id)
+    review_source: str,
+) -> dict[str, Any]:
     candidates = json.loads(suggestion["barcode_candidates_json"]) if suggestion else []
-    values: dict[str, Any] = {
-        "title": str(item["title"] or (suggestion["suggested_title"] if suggestion else "")).strip(),
-        "release_year": item["release_year"] or (suggestion["release_year"] if suggestion else None),
-        "edition": item["edition"] or (suggestion["edition"] if suggestion else ""),
-        "distributor": item["distributor"] or (suggestion["distributor"] if suggestion else ""),
-        "barcode": item["barcode"] or (candidates[0] if candidates else ""),
+    provider = suggestion["provider"] if suggestion else item.get("recognition_provider", "")
+    confidence = suggestion["confidence"] if suggestion else item.get("recognition_confidence")
+    return {
+        "title": str(item.get("title") or (suggestion["suggested_title"] if suggestion else "")).strip(),
+        "release_year": item.get("release_year") or (suggestion["release_year"] if suggestion else None),
+        "edition": item.get("edition") or (suggestion["edition"] if suggestion else ""),
+        "distributor": item.get("distributor") or (suggestion["distributor"] if suggestion else ""),
+        "barcode": item.get("barcode") or (candidates[0] if candidates else ""),
         "price_cents": (
             price_cents
             if price_cents is not None
-            else (item["price_cents"] or (suggestion["suggested_price_cents"] if suggestion else None))
+            else (item.get("price_cents") or (suggestion["suggested_price_cents"] if suggestion else None))
         ),
         "discount_percent": discount_percent,
-        "recognition_provider": suggestion["provider"] if suggestion else item["recognition_provider"],
-        "recognition_confidence": suggestion["confidence"] if suggestion else item["recognition_confidence"],
+        "recognition_provider": provider,
+        "recognition_confidence": confidence,
         "ready": 1,
         "review_status": "DONE",
         "postponed_at": None,
@@ -368,20 +410,88 @@ def accept_item(
         "review_source": review_source,
         "working_source": review_source,
     }
+
+
+def accept_item_in_connection(
+    connection: Any,
+    db_file: Path,
+    item: dict[str, Any],
+    suggestion: dict[str, Any] | None,
+    *,
+    price_cents: int | None,
+    discount_percent: float,
+    review_source: str,
+) -> None:
+    values = _accept_values(
+        item,
+        suggestion,
+        price_cents=price_cents,
+        discount_percent=discount_percent,
+        review_source=review_source,
+    )
+    db.update_item_in_connection(
+        connection,
+        item["item_id"],
+        values,
+        source="AI_ACCEPTED" if suggestion else review_source,
+        reason=f"Review completed through {review_source}",
+    )
+    if suggestion:
+        connection.execute(
+            "UPDATE recognition_results SET accepted_at=? WHERE recognition_result_id=?",
+            (db.now(), suggestion["recognition_result_id"]),
+        )
+    unfinished = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM items WHERE batch_id=? AND review_status='UNFINISHED'",
+            (item["batch_id"],),
+        ).fetchone()[0]
+    )
+    if unfinished == 0:
+        connection.execute(
+            "UPDATE recognition_jobs SET status='REVIEW_COMPLETE',updated_at=?,finished_at=COALESCE(finished_at,?) "
+            "WHERE batch_id=?",
+            (db.now(), db.now(), item["batch_id"]),
+        )
+
+
+def accept_item(
+    db_file: Path,
+    item_id: str,
+    *,
+    price_cents: int | None,
+    discount_percent: float,
+    review_source: str = "AI_ACCEPTED",
+) -> list[str]:
+    item = db.get_item(db_file, item_id)
+    if item is None:
+        raise KeyError(f"Unknown Item ID: {item_id}")
+    suggestion = db.latest_recognition(db_file, item_id)
+    values = _accept_values(
+        item,
+        suggestion,
+        price_cents=price_cents,
+        discount_percent=discount_percent,
+        review_source=review_source,
+    )
     candidate = {**item, **values}
     errors = validate_items_for_candidate(db_file, candidate)
     if errors:
         return errors
-    db.update_item(db_file, item_id, values, source="AI_ACCEPTED" if review_source == "INDIVIDUAL_REVIEW" else review_source)
-    if suggestion:
-        with db.transaction(db_file) as connection:
-            connection.execute(
-                "UPDATE recognition_results SET accepted_at=? WHERE recognition_result_id=?",
-                (db.now(), suggestion["recognition_result_id"]),
-            )
-    remaining = db.list_items(db_file, batch_id=item["batch_id"], queue="UNRESOLVED")
-    if not remaining:
-        db.upsert_recognition_job(db_file, item["batch_id"], status="REVIEW_COMPLETE")
+    with db.transaction(db_file) as connection:
+        current = connection.execute("SELECT * FROM items WHERE item_id=?", (item_id,)).fetchone()
+        if current is None:
+            raise KeyError(f"Unknown Item ID: {item_id}")
+        current_item = dict(current)
+        accept_item_in_connection(
+            connection,
+            db_file,
+            current_item,
+            suggestion,
+            price_cents=price_cents,
+            discount_percent=discount_percent,
+            review_source=review_source,
+        )
     return []
 
 

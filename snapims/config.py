@@ -79,5 +79,5 @@ class ShopifyConfig:
         if not re.fullmatch(r"\d{4}-\d{2}", self.api_version):
             problems.append("SHOPIFY_API_VERSION must look like 2026-07")
         if not self.draft_only:
-            problems.append("SnapIMS v0.6.0 permits Shopify draft-only mode")
+            problems.append("SnapIMS v0.6.1 permits Shopify draft-only mode")
         return problems

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from snapims.config import ShopifyConfig
+from snapims.money import final_price_cents, format_price_cents
 
 
 class ShopifyAPIError(RuntimeError):
@@ -31,7 +32,7 @@ class HTTPShopifyTransport:
             self.endpoint,
             data=json.dumps({"query": query, "variables": variables}).encode(),
             method="POST",
-            headers={"Content-Type": "application/json", "X-Shopify-Access-Token": self.config.access_token, "User-Agent": "SnapIMS/0.6.0"},
+            headers={"Content-Type": "application/json", "X-Shopify-Access-Token": self.config.access_token, "User-Agent": "SnapIMS/0.6.1"},
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
@@ -101,12 +102,12 @@ class ShopifyClient:
         return {"product_id": product["id"], "variant_id": variant["id"], "inventory_item_id": variant["inventoryItem"]["id"]}
 
     def configure_variant(self, item: dict[str, Any], product_id: str, variant_id: str) -> None:
-        price = int(item["price_cents"])
-        discount = float(item.get("discount_percent") or 0)
-        final_price = price * (1 - discount / 100)
+        final_price = final_price_cents(
+            int(item["price_cents"]), item.get("discount_percent") or 0
+        )
         variant: dict[str, Any] = {
             "id": variant_id,
-            "price": f"{final_price / 100:.2f}",
+            "price": format_price_cents(final_price),
             "taxable": True,
             "inventoryItem": {"sku": item["sku"], "tracked": True, "requiresShipping": True},
         }

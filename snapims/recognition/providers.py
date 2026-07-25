@@ -11,6 +11,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from snapims.recognition.base import BaseRecognizer, RecognitionResult
+from snapims.runtime import test_providers_enabled
 
 DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
 MAX_IMAGES = 3
@@ -136,6 +137,8 @@ class OpenAIRecognizer(BaseRecognizer):
         )
 
 
-def recognizer_registry() -> dict[str, BaseRecognizer]:
-    providers: list[BaseRecognizer] = [MockRecognizer(), OpenAIRecognizer(), GeminiRecognizer()]
+def recognizer_registry(*, include_test: bool | None = None) -> dict[str, BaseRecognizer]:
+    providers: list[BaseRecognizer] = [OpenAIRecognizer(), GeminiRecognizer()]
+    if include_test if include_test is not None else test_providers_enabled():
+        providers.insert(0, MockRecognizer())
     return {provider.name: provider for provider in providers}
