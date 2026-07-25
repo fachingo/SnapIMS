@@ -1,20 +1,13 @@
-# SnapIMS 0.6.1 Operator Audit
+# SnapIMS 0.7.0 Operator Audit
 
-The patch preserves the routine rhythm:
+The 20-item native-browser walkthrough confirms the routine workstation model:
 
-1. Look at the photo.
-2. Confirm the displayed title or open manual edit when required.
-3. Optionally change Price or Discount.
-4. Press Enter or choose Approve & Next.
-5. The next unfinished tape opens immediately.
+- empty Title is inline and one Enter completes the valid record;
+- populated Title leaves Price automatically selected;
+- Review advances once and preserves physical sequence;
+- Movie ambiguity is held for deliberate operator selection;
+- Batch Editor arrows, visible-row selection, Ctrl/Cmd+1–9 quick actions, autosave and checkpoints are usable without routine mouse travel;
+- CSV export/upload/diff/apply and Shopify simulation remain explicit;
+- restart restores the same Batch and Item identities.
 
-High-confidence fixes:
-
-- Price receives focus and Enter advances one tape.
-- Suggestions are labelled as suggestions and are not shown as saved values.
-- Missing AI credentials lead to a clear manual path, not a dead end.
-- Bulk Price is one dialog and one operation.
-- CSV upload shows a difference preview before replacing working values.
-- Every major terminal state points to the next action.
-
-Deferred operator concerns are warehouse-scale row virtualization and a deeper per-photo import sequence viewer.
+Remaining operator risk is external: real photo recognition accuracy, live provider latency/cost, production CSV reconciliation, one live Shopify draft and scale beyond the controlled fixture.

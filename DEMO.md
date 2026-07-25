@@ -1,17 +1,7 @@
-# SnapIMS 0.6.1 Demo and Pilot Data
+# SnapIMS 0.7.0 Demo and Pilot Data
 
-Synthetic fixtures exist only for development, automated tests, and browser verification.
+Synthetic fixtures demonstrate workflow and failure recovery only. They are not proof of live AI, real Wikipedia availability, live Shopify, physical-photo grouping quality or production throughput.
 
-## Safety rule
+Production mode hides and rejects Mock/test providers. Explicit test mode may be used for deterministic browser regression, but test-sourced records remain blocked from live-publish readiness until deliberately replaced by trusted manual/live-provider values.
 
-Production mode does not list or accept Mock, fixture, demo, or synthetic recognition providers. Explicit test mode requires:
-
-```bash
-export SNAPIMS_ENABLE_TEST_PROVIDERS=true
-```
-
-Test-sourced results retain provider provenance and cannot satisfy production publish readiness until a deliberate manual replacement or trusted live-provider result becomes authoritative.
-
-## Pilot rule
-
-Synthetic browser evidence verifies workflows; it does not prove live AI recognition, billing, latency, real Pixel capture quality, physical CSV reconciliation, or Shopify draft creation. Those remain mandatory 1.0 acceptance gates.
+Use the real-pilot checklist in `PRODUCTION_READINESS.md` before any 1.0 decision.

@@ -1,16 +1,18 @@
-# SnapIMS 0.6.1 Documentation Verification
+# SnapIMS 0.7.0 Documentation Verification
 
-The 35-page Operator Guide was regenerated from the v0.6.1 browser evidence and describes the final UI used in the release audit.
+The 52-page Operator Guide was regenerated after the final v0.7.0 native browser audit. It uses the final 1440×1000 screenshots for Home, Import, Review, Movie ambiguity/selection, recognition recovery, Batch Editor keyboard operation, CSV, Publish, restart and Diagnostics.
 
-Verification method:
+Verification procedure:
 
-- screenshots captured at 1440 x 1000;
-- all changed pages and button names compared with the running application;
-- DOCX rendered to PNG pages;
-- PDF rendered independently to PNG pages;
-- every rendered page inspected for clipping, overlap and missing controls;
-- final guide walkthrough compared against Home, Import, Review, Batch Editor, Publish and Diagnostics.
+- compare every button name, shortcut, state label and recovery instruction to the final browser UI;
+- render DOCX through the approved document rendering tool;
+- render the resulting PDF independently;
+- inspect every page for clipping, overlap, unreadable screenshots and obsolete version references;
+- follow the guide sequence against the browser evidence;
+- retain explicit boundaries for live AI, live Shopify, live Wikipedia and warehouse scale.
 
-The guide does not claim live AI quality, a live Shopify draft or warehouse-scale acceptance. Those remain explicit 1.0 blockers.
+Final files:
 
-Final artifacts: `SnapIMS_Operator_Guide.docx`, `SnapIMS_Operator_Guide.pdf`, and versioned copies with the `v0.6.1` suffix.
+- `SnapIMS_Operator_Guide_v0.7.0.docx`
+- `SnapIMS_Operator_Guide_v0.7.0.pdf`
+- unversioned convenience copies with the same content.

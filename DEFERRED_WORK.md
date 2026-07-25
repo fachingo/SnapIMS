@@ -1,39 +1,34 @@
-# SnapIMS 0.6.1 Deferred Work
+# SnapIMS 0.7.0 Deferred Work
 
-These items were intentionally not represented as fixed.
+The following work is intentionally outside the 0.7.0 release and must not be described as complete:
 
-## Warehouse-scale editor and importer
+## Scale
 
-- O-08 / E-09: virtualized 5,000-row Batch Editor.
-- E-11: QR prefilter and high-volume image-decode pipeline.
-- E-28: real 500-5,000 tape warehouse acceptance test.
+- Server-windowed or virtualized 5,000-row Batch Editor.
+- Joined/windowed query and measured 5,000-row sort/filter targets.
+- 10,000-photo QR candidate prefilter, bounded parallel decode and real Pixel stress gate.
+- High-evidence Import sequence/photo inspector.
 
-Risk: current workflows are verified for the 20-item browser fixture and automated functional batches, not a real 5,000-tape operation. Recommended release: a future minor version because this changes scale architecture and operator behaviour.
+## Production acceptance
 
-## Import preview depth
+- Real 20-tape Pixel/live-AI pilot.
+- Physical CSV reconciliation.
+- One deliberately authorized live Shopify draft.
+- Production-machine restart and first-time Operator Guide walkthrough.
 
-- O-06: visual per-photo command-sequence inspector.
+## Security and multiple operators
 
-Risk: operators must continue using item, product-photo, command and warning counts before Preserve and Import. Recommended release: minor feature package after the real Pixel pilot identifies which sequence evidence is genuinely useful.
+- Application-native authenticated sessions, roles and audit identity.
+- CSRF protection, secure-cookie policy, batch claims and stale concurrent-write UX.
+- Multi-operator Review and remote deployment acceptance.
 
-## Recognition architecture
+## Enrichment beyond the foundation
 
-- E-16: genuine adaptive image selection and confidence-driven follow-up.
+- Rich Movie/Edition detail workspaces.
+- VHS edition/barcode/cover-variant intelligence.
+- Generated descriptions from approved facts.
+- Compatible-copy pooling, grouped duplicate Review and Collection Intelligence.
+- Artwork licensing/ingestion.
+- eBay sold-price acquisition.
 
-Risk: current metrics must not call fixed selection adaptive. Recommended release: minor AI capability after live-model measurements.
-
-## Security and multi-user operation
-
-- E-18: application authentication, roles, CSRF, secure cookies, batch claims, concurrency control and multi-user acceptance.
-
-Risk: Cloudflare Access is not a replacement for application-level multi-user controls. SnapIMS remains a single-operator, localhost-first workstation. Recommended release: dedicated minor security/workflow package before broad remote or concurrent use.
-
-## Duplicate and edition intelligence
-
-- E-23: near-duplicate image classification, edition matching and pooling.
-
-Risk: exact-copy and pooled decisions remain operator-controlled. Recommended release: post-v1 enrichment package.
-
-## Image-lifetime monitoring
-
-- E-24: no loss was reproduced. Originals, processed media, links and restart persistence passed. Continue monitoring during the real Pixel pilot.
+Each operator-visible capability is a separate minor release under the SnapIMS versioning policy.

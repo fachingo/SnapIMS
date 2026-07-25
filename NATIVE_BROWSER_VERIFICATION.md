@@ -1,32 +1,27 @@
-# SnapIMS 0.6.1 Native Browser Verification
+# SnapIMS v0.7.0 Native Browser Verification
 
-Status: **PASSED**
+Status: PASSED
 
-The release audit used native headless Chromium at 1440 x 1000. Console, page-error, request-failure and HTTP-response listeners were attached before the first navigation.
+Batch: `20260725-115650`
+Viewport: 1440 × 1000
+Monitoring was attached before first navigation.
 
-Verified:
+## Verified scenarios
+- Home metrics render values, not Python objects
+- 20-item preview and durable import completed
+- Empty Title is inline, focused first, and one Enter completes Review
+- Ambiguous Movie candidates require operator selection, then persist as a local match
+- Production UI hides Mock and missing key becomes BLOCKED
+- Price → Enter approves exactly one item and refocuses the next quick field
+- Batch Editor arrows, Ctrl+A, Ctrl+1, descriptions and reorder operate from the keyboard-first grid
+- 20-row bulk Price completes atomically through the same preview dialog
+- CSV remains staged until diff confirmation, then applies atomically
+- External review and explicit test-mode Shopify simulation complete
+- Saved values and immutable batch identity survive process restart
+- Diagnostics exposes schema, WAL, staging, checkpoint and provenance facts
 
-- Home metrics contain operator values, not Python method objects.
-- A 20-item camera fixture previews and imports with one durable Batch ID.
-- Production mode hides Mock and a forged/test provider cannot be selected normally.
-- Missing OpenAI credentials produce a BLOCKED state with manual-review and Diagnostics actions.
-- Explicit test mode produces suggestions visibly labelled as unsaved.
-- Price -> Enter approves exactly one item and refocuses Price.
-- A 20-row bulk price operation applies through one confirmation model.
-- The command palette opens with Ctrl+Shift+P and closes with Escape.
-- CSV upload enters a difference preview, then applies after explicit confirmation.
-- External review and Shopify simulation complete in explicit test mode.
-- Saved values and the immutable batch survive a full server-process restart.
-- Production-mode simulation uses confirmed working values while historical test evidence remains diagnostic.
-- Diagnostics exposes schema, database/WAL storage, stages, checkpoints, import journals and provider provenance.
-- Favicon returns 200.
-
-Results:
-
-- Console errors: 0
-- Page errors: 0
-- Relevant failed requests: 0
-- Relevant HTTP errors: 0
-- One `net::ERR_ABORTED` was recorded for the intentional browser file-download navigation and classified as expected.
-
-Evidence: `release-evidence/v0.6.1/browser/`.
+Console errors: 0
+Page errors: 0
+Relevant failed requests: 0
+Expected browser download aborts: 1
+Relevant HTTP errors: 0

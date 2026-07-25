@@ -1,61 +1,51 @@
-# SnapIMS 0.6.1 Final Implementation Report
+# SnapIMS 0.7.0 Final Implementation Report
 
-## 1-5. Release identity
+## Release identity
 
-1. Starting branch: `feature/v0.6.0-operator-workstation`
-2. Starting commit: `5c316ca0e6c881c2df7ea2913d7f242a523fdc78`
-3. Ending branch: `fix/v0.6.1-mega-stabilization`
-4. Starting version: `0.6.0`; final version: `0.6.1`
-5. Release classification: **patch**. Local tag `v0.6.1` identifies the packaged release commit; `RELEASE_MANIFEST.json` records its exact SHA.
+- Starting release: SnapIMS 0.6.1, inventory schema 7
+- Ending release: SnapIMS 0.7.0, inventory schema 8, catalog schema 1
+- Branch: `feature/v0.7.0-keyboard-catalog`
+- Classification: **minor feature release**
+- Production 1.0.0: **not authorized**
 
-## 6-11. Audit disposition
+## Delivered
 
-6. The complete O-01 through O-15 and E-01 through E-28 classification matrix is in `AUDIT_CLASSIFICATION_MATRIX.md`.
-7. Fixed findings cover provider quarantine, atomic data operations, import recovery, audited restore, schema structure, money, state truth, confidence, manual recovery, retry semantics, metrics, operator feedback, browser monitoring, and release verification.
-8. Findings already fixed in the baseline were browser-verified rather than rewritten.
-9. Findings not reproducible retain evidence and were not claimed as repairs.
-10. Duplicate findings were consolidated under one implementation contract rather than patched twice.
-11. Deferred findings are documented in `DEFERRED_WORK.md`, including 5,000-row virtualization, warehouse-scale QR architecture, adaptive recognition, multi-user security, metadata enrichment, and near-duplicate intelligence.
+1. Permanent legacy recognition migration repair.
+2. Native-folder-picker manual fallback and Linux dependency documentation.
+3. Cross-page command-palette shortcut repair.
+4. Inline manual Title and one-Enter Review.
+5. Spreadsheet-style Batch Editor keyboard navigation and selection.
+6. Ctrl/Cmd+1–9 quick actions, descriptions and persistent reorder.
+7. Robust immutable-ID CSV export/upload round trip.
+8. Independent local-first Movie Catalog with bounded Wikipedia integration.
+9. Audited inventory Movie links, candidates, operator decisions and restart-safe jobs.
+10. CSV/Shopify/Review/Diagnostics catalog integration.
+11. Automated and native-browser verification.
+12. Synchronized Operator Guide, reports, release artifacts and version references.
 
-## 12-17. Implementation detail
+## Data and migration
 
-12. Exact changed paths are recorded by `git diff --name-status 5c316ca..v0.6.1` and exported in the release manifest.
-13. Database schema advanced from legacy/schema 5 variants to schema 7 with pre-migration SQLite backup.
-14. The schema manifest verifies required tables, columns, indexes, unique constraints, foreign keys, and version instead of trusting `user_version` alone.
-15. CSV apply, bulk edits, external review, recognition acceptance, and audited restore use deliberate transaction boundaries and truthful structured results.
-16. Import finalization uses a durable cross-resource journal and startup reconciliation for staged/final filesystem states.
-17. Field-level inventory events, operation requests, checkpoint metadata, and restore events preserve audit history without pretending to undo remote Shopify state.
+- Existing Batch IDs, Item IDs, photos, saved values, recognition results, review state, checkpoints and Shopify linkage are preserved.
+- Schema 8 removes the obsolete child table before recognition-job rebuild and fails closed if integrity, foreign keys or manifest verification fail.
+- `movie_catalog.sqlite3` remains independent and rebuildable.
+- Manual catalog jobs use deterministic negative identities; no nonexistent inventory recognition FK is stored.
 
-## 18-25. Automated and data verification
+## Verification summary
 
-18. Added stabilization tests in `tests/test_v061_stabilization.py` plus updated migration, Review, Shopify, CSV, processor, protocol, and browser tests.
-19. Added controlled failure injection for CSV mid-apply, bulk operation, external review, import finalization, restore, stale/duplicate request, and restart paths.
-20. `pytest -q`: **PASS**, 136 tests, exit status 0.
-21. Ruff: not executable locally because the isolated package index could not supply the package; the clean GitHub quality workflow is configured to run it.
-22. mypy: same local package-index limitation; the clean GitHub quality workflow is configured to run it.
-23. Compileall, JavaScript syntax, wheel build, installed-wheel import, CLI version, and application-version smoke checks: **PASS**.
-24. `git diff --check`: **PASS**. Host `pip check` reports an unrelated pre-existing moviepy/Pillow conflict; clean CI remains authoritative.
-25. SQLite browser workspace: `integrity_check=ok`, zero foreign-key violations, schema/user_version 7, schema manifest PASS.
+- Automated: 174 passed, 1 optional live-Wikipedia test skipped, 0 failed.
+- Browser: PASS, Chromium 1440×1000.
+- Console/page/relevant request/relevant HTTP errors: 0/0/0/0.
+- Compileall, JavaScript syntax, diff check, wheel build and installed-wheel smoke: PASS.
+- Inventory and catalog SQLite integrity/foreign-key verification: PASS.
 
-## 26-30. Browser, restart, and documentation verification
+## Not verified live
 
-26. Native Chromium walkthrough covered Home, 20-item Import, production provider guard, BLOCKED/manual recovery, explicit test-mode suggestions, Price -> Enter, atomic bulk edit, command palette, CSV diff/apply, external review, Shopify simulation, restart, production provenance replacement, Diagnostics, and favicon.
-27. Browser monitoring began before first navigation: 0 console errors, 0 page errors, 0 relevant failed requests, and 0 relevant HTTP errors. One intentional CSV-download abort was classified as expected.
-28. Full server-process restart preserved Batch IDs, Item IDs, working values, review state, checkpoints, and the active working-batch revision.
-29. Browser screenshots, logs, `results.json`, and `trace.zip` are in `release-evidence/v0.6.1/browser/` and the separate browser-evidence ZIP.
-30. README, release notes, architecture, database guide, recovery procedures, audit reports, production-readiness report, screenshots, and the 35-page Operator Guide were synchronized to 0.6.1. DOCX and PDF were independently rendered and visually inspected page by page.
+- OpenAI recognition quality, billing, latency and real-image correction rate.
+- Live Wikipedia request in the default suite.
+- Live Shopify draft creation/media upload.
+- 5,000-row/10,000-photo warehouse-scale architecture.
+- Multi-user remote operation.
 
-## 31-35. Release boundary and operation
+## Required next action
 
-31. Remaining production blockers: real 20-tape Pixel pilot, live AI, exactly one live Shopify draft, physical CSV verification, production-machine restart test, independent guide walkthrough, and final browser/blocker review.
-32. Supported scale: browser regression at 20 items and service regression fixtures beyond that; no claim of 5,000-row warehouse readiness or multi-user safety.
-33. Launch command:
-
-```bash
-cd ~/Projects/SnapIMS-v0.6.1
-source .venv/bin/activate
-snapims --data-dir ~/SnapIMS-data serve
-```
-
-34. Git push result: attempted from the build environment and failed because DNS could not resolve `github.com`. No force-push or remote history rewrite occurred. The complete Git bundle and repository ZIP contain the branch and commits for one-command publication from MacMint.
-35. Pull-request recommendation: push `fix/v0.6.1-mega-stabilization`, allow GitHub quality CI to complete, review the audit/deferred matrices, then open a PR against the current integration branch. Do not merge to a production branch or label 1.0.0 until the mandatory acceptance gates pass.
+Run the real 20-tape Pixel pilot with live AI, reconcile CSV, restart the production process, and create exactly one authorized Shopify draft. Do not label 1.0.0 until all acceptance gates pass.

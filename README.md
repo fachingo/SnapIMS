@@ -1,71 +1,46 @@
-# SnapIMS 0.6.1
+# SnapIMS 0.7.0
 
-SnapIMS is a photo-first, exception-driven inventory workstation for Canada VHS. It converts QR-delimited camera rolls into durable local inventory, human review, CSV workflows and controlled Shopify draft preparation.
+SnapIMS is a photo-first, exception-driven inventory workstation for Canada VHS. Version 0.7.0 adds the local-first Movie Catalog, true spreadsheet-style Batch Editor keyboard operation, one-Enter manual-title Review, resilient CSV round trips, and migration/folder-picker repairs while preserving the v0.6.1 integrity foundation.
 
 ## Routine workflow
 
 1. Photograph START, location, tape photos, NEXT between tapes, and END.
-2. Preview counts and warnings.
-3. Preserve and import one durable batch.
-4. Identify with a configured live provider or continue manually.
-5. Confirm title, optionally change Price/Discount, and use Approve & Next.
-6. Resolve exceptions in Batch Editor or through a staged CSV difference preview.
+2. Preview counts and warnings; then preserve one durable batch.
+3. Identify with a configured live provider or continue manually.
+4. Review the photograph. Title is focused only when empty; otherwise Price is selected. Press Enter once to approve and open the next unfinished tape.
+5. Use Batch Editor for keyboard-driven corrections, atomic bulk actions, checkpoints, and CSV staging.
+6. Let the background catalog search the local database first and bounded English Wikipedia only on a genuine local miss.
 7. Simulate Shopify drafts before any deliberate live draft test.
 
-## What changed in 0.6.1
+## 0.7.0 highlights
 
-- Test/mock recognition is quarantined from production mode.
-- CSV, bulk edit and external review are atomic.
-- Interrupted import finalization is journaled and recoverable.
-- Checkpoint restore is audited.
-- Schema 7 verifies real SQLite structure.
-- Money uses exact cents/Decimal rules.
-- AI suggestions, saved values, reviewed values and Shopify state are separate.
-- BLOCKED provider recovery and manual review are explicit.
-- Metrics and Diagnostics are based on measured facts.
-- Browser verification covers the 20-item operator path and restart durability.
+- **Local Movie Catalog:** separate rebuildable `movie_catalog.sqlite3`, local-first matching, bounded Wikipedia retrieval, source provenance, ambiguity resolution, restart-safe jobs, CSV/Shopify enrichment, diagnostics, backup and restore.
+- **Review:** inline Title/Price/Discount quick fields; Title receives focus only when required; one Enter submits the valid record exactly once.
+- **Batch Editor:** arrow-key grid navigation, Enter-to-save-and-move, Shift range selection, Ctrl/Cmd+A visible-row selection, Ctrl/Cmd+1–9 quick actions, persistent action order, and concise action descriptions.
+- **CSV:** unchanged SnapIMS exports round-trip successfully; BOM, CRLF/LF, comma/semicolon/tab delimiters, harmless header variation, and `item_id` aliases are handled without weakening immutable-ID safety.
+- **Import:** missing Tkinter becomes a clear manual-path fallback; `python3-tk` is an optional Linux dependency for the native folder picker.
+- **Migration:** schema 8 automatically removes the obsolete `recognition_job_items` table before rebuilding recognition jobs, preventing the v0.6.1 foreign-key mismatch on existing databases.
 
-## Install
+## Install and run
 
 ```bash
-git clone https://github.com/fachingo/SnapIMS.git
-cd SnapIMS
-git switch fix/v0.6.1-mega-stabilization
+cd ~/Projects/SnapIMS-v0.7.0
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[dev]'
-```
-
-## Run
-
-```bash
+python -m pip install -e .
 snapims --data-dir ~/SnapIMS-data serve
 ```
 
-SnapIMS binds to `127.0.0.1:8767` by default. It does not auto-run at boot unless you deliberately create and enable a service.
+Open `http://127.0.0.1:8767`.
 
-## Quality gate
+For the native Linux folder picker:
 
 ```bash
-ruff check .
-mypy snapims
-pytest -q
-python -m compileall -q snapims tests
-python -m build
-pip check
-git diff --check
+sudo apt install python3-tk
 ```
 
-## Safety boundaries
+SnapIMS binds to localhost by default. Do not expose the application directly with router port forwarding.
 
-- Keep production data and `.env` outside Git.
-- Original images are never overwritten.
-- Item ID and Batch ID are immutable.
-- CSV updates by Item ID only.
-- Live Shopify mode creates drafts only and requires deliberate confirmation.
-- SnapIMS remains single-operator and localhost-first.
-- Mock/test providers require `SNAPIMS_ENABLE_TEST_PROVIDERS=true` and are not production truth.
+## Release status
 
-## 1.0 gate
-
-Do not label SnapIMS 1.0.0 until the real 20-tape Pixel pilot, live AI, one live Shopify draft, physical CSV verification, restart durability, independent Operator Guide walkthrough, browser verification and blocker review all pass.
+Version 0.7.0 is a **minor feature release**, not production 1.0.0. The real 20-tape Pixel pilot, live AI test, one live Shopify draft, physical CSV reconciliation, restart durability on the production machine, final Operator Guide walkthrough, browser verification, and blocker review remain mandatory before 1.0.0.

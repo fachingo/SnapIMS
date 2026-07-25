@@ -1,34 +1,24 @@
-# SnapIMS 0.6.1 Architecture
+# SnapIMS 0.7.0 Architecture
 
-## Runtime
+SnapIMS is a localhost-bound FastAPI/Jinja workstation with two SQLite databases and filesystem-managed original/processed media.
 
-FastAPI/Jinja browser workstation, local SQLite and filesystem media storage. The CLI binds to localhost by default. SnapIMS is single-operator and does not auto-publish Shopify products.
+## Inventory authority
 
-## Durable authority
+`inventory.sqlite3` schema 8 owns physical Batch/Item identity, photos, sequence, shelf, condition, money, Review, recognition, checkpoints, CSV staging, audit events, Shopify state and current Movie links.
 
-- SQLite: batches, immutable items, photos, recognition history, working values, audits, Shopify linkage, operation requests, checkpoints and import journals.
-- CSV: staged editing surface keyed only by immutable Item ID.
-- Original media: never overwritten.
-- Shopify: external draft/sales channel; local rollback does not pretend remote state was reverted.
+## Rebuildable Movie Catalog
 
-## Transaction boundaries
+`movie_catalog.sqlite3` catalog schema 1 owns normalized Movie facts, aliases, FTS search, candidates, decisions, source provenance, bounded Wikipedia response cache, lookup jobs and maintenance events. It is intentionally separate from physical inventory.
 
-- CSV apply: one validation pass, one checkpoint, one SQLite transaction, field audit and stage completion together.
-- Bulk edit: full selection validation, idempotent request ID, one checkpoint and one transaction.
-- External review: all items validate before any completion state changes.
-- Checkpoint restore: protected safety checkpoint plus audited field changes in one transaction.
+## Service boundaries
 
-## Cross-resource import recovery
+- Import: deterministic QR stream parsing, staging, durable journal and final media reconciliation.
+- Recognition: provider abstraction, durable batch state, provenance and test-provider quarantine.
+- Review: one-Enter quick transaction for Title/Price/Discount; exception editor only for genuine problems.
+- Batch Editor: browser grid, optimistic revisions, autosave, atomic bulk services and checkpoints.
+- CSV: immutable-ID export, tolerant safe parsing, staged diff, atomic apply and rollback.
+- Catalog: local-first normalized search, bounded external source adapter, background jobs and audited links.
+- Shopify: saved working values, structured Movie projection, draft-only simulation/live architecture and idempotent stage recovery.
+- Diagnostics: inventory/catalog integrity, schema manifest, jobs, WAL, backups and recovery state.
 
-Import writes a durable journal before final filesystem moves. Startup reconciliation completes, resumes, fails or quarantines incomplete operations without inventing new identities.
-
-## Value-state model
-
-`SUGGESTED` -> provider output not accepted.
-`SAVED` -> durable working value.
-`REVIEWED` -> human or approved external workflow accepted the record.
-`DRAFTED/PUBLISHED` -> remote Shopify state, separate from local working state.
-
-## Security boundary
-
-Test providers require `SNAPIMS_ENABLE_TEST_PROVIDERS=true`. Production mode rejects them server-side. Application authentication and multi-user security remain deferred.
+The browser remains the operator source of truth. UI code calls service/database boundaries rather than directly inventing authority. Remote exposure remains single-user and deny-by-default until application authentication, per-user state, CSRF and concurrency controls pass.
