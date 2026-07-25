@@ -11,4 +11,5 @@ from snapims.config import DataPaths
 def data_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> DataPaths:
     root = tmp_path / "workspace"
     monkeypatch.setenv("SNAPIMS_DATA_DIR", str(root))
+    monkeypatch.setenv("SNAPIMS_ENABLE_TEST_PROVIDERS", "true")
     return DataPaths.from_root(root).ensure()

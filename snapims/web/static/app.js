@@ -96,9 +96,16 @@
     });
   });
   qsa("[data-command-action]").forEach((button) => {
+    const action = button.dataset.commandAction;
+    const available = action === "focus-search" ? qs("#batch-search") :
+      action === "bulk-price" ? qs('[data-bulk="set_price"]') :
+      action === "approve-selected" ? qs('[data-bulk="approve"]') : null;
+    if (!available) {
+      button.hidden = true;
+      return;
+    }
     button.addEventListener("click", () => {
       palette?.close();
-      const action = button.dataset.commandAction;
       if (action === "focus-search") qs("#batch-search")?.focus();
       if (action === "bulk-price") qs('[data-bulk="set_price"]')?.click();
       if (action === "approve-selected") qs('[data-bulk="approve"]')?.click();
@@ -226,7 +233,7 @@
       }
       row.dataset.revision = data.item.record_revision;
       row.dataset.reviewStatus = data.item.review_status;
-      row.dataset.confidence = data.item.recognition_confidence ?? -1;
+      row.dataset.confidence = data.item.display_confidence ?? -1;
       row.dataset.rare = data.item.rare;
       row.dataset.review = data.item.review;
       row.dataset.updated = data.item.updated_at || "";
@@ -296,11 +303,16 @@
 
   const saveAll = async () => {
     const dirty = qsa(".dirty", grid);
+    let saved = 0;
+    let failed = 0;
     for (const input of dirty) {
       clearTimeout(pending.get(input));
-      await sendEdit(input);
+      if (await sendEdit(input)) saved += 1;
+      else failed += 1;
     }
-    toast(`${dirty.length} pending edits saved.`);
+    saveState.textContent = failed ? `${saved} saved · ${failed} failed` : `${saved} saved`;
+    toast(failed ? `${saved} saved · ${failed} failed` : `${saved} pending edits saved.`, failed ? "error" : "success");
+    return {saved, failed};
   };
   qs("[data-save-all]")?.addEventListener("click", saveAll);
 
@@ -317,7 +329,7 @@
       if (filter === "approved") match &&= row.dataset.reviewStatus === "DONE";
       if (filter === "failed") match &&= row.dataset.recognitionStatus === "FAILED";
       if (filter === "low") match &&= confidence >= 0 && confidence < lowThreshold;
-      if (filter === "missing-title") match &&= !(item.title || item.suggested_title || "").trim();
+      if (filter === "missing-title") match &&= !(item.title || "").trim();
       if (filter === "flagged") match &&= row.dataset.review === "1";
       if (filter === "rare") match &&= row.dataset.rare === "1";
       if (filter === "recent") match &&= String(item.working_source || "IMPORT") !== "IMPORT";
@@ -328,13 +340,15 @@
   qs("#batch-search")?.addEventListener("input", applyFilters);
   qs("#batch-filter")?.addEventListener("change", applyFilters);
   qs("#confidence-threshold")?.addEventListener("input", applyFilters);
-  qsa("[data-confidence-min],[data-confidence-max],[data-confidence-unknown]").forEach((button) => {
+  qsa("[data-confidence-min],[data-confidence-max],[data-confidence-manual],[data-confidence-unknown]").forEach((button) => {
     button.addEventListener("click", () => {
       const min = button.dataset.confidenceMin ? Number(button.dataset.confidenceMin) : -1;
       const max = button.dataset.confidenceMax ? Number(button.dataset.confidenceMax) : 2;
       rows().forEach((row) => {
         const value = Number(row.dataset.confidence);
-        const match = button.hasAttribute("data-confidence-unknown") ? value < 0 : value >= min && value < max;
+        const manual = row.dataset.valueState === "REVIEWED" && value < 0;
+        const match = button.hasAttribute("data-confidence-manual") ? manual :
+          button.hasAttribute("data-confidence-unknown") ? value < 0 && !manual : value >= min && value < max;
         row.classList.toggle("hidden", !match);
       });
       persistView();
@@ -375,37 +389,60 @@
       if (needsValue) qs("#bulk-value").focus();
     });
   });
-  qs("#bulk-apply")?.addEventListener("click", async () => {
+  qs("#bulk-apply")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
     const itemIds = selectedRows().map((row) => row.dataset.itemId);
     const value = qs("#bulk-value").value;
     const reason = qs("#bulk-reason").value;
     if (!actionsWithoutValue.includes(bulkAction) && !value.trim()) return toast("Enter a bulk value.", "error");
-    if (!confirm(`Apply ${bulkAction} to ${itemIds.length} items?`)) return;
-    const response = await fetch(`/api/batches/${encodeURIComponent(batchId)}/bulk`, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({item_ids: itemIds, action: bulkAction, value, reason}),
-    });
-    const data = await response.json();
-    bulkDialog.close();
-    if (!data.changed) return toast((data.errors || [data.error || "Bulk edit failed"])[0], "error");
-    toast(`✓ ${data.changed} items updated · checkpoint ${data.checkpoint_id}`);
-    setTimeout(() => window.location.reload(), 650);
+    button.disabled = true;
+    button.textContent = "Applying…";
+    try {
+      const requestId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+      const response = await fetch(`/api/batches/${encodeURIComponent(batchId)}/bulk`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({item_ids: itemIds, action: bulkAction, value, reason, request_id: requestId}),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok || data.failed) throw new Error(data.error || (data.errors || ["Bulk edit failed"])[0]);
+      bulkDialog.close();
+      toast(`✓ ${data.changed} changed · ${data.unchanged} unchanged · checkpoint ${data.checkpoint_id}`);
+      setTimeout(() => window.location.reload(), 650);
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      button.disabled = false;
+      button.textContent = "Preview and apply";
+    }
   });
 
   qs("[data-fill-down]")?.addEventListener("click", async () => {
     if (!activeInput) return toast("Focus the source cell first.", "error");
     const field = activeInput.dataset.field;
-    const targets = selectedRows().map((row) => qs(`[data-field="${field}"]`, row)).filter(Boolean);
-    if (!targets.length) return toast("Select destination rows first.", "error");
+    const map = {
+      title: "set_title", price_cents: "set_price", discount_percent: "set_discount",
+      description: "set_description", shelf: "set_location",
+    };
+    const action = map[field];
+    if (!action) return toast(`Fill Down is not supported for ${field}.`, "error");
+    const itemIds = selectedRows().map((row) => row.dataset.itemId);
+    if (!itemIds.length) return toast("Select destination rows first.", "error");
     const value = currentInputValue(activeInput);
-    if (!confirm(`Fill ${targets.length} selected ${field} cells with the active value?`)) return;
-    for (const target of targets) {
-      setInputValue(target, value);
-      target.classList.add("dirty");
-      await sendEdit(target);
+    try {
+      const requestId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+      const response = await fetch(`/api/batches/${encodeURIComponent(batchId)}/bulk`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({item_ids: itemIds, action, value, reason: `Fill down ${field}`, request_id: requestId}),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || "Fill Down failed");
+      toast(`✓ Filled ${data.changed} cells atomically.`);
+      setTimeout(() => window.location.reload(), 650);
+    } catch (error) {
+      toast(error.message, "error");
     }
-    toast(`✓ Filled ${targets.length} cells.`);
   });
 
   qsa("[data-restore-checkpoint]").forEach((button) => {
@@ -426,8 +463,8 @@
       const reasons = Array.isArray(item.uncertainty_reasons) ? item.uncertainty_reasons : [];
       qs("#evidence-content").innerHTML = `
         <p><strong>${escapeHtml(item.suggested_title || item.title || "No title suggestion")}</strong></p>
-        <p>Confidence: ${item.recognition_confidence == null ? "Unknown" : Math.round(item.recognition_confidence * 100) + "%"}</p>
-        <p>Provider: ${escapeHtml(item.recognition_provider || "Not run")}</p>
+        <p>Confidence: ${item.display_confidence == null ? (item.review_status === "DONE" ? "Manual" : "Not identified") : Math.round(item.display_confidence * 100) + "%"}</p>
+        <p>Provider: ${escapeHtml(item.suggestion_provider || item.recognition_provider || "Not run")}</p>
         <p>Pricing source: ${escapeHtml(item.pricing_source || "Not recorded")}</p>
         <p>Tokens: ${Number(item.input_tokens || 0)} input · ${Number(item.output_tokens || 0)} output</p>
         <p>Images: ${Number(item.image_count || 0)}</p>

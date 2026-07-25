@@ -13,7 +13,7 @@ def wait_for_job(db_file: Path, batch_id: str) -> dict:
     deadline = time.time() + 5
     while time.time() < deadline:
         job = db.get_recognition_job(db_file, batch_id)
-        if job and job["status"] in {"COMPLETE", "COMPLETE_WITH_FAILURE"}:
+        if job and job["status"] in {"COMPLETE", "COMPLETE_WITH_FAILURES"}:
             return job
         time.sleep(0.02)
     raise AssertionError("recognition did not finish")

@@ -14,7 +14,7 @@ def wait_for_job(db_file: Path, batch_id: str, *, timeout: float = 10) -> dict[s
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         job = db.get_recognition_job(db_file, batch_id)
-        if job and job["status"] in {"COMPLETE", "COMPLETE_WITH_FAILURE", "REVIEW_COMPLETE", "PAUSED"}:
+        if job and job["status"] in {"COMPLETE", "COMPLETE_WITH_FAILURES", "REVIEW_COMPLETE", "PAUSED"}:
             return job
         time.sleep(0.01)
     raise AssertionError(f"recognition did not finish for {batch_id}")
@@ -40,4 +40,11 @@ def ready_item(tmp_path: Path, data_paths):
         discount_percent=0,
     )
     assert errors == []
+    # Shopify tests model a deliberate human replacement of the synthetic fixture result.
+    db.update_item(
+        data_paths.db_file,
+        item["item_id"],
+        {"working_source": "INDIVIDUAL_REVIEW", "review_source": "INDIVIDUAL_REVIEW"},
+        source="INDIVIDUAL_REVIEW",
+    )
     return result, db.get_item(data_paths.db_file, item["item_id"])

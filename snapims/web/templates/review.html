@@ -1,41 +1,149 @@
-{% extends "base.html" %}{% block title %}Review · SnapIMS{% endblock %}{% block content %}
-<div class="review-toolbar"><form method="get" action="/review"><label>Batch<select name="batch_id" onchange="this.form.submit()">{% for batch in batches %}<option value="{{ batch.batch_id }}" {% if batch.batch_id==batch_id %}selected{% endif %}>{{ batch.batch_id }}</option>{% endfor %}</select></label><label>Queue<select name="queue" onchange="this.form.submit()"><option value="UNRESOLVED" {% if queue=='UNRESOLVED' %}selected{% endif %}>Unresolved</option><option value="DONE" {% if queue=='DONE' %}selected{% endif %}>Done</option><option value="FAILED" {% if queue=='FAILED' %}selected{% endif %}>Failed</option><option value="ALL" {% if queue=='ALL' %}selected{% endif %}>All</option></select></label><a class="button" href="/batch-editor?batch_id={{ batch_id }}">Batch Editor</a></form></div>
-{% if not batches %}<section class="empty"><h1>No batches yet</h1><a class="button primary" href="/import">Import a batch</a></section>{% else %}
-<section class="status-strip" id="recognition-status" data-batch="{{ batch_id }}" data-running="{{ 'true' if job and job.status in ['RUNNING','IDENTIFYING'] else 'false' }}"><strong>{{ status_text }}</strong><div>{% if status_action in ['identify','continue'] %}<form method="post" action="/review/identify"><input type="hidden" name="batch_id" value="{{ batch_id }}"><select name="provider"><option value="mock">Mock</option><option value="openai">OpenAI</option><option value="gemini">Gemini</option></select><button class="primary">{{ 'Identify items' if status_action=='identify' else 'Continue identification' }}</button></form>{% elif status_action=='complete' %}<a class="button primary" href="/publish?batch_id={{ batch_id }}">Continue to Publish</a>{% endif %}</div></section>
-{% if job and status_action=='failure' %}<section class="panel failure-panel"><div><p class="eyebrow">RECOGNITION FAILURE</p><h2>{{ job.error_message or 'Recognition did not complete.' }}</h2><p><strong>{{ job.error_code or 'UNKNOWN' }}</strong> · {{ job.provider }}{% if job.model_name %} · {{ job.model_name }}{% endif %}</p><p>{{ job.completed }} complete · {{ job.failed }} failed · Updated {{ job.error_at or job.updated_at }}</p></div><div class="recovery-grid"><form method="post" action="/review/retry-batch"><input type="hidden" name="batch_id" value="{{ batch_id }}"><label>Provider<select name="provider"><option value="mock">Mock</option><option value="openai">OpenAI</option><option value="gemini">Gemini</option></select></label><button class="primary">Retry Batch</button></form><form method="post" action="/review/retry-batch"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="failed_only" value="true"><select name="provider"><option value="mock">Mock</option><option value="openai">OpenAI</option></select><button>Retry Failed Items Only</button></form><form method="post" action="/review/manual"><input type="hidden" name="batch_id" value="{{ batch_id }}"><button>Continue With Manual Review</button></form><form method="post" action="/review/skip-recognition"><input type="hidden" name="batch_id" value="{{ batch_id }}"><button>Skip Recognition for This Batch</button></form><a class="button" href="/settings">Configure Provider</a><a class="button" href="/diagnostics">Open Diagnostics</a></div><details><summary>Technical detail</summary><pre>{{ job.error_message }}</pre></details></section>{% endif %}
-<div class="health-strip"><span>{{ health.total }} items</span><span>{{ health.approved }} reviewed</span><span>{{ health.unfinished }} unfinished</span><span>{{ health.low_confidence }} low confidence</span><span>{{ health.publish_blockers }} blockers</span></div>
-{% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}{% if errors %}<div class="alert error"><strong>Changes not saved</strong><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
+{% extends "base.html" %}
+{% block title %}Review · SnapIMS{% endblock %}
+{% block content %}
+<div class="review-toolbar">
+  <form method="get" action="/review">
+    <label>Batch
+      <select name="batch_id" onchange="this.form.submit()">
+        {% for batch in batches %}<option value="{{ batch.batch_id }}" {% if batch.batch_id==batch_id %}selected{% endif %}>{{ batch.batch_id }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Queue
+      <select name="queue" onchange="this.form.submit()">
+        <option value="UNRESOLVED" {% if queue=='UNRESOLVED' %}selected{% endif %}>Unresolved</option>
+        <option value="DONE" {% if queue=='DONE' %}selected{% endif %}>Done</option>
+        <option value="FAILED" {% if queue=='FAILED' %}selected{% endif %}>Failed</option>
+        <option value="BLOCKED" {% if queue=='BLOCKED' %}selected{% endif %}>Blocked</option>
+        <option value="ALL" {% if queue=='ALL' %}selected{% endif %}>All</option>
+      </select>
+    </label>
+    <a class="button" href="/batch-editor?batch_id={{ batch_id }}">Batch Editor</a>
+  </form>
+</div>
+{% if not batches %}
+<section class="empty"><h1>No batches yet</h1><a class="button primary" href="/import">Import a batch</a></section>
+{% else %}
+<section class="status-strip" id="recognition-status" data-batch="{{ batch_id }}" data-running="{{ 'true' if job and job.status in ['RUNNING','IDENTIFYING'] else 'false' }}">
+  <strong>{{ status_text }}</strong>
+  <div>
+    {% if status_action in ['identify','continue'] %}
+    <form method="post" action="/review/identify">
+      <input type="hidden" name="batch_id" value="{{ batch_id }}">
+      <select name="provider" aria-label="Recognition provider">
+        {% for name, provider in providers.items() %}<option value="{{ name }}">{{ name|title }}</option>{% endfor %}
+      </select>
+      <button class="primary">{{ 'Identify items' if status_action=='identify' else 'Continue identification' }}</button>
+    </form>
+    {% elif status_action=='complete' %}<a class="button primary" href="/publish?batch_id={{ batch_id }}">Continue to Publish</a>
+    {% elif status_action in ['blocked','manual'] %}<form method="post" action="/review/manual"><input type="hidden" name="batch_id" value="{{ batch_id }}"><button class="primary">Continue With Manual Review</button></form>
+    {% endif %}
+  </div>
+</section>
+{% if job and status_action in ['failure','blocked'] %}
+<section class="panel failure-panel">
+  <div>
+    <p class="eyebrow">{{ 'RECOGNITION BLOCKED' if status_action=='blocked' else 'RECOGNITION FAILURE' }}</p>
+    <h2>{{ job.error_message or 'Recognition did not complete.' }}</h2>
+    <p><strong>{{ job.error_code or 'UNKNOWN' }}</strong>{% if job.provider %} · {{ job.provider }}{% endif %}{% if job.model_name %} · {{ job.model_name }}{% endif %}</p>
+    <p>{{ job.completed }} complete · {{ job.failed }} failed · Updated {{ job.error_at or job.updated_at }}</p>
+  </div>
+  <div class="recovery-grid">
+    <form method="post" action="/review/retry-batch">
+      <input type="hidden" name="batch_id" value="{{ batch_id }}">
+      <label>Provider<select name="provider">{% for name, provider in providers.items() %}<option value="{{ name }}">{{ name|title }}</option>{% endfor %}</select></label>
+      <button class="primary">Retry Batch</button>
+    </form>
+    {% if status_action=='failure' %}
+    <form method="post" action="/review/retry-batch">
+      <input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="failed_only" value="true">
+      <select name="provider" aria-label="Provider for failed items">{% for name, provider in providers.items() %}<option value="{{ name }}">{{ name|title }}</option>{% endfor %}</select>
+      <button>Retry Failed Items Only</button>
+    </form>
+    {% endif %}
+    <form method="post" action="/review/manual"><input type="hidden" name="batch_id" value="{{ batch_id }}"><button>Continue With Manual Review</button></form>
+    <form method="post" action="/review/skip-recognition"><input type="hidden" name="batch_id" value="{{ batch_id }}"><button>Skip Recognition for This Batch</button></form>
+    <a class="button" href="/settings">Configure recognition</a><a class="button" href="/diagnostics">Open diagnostics</a>
+  </div>
+  <details><summary>Technical detail</summary><pre>{{ job.error_message }}</pre></details>
+</section>
+{% endif %}
+<div class="health-strip">
+  <span>{{ health.total }} items</span><span>{{ health.approved }} reviewed</span><span>{{ health.unfinished }} unfinished</span>
+  <span>{{ health.failed }} failed</span><span>{{ health.blocked }} blocked</span><span>{{ health.low_confidence }} low confidence</span>
+  <span>{{ health.publish_blockers }} publish blockers</span>{% if health.test_sourced %}<span>{{ health.test_sourced }} test-sourced</span>{% endif %}
+</div>
+{% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}
+{% if errors %}<div class="alert error"><strong>Changes not saved</strong><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
 {% if current %}
-<section class="physical-header"><strong>Batch item {{ physical.position }} of {{ physical.total }}</strong><span>{% if current.review_status=='DONE' %}Done · {% endif %}{{ physical.unfinished }} unfinished</span><code>{{ current.item_id }}</code></section>
+<section class="physical-header">
+  <strong>Batch item {{ physical.position }} of {{ physical.total }}</strong>
+  <span>{{ current.value_state|title }} · {{ physical.unfinished }} unfinished</span><code>{{ current.item_id }}</code>
+</section>
 <section class="workstation" id="workstation">
-  <div class="photo-pane">{% if photos %}<img src="/media/{{ photos[photo_index-1].photo_id }}" alt="Photograph {{ photo_index }} of {{ photos|length }} for {{ current.item_id }}"><div class="photo-meta"><span>{{ photos[photo_index-1].original_name }}</span><span>{{ photos[photo_index-1].image_role }}</span><a href="/media/{{ photos[photo_index-1].photo_id }}?original=true" target="_blank">Open original</a></div><div class="photo-tabs">{% for image in photos %}<a class="{{ 'active' if loop.index==photo_index else '' }}" href="/review?batch_id={{ batch_id }}&queue={{ queue }}&item_id={{ current.item_id }}&photo={{ loop.index }}">{{ image.image_role|title if image.image_role else ('Front' if loop.index==1 else 'Photo ' ~ loop.index) }}</a>{% endfor %}</div>{% else %}<div class="photo-missing">No photograph</div>{% endif %}</div>
+  <div class="photo-pane">
+    {% if photos %}
+      <img src="/media/{{ photos[photo_index-1].photo_id }}" alt="Photograph {{ photo_index }} of {{ photos|length }} for {{ current.item_id }}">
+      <div class="photo-meta"><span>{{ photos[photo_index-1].original_name }}</span><span>{{ photos[photo_index-1].image_role }}</span><a href="/media/{{ photos[photo_index-1].photo_id }}?original=true" target="_blank">Open original</a></div>
+      <div class="photo-tabs">{% for image in photos %}<a class="{{ 'active' if loop.index==photo_index else '' }}" href="/review?batch_id={{ batch_id }}&queue={{ queue }}&item_id={{ current.item_id }}&photo={{ loop.index }}">{{ image.image_role|title if image.image_role else ('Front' if loop.index==1 else 'Photo ' ~ loop.index) }}</a>{% endfor %}</div>
+    {% else %}<div class="photo-missing">No photograph</div>{% endif %}
+  </div>
   <div class="record-pane">
   {% if edit %}
     <p class="eyebrow">EXCEPTION EDITOR</p><h1>Edit item</h1>
-    <form method="post" action="/review/save" class="editor-grid"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><input type="hidden" name="queue" value="{{ queue }}"><input type="hidden" name="revision" value="{{ current.record_revision }}">
-      <label class="span-2">Title<input autofocus name="title" value="{{ current.title or (suggestion.suggested_title if suggestion else '') }}"></label>
-      <label>Release year<input name="release_year" value="{{ current.release_year or (suggestion.release_year if suggestion else '') }}"></label><label>Barcode<input name="barcode" value="{{ current.barcode }}"></label>
-      <label>Studio / distributor<input name="distributor" value="{{ current.distributor or (suggestion.distributor if suggestion else '') }}"></label><label>Edition / format<input name="edition" value="{{ current.edition or (suggestion.edition if suggestion else '') }}"></label>
-      <label>Price CAD<input name="price" type="number" step="0.01" value="{{ '%.2f'|format((current.price_cents or (suggestion.suggested_price_cents if suggestion else 0) or 0)/100) }}"></label><label>Discount %<input name="discount" type="number" step="0.01" value="{{ current.discount_percent or (suggestion.suggested_discount_percent if suggestion else 0) }}"></label>
-      <label>Quantity<input name="quantity" type="number" value="{{ current.quantity }}"></label><label>Condition<select name="condition">{% for option in conditions %}<option {% if option==current.condition %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
-      <label>Shelf<input name="shelf" value="{{ current.shelf }}"></label><label>Location-change reason<input name="location_reason" placeholder="Required only when shelf changes"></label>
-      <label class="check"><input type="checkbox" name="rare" value="true" {% if current.rare %}checked{% endif %}> Rare</label><label class="check"><input type="checkbox" name="review" value="true" {% if current.review %}checked{% endif %}> Physical Review</label>
-      <label>Vendor<input name="vendor" value="{{ current.vendor }}"></label><label>Product type<input name="product_type" value="{{ current.product_type }}"></label>
-      <label class="span-2">Tags<input name="tags" value="{{ current.tags }}"></label><label class="span-2">Condition notes<textarea name="condition_notes">{{ current.condition_notes }}</textarea></label><label class="span-2">Description<textarea name="description">{{ current.description }}</textarea></label>
-      <label>Inventory mode<select name="pool_mode">{% for option in pool_modes %}<option {% if option==current.pool_mode %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+    {% if suggestion and not current.title %}<div class="suggestion-note"><strong>AI suggestion:</strong> {{ suggestion.suggested_title }}{% if suggestion.confidence is not none %} · {{ (suggestion.confidence*100)|round|int }}%{% endif %}. Entering or saving it makes it a working value.</div>{% endif %}
+    <form method="post" action="/review/save" class="editor-grid">
+      <input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><input type="hidden" name="queue" value="{{ queue }}"><input type="hidden" name="revision" value="{{ current.record_revision }}">
+      <fieldset class="span-2 editor-section"><legend>Required</legend>
+        <label>Title<input autofocus name="title" value="{{ current.title }}" placeholder="{{ suggestion.suggested_title if suggestion else 'Required' }}"></label>
+        <label>Price CAD<input name="price" type="number" min="0" step="0.01" value="{{ '%.2f'|format(current.price_cents/100) if current.price_cents is not none else '' }}" placeholder="{{ '%.2f'|format(suggestion.suggested_price_cents/100) if suggestion and suggestion.suggested_price_cents is not none else '0.00' }}"></label>
+        <label>Quantity<input name="quantity" type="number" min="0" value="{{ current.quantity }}"></label>
+        <label>Shelf<input name="shelf" value="{{ current.shelf }}"></label>
+        <label>Condition<select name="condition">{% for option in conditions %}<option {% if option==current.condition %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+        <label>Discount %<input name="discount" type="number" min="0" max="100" step="0.01" value="{{ current.discount_percent }}"></label>
+      </fieldset>
+      <fieldset class="span-2 editor-section"><legend>Common optional</legend>
+        <label>Release year<input name="release_year" value="{{ current.release_year or '' }}" placeholder="{{ suggestion.release_year if suggestion else '' }}"></label><label>Barcode<input name="barcode" value="{{ current.barcode }}"></label>
+        <label>Studio / distributor<input name="distributor" value="{{ current.distributor }}" placeholder="{{ suggestion.distributor if suggestion else '' }}"></label><label>Edition / format<input name="edition" value="{{ current.edition }}" placeholder="{{ suggestion.edition if suggestion else '' }}"></label>
+        <label>Location-change reason<input name="location_reason" placeholder="Required only when shelf changes"></label>
+        <label class="check"><input type="checkbox" name="rare" value="true" {% if current.rare %}checked{% endif %}> Rare</label><label class="check"><input type="checkbox" name="review" value="true" {% if current.review %}checked{% endif %}> Physical Review</label>
+        <label class="span-2">Condition notes<textarea name="condition_notes">{{ current.condition_notes }}</textarea></label>
+      </fieldset>
+      <details class="span-2 editor-section"><summary>Advanced product fields</summary><div class="editor-grid nested-grid">
+        <label>Vendor<input name="vendor" value="{{ current.vendor }}"></label><label>Product type<input name="product_type" value="{{ current.product_type }}"></label>
+        <label class="span-2">Tags<input name="tags" value="{{ current.tags }}"></label><label class="span-2">Description<textarea name="description">{{ current.description }}</textarea></label>
+        <label>Inventory mode<select name="pool_mode">{% for option in pool_modes %}<option {% if option==current.pool_mode %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+      </div></details>
       <div class="span-2 action-row"><button class="primary">{{ 'Save changes' if current.review_status=='DONE' else 'Save edits & next' }}</button><a class="button" href="/review?batch_id={{ batch_id }}&queue={{ queue }}&item_id={{ current.item_id }}">Cancel changes</a></div>
     </form>
   {% else %}
-    <div class="identity"><p class="eyebrow">{{ 'SAVED RECORD' if current.review_status=='DONE' else ('AI SUGGESTION' if suggestion else 'MANUAL REVIEW') }}</p><h1>{{ current.title or (suggestion.suggested_title if suggestion else 'Title required') }}</h1><p>{{ current.edition or (suggestion.edition if suggestion else 'No edition detected') }}</p>{% if suggestion %}<div class="confidence"><strong>{{ (suggestion.confidence * 100)|round|int }}%</strong><span>Recognition confidence</span></div>{% endif %}</div>
-    <form id="quick-approve-form" method="post" action="/review/approve" class="quick-approve" data-quick-review><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><div class="quick-fields"><label>Price CAD<input id="quick-price" name="price" type="text" inputmode="decimal" autocomplete="off" value="{{ '%.2f'|format((current.price_cents or (suggestion.suggested_price_cents if suggestion else 0) or 0)/100) }}"></label><label>Discount %<input name="discount" type="number" step="0.01" value="{{ current.discount_percent or (suggestion.suggested_discount_percent if suggestion else 0) }}"></label></div><button id="approve-next-button" class="approve" type="submit">✓ Approve & Next</button></form>
-    <div class="secondary-actions"><a class="button" href="/review?batch_id={{ batch_id }}&queue={{ queue }}&item_id={{ current.item_id }}&edit=true">Edit details</a>{% if current.review_status!='DONE' %}<form method="post" action="/review/later"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><button>Later</button></form>{% endif %}{% if current.recognition_status=='FAILED' %}<form method="post" action="/review/retry"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><select name="provider"><option value="mock">Mock</option><option value="openai">OpenAI</option></select><button>Retry this item</button></form>{% endif %}</div>
-    <dl class="summary"><div><dt>Location</dt><dd>{{ current.shelf }}</dd></div><div><dt>Images</dt><dd>{{ current.image_count }}</dd></div><div><dt>Condition</dt><dd>{{ current.condition }}</dd></div><div><dt>Review source</dt><dd>{{ current.review_source or 'Not reviewed' }}</dd></div></dl>
-    {% if suggestion %}<details class="evidence"><summary>Recognition evidence and history</summary><p><strong>Suggested title:</strong> {{ suggestion.suggested_title }}</p><p><strong>Provider:</strong> {{ suggestion.provider }}</p>{% set reasons=suggestion.uncertainty_reasons_json|default('[]') %}<pre>{{ reasons }}</pre>{% for record in history %}<div class="history"><strong>{{ record.suggested_title }}</strong><span>{{ record.provider }} · {{ (record.confidence*100)|round|int }}%</span></div>{% endfor %}</details>{% endif %}
-    {% if item_history %}<details><summary>Change history</summary>{% for change in item_history[:20] %}<div class="history"><strong>{{ change.field_name }}</strong><span>{{ change.source }} · {{ change.occurred_at }}</span><code>{{ change.old_value_json }} → {{ change.new_value_json }}</code></div>{% endfor %}</details>{% endif %}
+    <div class="identity">
+      <p class="eyebrow">{{ current.value_state }}{% if current.suggestion_source_kind=='TEST' %} · TEST SOURCE{% endif %}</p>
+      <h1>{{ current.title or (suggestion.suggested_title if suggestion else 'Title required') }}</h1>
+      <p>{% if current.title %}Saved working title{% elif suggestion %}AI suggestion — not saved until approval{% else %}Manual title required before approval{% endif %}</p>
+      {% if suggestion %}<div class="confidence"><strong>{{ (suggestion.confidence * 100)|round|int }}%</strong><span>Latest suggestion confidence</span></div>{% elif current.review_status=='DONE' %}<div class="confidence"><strong>Manual</strong><span>No AI confidence</span></div>{% endif %}
+    </div>
+    <form id="quick-approve-form" method="post" action="/review/approve" class="quick-approve" data-quick-review>
+      <input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}">
+      <div class="quick-fields">
+        <label>Price CAD<input id="quick-price" name="price" type="text" inputmode="decimal" autocomplete="off" value="{{ '%.2f'|format((current.price_cents if current.price_cents is not none else (suggestion.suggested_price_cents if suggestion and suggestion.suggested_price_cents is not none else 0))/100) }}"></label>
+        <label>Discount %<input name="discount" type="number" min="0" max="100" step="0.01" value="{{ current.discount_percent if current.discount_percent else (suggestion.suggested_discount_percent if suggestion else 0) }}"></label>
+      </div>
+      <button id="approve-next-button" class="approve" type="submit" {% if not current.title and not suggestion %}aria-describedby="manual-required"{% endif %}>✓ Approve & Next</button>
+    </form>
+    {% if not current.title and not suggestion %}<p id="manual-required" class="alert warning">No title is available. Open Edit details, enter the title and required values, then save.</p>{% endif %}
+    <div class="secondary-actions">
+      <a class="button" href="/review?batch_id={{ batch_id }}&queue={{ queue }}&item_id={{ current.item_id }}&edit=true">Edit details</a>
+      {% if current.review_status!='DONE' %}<form method="post" action="/review/later"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><button>Later</button></form>{% endif %}
+      {% if current.recognition_status in ['FAILED','BLOCKED'] %}<form method="post" action="/review/retry"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><select name="provider" aria-label="Retry provider">{% for name, provider in providers.items() %}<option value="{{ name }}">{{ name|title }}</option>{% endfor %}</select><button>Retry this item</button></form>{% endif %}
+    </div>
   {% endif %}
   </div>
 </section>
-<div class="nav-row"><form method="post" action="/review/navigate"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="queue" value="{{ queue }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><button name="direction" value="previous">← Previous</button><button name="direction" value="next">Next →</button></form></div>
-{% else %}<section class="empty"><h2>{{ 'Review complete' if queue=='UNRESOLVED' else 'No items in this queue' }}</h2><div class="actions"><a class="button primary" href="/batch-editor?batch_id={{ batch_id }}">Open Batch Editor</a><a class="button" href="/publish?batch_id={{ batch_id }}">Continue to Publish</a></div></section>{% endif %}
+<div class="review-navigation"><form method="post" action="/review/navigate"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="queue" value="{{ queue }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><button name="direction" value="previous">← Previous</button><button name="direction" value="next">Next →</button></form></div>
+<details class="panel"><summary>Recognition details and provenance</summary>
+  {% if suggestion %}<p><strong>Latest suggestion: {{ suggestion.suggested_title or 'No title' }}</strong></p><p><strong>{{ suggestion.provider }}</strong>{% if suggestion.model_name %} · {{ suggestion.model_name }}{% endif %} · {{ suggestion.source_kind or 'LIVE' }} · {{ suggestion.created_at }}</p><p>Pricing source: {{ suggestion.pricing_source }}</p>{% else %}<p>No recognition result is stored for this item.</p>{% endif %}
+  {% if item_history %}<table><thead><tr><th>Time</th><th>Field</th><th>Source</th></tr></thead><tbody>{% for change in item_history[:20] %}<tr><td>{{ change.occurred_at }}</td><td>{{ change.field_name }}</td><td>{{ change.source }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+</details>
+{% else %}<section class="empty"><h2>No items in this queue</h2><p>Choose another queue or continue to the logical next step.</p></section>{% endif %}
 {% endif %}
 {% endblock %}

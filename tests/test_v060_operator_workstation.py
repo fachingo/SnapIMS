@@ -50,7 +50,7 @@ def test_missing_openai_key_creates_durable_failure(tmp_path: Path, data_paths, 
     result = process_batch(create_demo_batch(tmp_path / "camera"), paths=data_paths)
     assert start_batch_recognition(data_paths.db_file, result.batch_id, "openai") is False
     job = db.get_recognition_job(data_paths.db_file, result.batch_id)
-    assert job["status"] == "FAILED"
+    assert job["status"] == "BLOCKED"
     assert job["error_code"] == "API_KEY_MISSING"
     assert "API key" in job["error_message"]
 
@@ -61,8 +61,9 @@ def test_review_failure_screen_has_real_recovery_actions(tmp_path: Path, data_pa
     start_batch_recognition(data_paths.db_file, result.batch_id, "openai")
     with TestClient(app) as client:
         response = client.get(f"/review?batch_id={result.batch_id}")
-    assert "Retry Failed Items Only" in response.text
+    assert "RECOGNITION BLOCKED" in response.text
     assert "Continue With Manual Review" in response.text
+    assert "Retry Failed Items Only" not in response.text
     assert "Open Diagnostics" in response.text
     assert "OPENAI_API_KEY" in response.text or "API key" in response.text
 

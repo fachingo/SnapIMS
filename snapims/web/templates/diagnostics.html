@@ -1,9 +1,27 @@
 {% extends "base.html" %}{% block title %}Diagnostics · SnapIMS{% endblock %}{% block content %}
-<div class="page-heading"><div><p class="eyebrow">DIAGNOSTICS</p><h1>System health</h1><p>Useful facts without exposing secrets.</p></div><button type="button" data-copy-diagnostics>Copy Diagnostic Summary</button></div>
-<div class="metric-grid"><article><b>{{ integrity }}</b><span>SQLite integrity</span></article><article><b>{{ foreign }}</b><span>Foreign-key violations</span></article><article><b>{{ schema }}</b><span>Schema version</span></article><article><b>{{ version }}</b><span>Application version</span></article></div>
-<section class="panel"><h2>Paths</h2><table><tr><th>Data root</th><td><code>{{ paths.root }}</code></td></tr><tr><th>Database</th><td><code>{{ paths.db_file }}</code></td></tr><tr><th>Exports</th><td><code>{{ paths.exports }}</code></td></tr><tr><th>Backups</th><td><code>{{ paths.backups }}</code></td></tr></table></section>
-<section class="panel"><h2>Provider configuration</h2><table>{% for name,state in providers.items() %}<tr><th>{{ name }}</th><td>{{ state[1] }}</td></tr>{% endfor %}</table></section>
-<section class="panel"><h2>Media bandwidth</h2><div class="metric-grid compact"><article><b>{{ media_totals.original_bytes }}</b><span>Original bytes</span></article><article><b>{{ media_totals.preview_bytes }}</b><span>Preview bytes</span></article><article><b>{{ media_totals.recognition_bytes }}</b><span>Recognition bytes</span></article><article><b>{{ media_totals.images_skipped }}</b><span>AI-skipped images</span></article></div></section>
-<section class="panel"><h2>Recent recognition jobs</h2><table><thead><tr><th>Batch</th><th>Status</th><th>Provider</th><th>Progress</th><th>Last error</th></tr></thead><tbody>{% for job in jobs %}<tr><td>{{ job.batch_id }}</td><td>{{ job.status }}</td><td>{{ job.provider }}</td><td>{{ job.completed }}/{{ job.total }}</td><td>{{ job.error_message }}</td></tr>{% endfor %}</tbody></table></section>
+<div class="page-heading"><div><p class="eyebrow">DIAGNOSTICS</p><h1>System health</h1><p>Operational facts without exposing credentials.</p></div><button type="button" data-copy-diagnostics>Copy Diagnostic Summary</button></div>
+<div class="metric-grid">
+  <article><b>{{ integrity }}</b><span>SQLite integrity</span></article><article><b>{{ foreign }}</b><span>Foreign-key violations</span></article>
+  <article><b>{{ 'PASS' if manifest.ok else 'FAIL' }}</b><span>Schema manifest</span></article><article><b>{{ schema }}</b><span>Schema version</span></article>
+  <article><b>{{ version }}</b><span>Application version</span></article><article><b>{{ test_contaminated_items }}</b><span>Test-sourced items</span></article>
+</div>
+{% if not manifest.ok %}<div class="alert error"><strong>Schema verification failed.</strong><ul>{% for problem in manifest.problems %}<li>{{ problem }}</li>{% endfor %}</ul></div>{% endif %}
+<section class="panel"><h2>Workspace and recovery</h2><table>
+<tr><th>Data root</th><td><code>{{ paths.root }}</code></td></tr><tr><th>Database</th><td><code>{{ paths.db_file }}</code></td></tr>
+<tr><th>Database size</th><td>{{ storage.database_bytes }} bytes</td></tr><tr><th>WAL size</th><td>{{ storage.wal_bytes }} bytes</td></tr>
+<tr><th>Last database backup</th><td><code>{{ last_backup }}</code></td></tr><tr><th>Checkpoints</th><td>{{ checkpoint_info.count }} · {{ checkpoint_info.bytes }} bytes · {{ checkpoint_info.protected }} protected</td></tr>
+<tr><th>CSV stages</th><td>{{ stage_info }}</td></tr><tr><th>Import journal</th><td>{{ import_info }}</td></tr>
+</table></section>
+<section class="panel"><h2>Recognition configuration</h2><p>Test-provider mode: <strong>{{ 'ENABLED — development only' if test_provider_mode else 'Disabled' }}</strong></p><table>{% for name,state in providers.items() %}<tr><th>{{ name|title }}</th><td>{{ state[1] }}</td></tr>{% endfor %}</table></section>
+<section class="panel"><h2>Media and measured AI payload</h2><div class="metric-grid compact">
+<article><b>{{ media_totals.total_photos }}</b><span>Total photos</span></article><article><b>{{ media_totals.command_images }}</b><span>QR command photos</span></article>
+<article><b>{{ media_totals.excluded_images }}</b><span>Excluded photos</span></article><article><b>{{ media_totals.ai_ineligible_product_images }}</b><span>AI-ineligible products</span></article>
+<article><b>{{ media_totals.provider_selected_images }}</b><span>Images sent to providers</span></article><article><b>{{ media_totals.provider_payload_bytes }}</b><span>Provider payload bytes</span></article>
+<article><b>{{ media_totals.original_bytes }}</b><span>Original bytes</span></article><article><b>{{ media_totals.preview_bytes }}</b><span>Preview bytes</span></article>
+</div></section>
+<section class="panel"><h2>Recent recognition jobs</h2><table><thead><tr><th>Batch</th><th>Status</th><th>Provider</th><th>Progress</th><th>Last error</th></tr></thead><tbody>{% for job in jobs %}<tr><td>{{ job.batch_id }}</td><td>{{ job.status }}</td><td>{{ job.provider or '—' }}</td><td>{{ job.completed }}/{{ job.total }}</td><td>{{ job.error_message }}</td></tr>{% else %}<tr><td colspan="5">No jobs recorded.</td></tr>{% endfor %}</tbody></table></section>
+<section class="panel"><h2>Recent CSV stages</h2><table><thead><tr><th>Batch</th><th>File</th><th>Status</th><th>Rows</th><th>Expiry</th></tr></thead><tbody>{% for stage in csv_stages %}<tr><td>{{ stage.batch_id }}</td><td>{{ stage.filename }}</td><td>{{ stage.status }}</td><td>{{ stage.row_count }}</td><td>{{ stage.expires_at }}</td></tr>{% else %}<tr><td colspan="5">No CSV stages recorded.</td></tr>{% endfor %}</tbody></table></section>
+<section class="panel"><h2>Import recovery journal</h2><table><thead><tr><th>Batch</th><th>Status</th><th>Updated</th><th>Error</th></tr></thead><tbody>{% for entry in imports %}<tr><td>{{ entry.batch_id }}</td><td>{{ entry.status }}</td><td>{{ entry.updated_at }}</td><td>{{ entry.error_message }}</td></tr>{% else %}<tr><td colspan="4">No import journal records.</td></tr>{% endfor %}</tbody></table></section>
+<section class="panel"><h2>Recent transactional operations</h2><table><thead><tr><th>Type</th><th>Batch</th><th>Status</th><th>Completed</th><th>Error</th></tr></thead><tbody>{% for operation in operations %}<tr><td>{{ operation.operation_type }}</td><td>{{ operation.batch_id }}</td><td>{{ operation.status }}</td><td>{{ operation.completed_at or '—' }}</td><td>{{ operation.error_message }}</td></tr>{% else %}<tr><td colspan="5">No bulk operations recorded.</td></tr>{% endfor %}</tbody></table></section>
 <textarea id="diagnostic-summary" class="diagnostic-summary" readonly>{{ diagnostic_summary }}</textarea>
 {% endblock %}

@@ -15,6 +15,8 @@ from fastapi.templating import Jinja2Templates
 
 from snapims import __version__, db
 from snapims.config import DataPaths, ShopifyConfig
+from snapims.bulk import apply_bulk_operation
+from snapims.money import parse_discount_percent, parse_price_cents
 from snapims.folder_picker import FolderPickerUnavailable, choose_folder
 from snapims.inventory import (
     CONDITIONS,
@@ -28,7 +30,7 @@ from snapims.inventory import (
     validation_errors,
 )
 from snapims.pipeline import parse_batch
-from snapims.processor import process_batch
+from snapims.processor import process_batch, reconcile_import_journals
 from snapims.recognition.providers import recognizer_registry
 from snapims.recognition.service import (
     accept_item,
@@ -38,6 +40,7 @@ from snapims.recognition.service import (
     start_batch_recognition,
 )
 from snapims.shopify.service import ShopifyService
+from snapims.runtime import test_providers_enabled
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
@@ -47,7 +50,10 @@ TEMPLATES = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
 async def lifespan(app: FastAPI):
     paths = get_paths()
     db.initialize(paths.db_file, paths=paths)
+    reconcile_import_journals(paths)
     db.mark_interrupted_jobs_paused(paths.db_file)
+    db.cleanup_csv_staging(paths.db_file)
+    db.prune_batch_checkpoints(paths.db_file)
     yield
 
 
@@ -307,7 +313,7 @@ def import_commit(
 def review_page(
     request: Request,
     batch_id: str | None = None,
-    queue: str = Query("UNRESOLVED", pattern="^(UNRESOLVED|DONE|FAILED|ALL)$"),
+    queue: str = Query("UNRESOLVED", pattern="^(UNRESOLVED|DONE|FAILED|BLOCKED|ALL)$"),
     item_id: str | None = None,
     photo: int = 1,
     edit: bool = False,
@@ -401,8 +407,12 @@ def recognition_status(paths: DataPaths, batch_id: str, job: dict[str, Any] | No
     if job["status"] == "PAUSED":
         remaining = max(0, int(job["total"]) - int(job["completed"]))
         return f"Identification paused · {job['completed']} of {job['total']} complete · {remaining} remaining", "continue"
-    if job["status"] in {"COMPLETE_WITH_FAILURE", "FAILED"}:
+    if job["status"] == "BLOCKED":
+        return "Recognition is blocked before an attempt · configure a live provider or continue manually", "blocked"
+    if job["status"] in {"COMPLETE_WITH_FAILURES", "FAILED"}:
         return f"Recognition failed or incomplete · {job['recognized']} ready · {job['failed']} failed", "failure"
+    if job["status"] == "SKIPPED":
+        return "Recognition intentionally skipped · complete the unfinished tapes manually", "manual"
     if job["status"] in {"COMPLETE", "REVIEW_COMPLETE"}:
         return f"Recognition complete · {job['recognized']} items ready to review", ""
     return str(job["status"]), ""
@@ -411,7 +421,7 @@ def recognition_status(paths: DataPaths, batch_id: str, job: dict[str, Any] | No
 @app.post("/review/identify")
 def identify(
     batch_id: str = Form(...),
-    provider: str = Form("mock"),
+    provider: str = Form("openai"),
     delay: float = Form(0),
 ) -> RedirectResponse:
     paths = get_paths()
@@ -428,7 +438,7 @@ def identify(
 @app.post("/review/retry-batch")
 def retry_batch(
     batch_id: str = Form(...),
-    provider: str = Form("mock"),
+    provider: str = Form("openai"),
     failed_only: bool = Form(False),
 ) -> RedirectResponse:
     try:
@@ -436,9 +446,10 @@ def retry_batch(
             get_paths().db_file,
             batch_id,
             provider,
-            retry_failed=True,
+            retry_failed=failed_only,
         )
-        notice = "Retry started." if started else "Retry could not start. Review the updated failure details."
+        scope = "failed items" if failed_only else "batch"
+        notice = f"Retry started for {scope}." if started else "Retry could not start. Review the updated failure details."
     except Exception as exc:
         notice = f"Retry failed: {exc}"
     return redirect(f"/review?batch_id={quote(batch_id)}&notice={quote(notice)}")
@@ -479,8 +490,8 @@ def approve(
     discount: str = Form("0"),
 ) -> RedirectResponse:
     try:
-        price_cents = int(round(float(price) * 100)) if price.strip() else None
-        discount_percent = float(discount or 0)
+        price_cents = parse_price_cents(price, allow_blank=True)
+        discount_percent = parse_discount_percent(discount)
     except ValueError:
         return redirect(
             f"/review?batch_id={quote(batch_id)}&item_id={quote(item_id)}&edit=true&errors="
@@ -546,7 +557,7 @@ def navigate(
 def retry(
     batch_id: str = Form(...),
     item_id: str = Form(...),
-    provider: str = Form("mock"),
+    provider: str = Form("openai"),
 ) -> RedirectResponse:
     try:
         retry_failed_item(get_paths().db_file, item_id, provider)
@@ -595,8 +606,8 @@ def save_item(
             "barcode": barcode.strip(),
             "distributor": distributor.strip(),
             "edition": edition.strip(),
-            "price_cents": int(round(float(price) * 100)) if price.strip() else None,
-            "discount_percent": float(discount or 0),
+            "price_cents": parse_price_cents(price, allow_blank=True),
+            "discount_percent": parse_discount_percent(discount),
             "quantity": quantity,
             "condition": condition,
             "shelf": shelf.strip().upper(),
@@ -674,11 +685,11 @@ def batch_editor(request: Request, batch_id: str | None = None, notice: str = ""
 
 def normalize_editor_value(field: str, value: Any) -> Any:
     if field == "price_cents":
-        if value in (None, ""):
-            return None
-        return int(round(float(value) * 100)) if isinstance(value, str) else int(value)
+        if isinstance(value, int):
+            return value
+        return parse_price_cents(value, allow_blank=True)
     if field in {"discount_percent"}:
-        return float(value or 0)
+        return parse_discount_percent(value)
     if field in {"quantity", "release_year"}:
         return int(value) if value not in (None, "") else None
     if field in {"rare", "review", "ready"}:
@@ -764,100 +775,32 @@ def api_item_photos(item_id: str) -> dict[str, Any]:
 
 @app.post("/api/batches/{batch_id}/bulk")
 async def api_bulk_edit(batch_id: str, request: Request) -> JSONResponse:
-    paths = get_paths()
     payload = await request.json()
-    item_ids = [str(value) for value in payload.get("item_ids", [])]
-    action = str(payload.get("action") or "")
-    if not item_ids:
-        return JSONResponse({"ok": False, "error": "Select at least one item"}, status_code=400)
-    items = {item["item_id"]: item for item in db.list_items(paths.db_file, batch_id=batch_id)}
-    unknown = [item_id for item_id in item_ids if item_id not in items]
-    if unknown:
-        return JSONResponse({"ok": False, "error": f"Item is not in this batch: {unknown[0]}"}, status_code=400)
-    checkpoint_id = db.create_batch_checkpoint(
-        paths.db_file,
-        batch_id,
-        reason=f"Before bulk action {action}",
-        source="BULK_EDIT",
-    )
-    changed = 0
-    errors: list[str] = []
-    for item_id in item_ids:
-        item = items[item_id]
-        updates: dict[str, Any]
-        reason = str(payload.get("reason") or "Bulk edit")
-        try:
-            if action == "set_price":
-                updates = {"price_cents": int(round(float(payload.get("value")) * 100))}
-            elif action == "add_price":
-                updates = {"price_cents": int(item.get("price_cents") or 0) + int(round(float(payload.get("value")) * 100))}
-            elif action == "subtract_percent":
-                percent = float(payload.get("value") or 0)
-                current_price = int(item.get("price_cents") or 0)
-                updates = {"price_cents": max(0, int(round(current_price * (100 - percent) / 100)))}
-            elif action == "round_price":
-                increment_cents = int(round(float(payload.get("value") or 0.50) * 100))
-                if increment_cents <= 0:
-                    raise ValueError("Rounding increment must be greater than zero")
-                current_price = int(item.get("price_cents") or 0)
-                updates = {"price_cents": int(round(current_price / increment_cents)) * increment_cents}
-            elif action == "set_discount":
-                updates = {"discount_percent": float(payload.get("value") or 0)}
-            elif action == "set_location":
-                updates = {"shelf": str(payload.get("value") or "").upper()}
-            elif action == "flag_review":
-                updates = {"review": 1}
-            elif action == "clear_review":
-                updates = {"review": 0}
-            elif action == "mark_rare":
-                updates = {"rare": 1}
-            elif action == "clear_rare":
-                updates = {"rare": 0}
-            elif action == "append_tags":
-                incoming = str(payload.get("value") or "").strip()
-                existing = [part.strip() for part in str(item.get("tags") or "").split(",") if part.strip()]
-                for part in [part.strip() for part in incoming.split(",") if part.strip()]:
-                    if part not in existing:
-                        existing.append(part)
-                updates = {"tags": ", ".join(existing)}
-            elif action == "prefix_description":
-                prefix = str(payload.get("value") or "")
-                updates = {"description": prefix + str(item.get("description") or "")}
-            elif action == "replace_description":
-                old, separator, new = str(payload.get("value") or "").partition("=>")
-                if not separator or not old:
-                    raise ValueError("Use find=>replace for description replacement")
-                updates = {"description": str(item.get("description") or "").replace(old, new)}
-            elif action == "approve":
-                approve_errors = accept_item(
-                    paths.db_file,
-                    item_id,
-                    price_cents=item.get("price_cents"),
-                    discount_percent=float(item.get("discount_percent") or 0),
-                    review_source="BATCH_EDITOR_REVIEW",
-                )
-                if approve_errors:
-                    errors.append(f"{item_id}: {approve_errors[0]}")
-                    continue
-                changed += 1
-                continue
-            else:
-                return JSONResponse({"ok": False, "error": "Unknown bulk action"}, status_code=400)
-            updates["working_source"] = "BULK_EDIT"
-            db.update_item(paths.db_file, item_id, updates, source="BULK_EDIT", reason=reason)
-            changed += 1
-        except Exception as exc:
-            errors.append(f"{item_id}: {exc}")
-    validate_items(paths.db_file, item_ids)
+    try:
+        result = apply_bulk_operation(
+            get_paths().db_file,
+            batch_id=batch_id,
+            item_ids=[str(value) for value in payload.get("item_ids", [])],
+            action=str(payload.get("action") or ""),
+            value=payload.get("value"),
+            reason=str(payload.get("reason") or "Bulk edit"),
+            request_id=str(payload.get("request_id") or uuid4().hex),
+        )
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
     return JSONResponse(
         {
-            "ok": not errors,
-            "changed": changed,
-            "errors": errors,
-            "checkpoint_id": checkpoint_id,
-            "health": db.batch_health(paths.db_file, batch_id),
-        },
-        status_code=200 if changed else 400,
+            "ok": True,
+            "requested": result.requested,
+            "validated": result.validated,
+            "changed": result.changed,
+            "unchanged": result.unchanged,
+            "failed": result.failed,
+            "errors": list(result.errors),
+            "checkpoint_id": result.checkpoint_id,
+            "request_id": result.request_id,
+            "health": db.batch_health(get_paths().db_file, batch_id),
+        }
     )
 
 
@@ -924,7 +867,9 @@ def upload_csv_preview(
 ) -> HTMLResponse:
     paths = get_paths()
     try:
-        raw = csv_file.file.read()
+        raw = csv_file.file.read(5_000_001)
+        if len(raw) > 5_000_000:
+            raise CSVImportError("CSV upload exceeds the 5 MB safety limit")
         text = raw.decode("utf-8-sig")
         payload, summary, errors = preview_inventory_csv(paths.db_file, batch_id, text)
         token = uuid4().hex
@@ -936,6 +881,7 @@ def upload_csv_preview(
             payload=payload,
             diff=summary,
             blocking_errors=errors,
+            upload_bytes=len(raw),
         )
         return TEMPLATES.TemplateResponse(
             request,
@@ -1019,7 +965,10 @@ def external_review(
 ) -> RedirectResponse:
     if not confirmation:
         return redirect(f"/publish?batch_id={quote(batch_id)}&message={quote('External review confirmation is required.')}")
-    count, errors = mark_batch_externally_reviewed(get_paths().db_file, batch_id)
+    try:
+        count, errors = mark_batch_externally_reviewed(get_paths().db_file, batch_id)
+    except Exception as exc:
+        return redirect(f"/publish?batch_id={quote(batch_id)}&message={quote(f'External review was not applied: {exc}')}")
     if errors:
         return redirect(f"/publish?batch_id={quote(batch_id)}&message={quote(errors[0])}")
     return redirect(
@@ -1074,17 +1023,44 @@ def diagnostics(request: Request) -> HTMLResponse:
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
         foreign = connection.execute("PRAGMA foreign_key_check").fetchall()
         schema = connection.execute("PRAGMA user_version").fetchone()[0]
-        jobs = [dict(row) for row in connection.execute("SELECT rowid AS job_rowid,* FROM recognition_jobs ORDER BY updated_at DESC LIMIT 10")]
-        csv_failures = [dict(row) for row in connection.execute("SELECT token,batch_id,filename,created_at,blocking_errors_json FROM csv_staging ORDER BY created_at DESC LIMIT 10")]
+        manifest = db.schema_manifest_report(connection)
+        jobs = [dict(row) for row in connection.execute(
+            "SELECT * FROM recognition_jobs ORDER BY updated_at DESC LIMIT 10"
+        )]
+        csv_stages = [dict(row) for row in connection.execute(
+            "SELECT token,batch_id,filename,status,created_at,updated_at,expires_at,row_count,"
+            "upload_bytes,blocking_errors_json FROM csv_staging ORDER BY created_at DESC LIMIT 10"
+        )]
+        imports = [dict(row) for row in connection.execute(
+            "SELECT import_id,batch_id,status,updated_at,error AS error_message FROM import_journal "
+            "ORDER BY updated_at DESC LIMIT 10"
+        )]
+        operations = [dict(row) for row in connection.execute(
+            "SELECT request_id,operation_type,batch_id,status,created_at,completed_at,error_message "
+            "FROM operation_requests ORDER BY created_at DESC LIMIT 10"
+        )]
     providers = {name: provider.available() for name, provider in recognizer_registry().items()}
+    storage = db.storage_summary(paths.db_file)
+    checkpoint_info = db.checkpoint_summary(paths.db_file)
+    stage_info = db.csv_stage_summary(paths.db_file)
+    import_info = db.import_journal_summary(paths.db_file)
+    backups = sorted(paths.backups.glob("*.sqlite3"), key=lambda value: value.stat().st_mtime, reverse=True)
     diagnostic_summary = {
         "version": __version__,
         "database": str(paths.db_file),
         "schema": schema,
+        "schema_manifest": manifest,
         "integrity": integrity,
         "foreign_key_violations": len(foreign),
         "providers": providers,
+        "test_provider_mode": test_providers_enabled(),
+        "test_contaminated_items": db.test_contamination_count(paths.db_file),
         "media": db.media_totals(paths.db_file),
+        "storage": storage,
+        "csv_stages": stage_info,
+        "import_journal": import_info,
+        "checkpoints": checkpoint_info,
+        "last_backup": str(backups[0]) if backups else "",
     }
     return TEMPLATES.TemplateResponse(
         request,
@@ -1095,11 +1071,21 @@ def diagnostics(request: Request) -> HTMLResponse:
             integrity=integrity,
             foreign=len(foreign),
             schema=schema,
+            manifest=manifest,
             summary=db.database_summary(paths.db_file),
             providers=providers,
+            test_provider_mode=test_providers_enabled(),
+            test_contaminated_items=db.test_contamination_count(paths.db_file),
             jobs=jobs,
-            csv_failures=csv_failures,
+            csv_stages=csv_stages,
+            imports=imports,
+            operations=operations,
             media_totals=db.media_totals(paths.db_file),
+            storage=storage,
+            checkpoint_info=checkpoint_info,
+            stage_info=stage_info,
+            import_info=import_info,
+            last_backup=str(backups[0]) if backups else "No backup recorded",
             diagnostic_summary=json.dumps(diagnostic_summary, indent=2),
         ),
     )
@@ -1127,6 +1113,14 @@ def media(photo_id: int, original: bool = False, recognition: bool = False) -> F
     return FileResponse(Path(candidate), media_type="image/jpeg")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> FileResponse:
+    return FileResponse(PACKAGE_ROOT / "static" / "favicon.svg", media_type="image/svg+xml")
+
+
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "version": __version__}
+def health() -> dict[str, Any]:
+    paths = get_paths()
+    with db.connect(paths.db_file) as connection:
+        manifest = db.schema_manifest_report(connection)
+    return {"status": "ok" if manifest["ok"] else "degraded", "version": __version__, "schema": manifest}

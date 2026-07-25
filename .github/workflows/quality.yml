@@ -25,4 +25,4 @@ jobs:
           python -m venv /tmp/snapims-wheel-smoke
           /tmp/snapims-wheel-smoke/bin/pip install dist/snapims-*.whl
           /tmp/snapims-wheel-smoke/bin/snapims --version
-          /tmp/snapims-wheel-smoke/bin/python -c "from snapims.web.app import app; assert app.version == '0.6.0'"
+          /tmp/snapims-wheel-smoke/bin/python -c "from snapims.web.app import app; assert app.version == '0.6.1'"
