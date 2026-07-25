@@ -19,8 +19,8 @@ FORBIDDEN_NAMES = (
 )
 FORBIDDEN_PARTS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "workspace", "backups"}
 SECRET_PATTERNS = [
-    re.compile(rb"OPENAI_API_KEY\s*=\s*[^\s#]+", re.I),
-    re.compile(rb"SHOPIFY_ADMIN_ACCESS_TOKEN\s*=\s*[^\s#]+", re.I),
+    re.compile(rb"OPENAI_API_KEY[ \t]*=[ \t]*[^\s#]+", re.I),
+    re.compile(rb"SHOPIFY_ADMIN_ACCESS_TOKEN[ \t]*=[ \t]*[^\s#]+", re.I),
     re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     re.compile(rb"sk-[A-Za-z0-9_-]{20,}"),
     re.compile(rb"shpat_[A-Za-z0-9]{20,}"),

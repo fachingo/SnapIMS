@@ -16,6 +16,7 @@ Coverage includes the inherited protocol, import, recognition, Review, Batch Edi
 - `node --check snapims/web/static/app.js`: **passed**.
 - `git diff --check`: **passed**.
 - `python -m pip wheel . --no-deps --no-build-isolation`: **passed**.
+- release archive safety scan: **passed**.
 - clean inventory initialization: integrity `ok`, FK violations `0`, schema `7`.
 - clean catalog initialization: integrity `ok`, FK violations `0`, schema `1`, FTS healthy.
 - deterministic native Chromium audit: **passed with stated limitations**.

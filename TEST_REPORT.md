@@ -16,6 +16,7 @@
 | Browser JavaScript syntax | `node --check snapims/web/static/app.js` — **passed** |
 | Git whitespace | `git diff --check` — **passed** |
 | Wheel build fallback | `python -m pip wheel . --no-deps --no-build-isolation` — **passed**; produced `snapims-0.6.0-py3-none-any.whl` |
+| Release archive safety scan | `python scripts/scan_release_archive.py SnapIMS-SLMC-0.1.0-integration-package.zip` — **passed** |
 
 The full suite includes the inherited v0.6.0 tests and the new catalog, migration, job, matching, ambiguity, administration, CSV, Shopify-simulation, restart and browser-contract tests.
 
