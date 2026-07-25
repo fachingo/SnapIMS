@@ -9,6 +9,7 @@ from typing import Any
 
 from snapims import db
 from snapims.config import DataPaths
+from snapims.catalog.service import catalog_output_for_item
 from snapims.protocol import LOCATION_RE
 
 CONDITIONS = ("Not Graded", "Fair", "Good", "Very Good", "Like New", "Sealed", "Damaged", "Mold Review")
@@ -21,6 +22,9 @@ CSV_FIELDS = (
     "Recognition confidence", "Review status", "Ready status", "Validation errors",
     "Shopify status", "Shopify product ID", "Shopify variant ID",
     "Shopify inventory item ID", "Shopify admin URL", "Last error", "Retry count",
+    "Local Movie ID", "Canonical Movie title", "Original Movie title",
+    "Film release year", "Runtime minutes", "Director", "Country", "Language",
+    "Genre", "Catalog match status", "Source page URL", "Provenance status",
 )
 
 
@@ -123,8 +127,19 @@ def export_inventory_csv(db_file: Path, batch_id: str, destination: Path) -> Pat
     with destination.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
         writer.writeheader()
+        paths = DataPaths.from_root(db_file.parent.parent).ensure()
         for item in rows:
             image_folder = str(Path(item["front_image"]).parent) if item.get("front_image") else ""
+            try:
+                movie = catalog_output_for_item(paths, item["item_id"])
+            except Exception:
+                movie = {
+                    "movie_id": "", "canonical_title": "", "original_title": "",
+                    "release_year": None, "runtime_minutes": None, "directors": [],
+                    "countries": [], "languages": [], "genres": [],
+                    "catalog_match_status": "CATALOG_UNAVAILABLE",
+                    "source_page_url": "", "provenance_status": "UNAVAILABLE",
+                }
             try:
                 errors = "; ".join(json.loads(item["validation_errors"]))
             except (json.JSONDecodeError, TypeError):
@@ -149,6 +164,18 @@ def export_inventory_csv(db_file: Path, batch_id: str, destination: Path) -> Pat
                 "Shopify inventory item ID": item["shopify_inventory_item_id"],
                 "Shopify admin URL": item["shopify_admin_url"], "Last error": item["last_error"],
                 "Retry count": item["retry_count"],
+                "Local Movie ID": movie["movie_id"],
+                "Canonical Movie title": movie["canonical_title"],
+                "Original Movie title": movie["original_title"],
+                "Film release year": movie["release_year"] or "",
+                "Runtime minutes": movie["runtime_minutes"] or "",
+                "Director": "; ".join(movie["directors"]),
+                "Country": "; ".join(movie["countries"]),
+                "Language": "; ".join(movie["languages"]),
+                "Genre": "; ".join(movie["genres"]),
+                "Catalog match status": movie["catalog_match_status"],
+                "Source page URL": movie["source_page_url"],
+                "Provenance status": movie["provenance_status"],
             })
     return destination
 

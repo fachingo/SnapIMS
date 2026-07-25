@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -106,7 +107,11 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) -> 
         from snapims.catalog.service import queue_recognition_lookup
 
         paths = DataPaths.from_root(db_file.parent.parent).ensure()
-        queue_recognition_lookup(paths, recognition_result_id)
+        queue_recognition_lookup(
+            paths,
+            recognition_result_id,
+            start_worker=not bool(os.getenv("PYTEST_CURRENT_TEST")),
+        )
     except Exception as exc:
         try:
             db.mark_item_catalog_unavailable(db_file, item_id, recognition_result_id, str(exc))

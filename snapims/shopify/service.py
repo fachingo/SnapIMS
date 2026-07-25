@@ -8,6 +8,7 @@ from typing import Any
 
 from snapims import db
 from snapims.config import DataPaths, ShopifyConfig
+from snapims.catalog.service import catalog_output_for_item
 from snapims.inventory import validation_errors
 from snapims.shopify.client import ShopifyClient
 
@@ -48,12 +49,28 @@ class ShopifyService:
             if existing and not item["shopify_product_id"]:
                 errors.append(f"SKU already exists in Shopify on {existing['product']['title']}")
         final_price = int(round(int(item["price_cents"] or 0) * (1 - float(item["discount_percent"] or 0) / 100)))
+        paths = DataPaths.from_root(self.db_file.parent.parent).ensure()
+        try:
+            movie = catalog_output_for_item(paths, item_id)
+        except Exception:
+            movie = {
+                "movie_id": "", "canonical_title": "", "original_title": "",
+                "release_year": None, "runtime_minutes": None, "directors": [],
+                "countries": [], "languages": [], "genres": [],
+                "catalog_match_status": "CATALOG_UNAVAILABLE",
+                "source_page_url": "", "provenance_status": "UNAVAILABLE",
+            }
         payload = {
             "item_id": item["item_id"], "sku": item["sku"], "title": item["title"],
             "price_cents": item["price_cents"], "discount_percent": item["discount_percent"],
             "final_price_cents": final_price, "quantity": item["quantity"], "barcode": item["barcode"],
             "vendor": item["vendor"], "product_type": item["product_type"], "tags": item["tags"],
             "image_count": len(photos), "status": "DRAFT",
+            "movie": movie,
+            "local_movie_id": movie["movie_id"],
+            "canonical_movie_title": movie["canonical_title"],
+            "film_release_year": movie["release_year"],
+            "catalog_match_status": movie["catalog_match_status"],
         }
         warnings = tuple(f"Simulation only: {problem}" for problem in config_problems) if not remote_check else ()
         return ShopifyDryRun(item_id, not errors and action in {"CREATE_DRAFT", "SIMULATE_CREATE_DRAFT"}, action if not errors else "BLOCK", tuple(dict.fromkeys(errors)), warnings, len(photos), payload)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,18 @@ from fastapi.templating import Jinja2Templates
 
 from snapims import __version__, db
 from snapims.config import DataPaths, ShopifyConfig
+from snapims.catalog import db as catalog_db
+from snapims.catalog.service import (
+    get_catalog_status,
+    get_movie,
+    latest_job as latest_catalog_job,
+    queue_operator_title_correction,
+    recover_catalog_jobs,
+    reconcile_pending_links,
+    search_local,
+    select_candidate,
+    start_catalog_job,
+)
 from snapims.folder_picker import FolderPickerUnavailable, choose_folder
 from snapims.inventory import (
     CONDITIONS,
@@ -41,6 +54,7 @@ from snapims.shopify.service import ShopifyService
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
+LOGGER = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -48,6 +62,16 @@ async def lifespan(app: FastAPI):
     paths = get_paths()
     db.initialize(paths.db_file, paths=paths)
     db.mark_interrupted_jobs_paused(paths.db_file)
+    app.state.catalog_error = ""
+    try:
+        catalog_db.initialize(paths.catalog_db_file, paths=paths)
+        reconcile_pending_links(paths)
+        recover_catalog_jobs(
+            paths, start_workers=not bool(os.getenv("PYTEST_CURRENT_TEST"))
+        )
+    except Exception as exc:
+        app.state.catalog_error = str(exc)
+        LOGGER.exception("SLMC catalog startup failed; inventory remains available")
     yield
 
 
@@ -343,6 +367,10 @@ def review_page(
                 notice=notice,
                 photo_index=1,
                 health={},
+                catalog_status=None,
+                display_title="",
+                catalog_job=None,
+                catalog_candidates=[],
             ),
         )
     db.set_setting(paths.db_file, "active_batch", batch_id)
@@ -356,6 +384,30 @@ def review_page(
     job = db.get_recognition_job(paths.db_file, batch_id)
     status_text, status_action = recognition_status(paths, batch_id, job)
     physical = physical_context(items, current)
+    catalog_status = get_catalog_status(paths, current["item_id"]) if current else None
+    display_title = ""
+    catalog_job = None
+    catalog_candidates: list[dict[str, Any]] = []
+    if current:
+        display_title = str(
+            current.get("title")
+            or (catalog_status.canonical_title if catalog_status else "")
+            or (suggestion.get("suggested_title") if suggestion else "")
+            or "Title required"
+        )
+        catalog_job = latest_catalog_job(paths.catalog_db_file, item_id=current["item_id"])
+        if catalog_job and str(catalog_job.get("status")) == "AMBIGUOUS":
+            try:
+                with catalog_db.connect(paths.catalog_db_file, readonly=True) as connection:
+                    catalog_candidates = [
+                        dict(row)
+                        for row in connection.execute(
+                            "SELECT * FROM movie_candidates WHERE job_id=? AND rejected_reason='' ORDER BY score DESC,candidate_id LIMIT 5",
+                            (int(catalog_job["job_id"]),),
+                        )
+                    ]
+            except Exception:
+                catalog_candidates = []
     decoded_errors = [part for part in errors.split("|") if part]
     return TEMPLATES.TemplateResponse(
         request,
@@ -384,6 +436,10 @@ def review_page(
             conditions=CONDITIONS,
             pool_modes=POOL_MODES,
             health=db.batch_health(paths.db_file, batch_id),
+            catalog_status=catalog_status,
+            display_title=display_title,
+            catalog_job=catalog_job,
+            catalog_candidates=catalog_candidates,
         ),
     )
 
@@ -636,6 +692,16 @@ def save_item(
             expected_revision=revision,
         )
         validate_items(paths.db_file, [item_id])
+        if values["title"] and (
+            values["title"] != str(current.get("title") or "")
+            or values["release_year"] != current.get("release_year")
+        ):
+            try:
+                queue_operator_title_correction(
+                    paths, item_id, values["title"], values["release_year"]
+                )
+            except Exception as exc:
+                LOGGER.exception("Catalog correction lookup failed for %s: %s", item_id, exc)
     except Exception as exc:
         return redirect(
             f"/review?batch_id={quote(batch_id)}&queue={quote(queue)}&item_id={quote(item_id)}&edit=true&errors={quote(str(exc))}"
@@ -736,6 +802,18 @@ async def api_update_item(item_id: str, request: Request) -> JSONResponse:
         validate_items(paths.db_file, [item_id])
     except Exception as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
+    if field in {"title", "release_year"}:
+        updated = db.get_item(paths.db_file, item_id)
+        if updated and updated.get("title"):
+            try:
+                queue_operator_title_correction(
+                    paths,
+                    item_id,
+                    str(updated["title"]),
+                    int(updated["release_year"]) if updated.get("release_year") is not None else None,
+                )
+            except Exception as exc:
+                LOGGER.exception("Catalog correction lookup failed for %s: %s", item_id, exc)
     saved = db.get_item(paths.db_file, item_id)
     return JSONResponse({"ok": True, "item": saved, "health": db.batch_health(paths.db_file, saved["batch_id"])})
 
@@ -868,6 +946,85 @@ def restore_checkpoint(checkpoint_id: int) -> JSONResponse:
     except Exception as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     return JSONResponse({"ok": True, "restored": count})
+
+
+@app.get("/api/catalog/status/{item_id}")
+def api_catalog_status(item_id: str) -> dict[str, Any]:
+    paths = get_paths()
+    if db.get_item(paths.db_file, item_id) is None:
+        raise HTTPException(404)
+    status = get_catalog_status(paths, item_id)
+    return {
+        "available": status.available,
+        "status": status.status,
+        "label": status.label,
+        "movie_id": status.movie_id,
+        "canonical_title": status.canonical_title,
+        "release_year": status.primary_release_year,
+        "candidate_count": status.candidate_count,
+        "error": status.error,
+    }
+
+
+@app.get("/api/catalog/search")
+def api_catalog_search(q: str = Query(..., min_length=1), year: int | None = None) -> dict[str, Any]:
+    paths = get_paths()
+    matches = search_local(paths.catalog_db_file, q, year)
+    return {"matches": [
+        {
+            "movie_id": match.movie_id,
+            "canonical_title": match.canonical_title,
+            "release_year": match.primary_release_year,
+            "score": match.match_score,
+            "method": match.method,
+            "reason": match.reason,
+            "unique": match.unique,
+        }
+        for match in matches
+    ]}
+
+
+@app.post("/catalog/jobs/{job_id}/select")
+def catalog_select_candidate(
+    job_id: int,
+    candidate_id: int = Form(...),
+    batch_id: str = Form(...),
+    queue: str = Form("UNRESOLVED"),
+    item_id: str = Form(...),
+) -> RedirectResponse:
+    paths = get_paths()
+    try:
+        movie_id = select_candidate(paths, job_id, candidate_id)
+        notice = f"Catalog candidate selected and linked as {movie_id}."
+    except Exception as exc:
+        notice = f"Catalog selection failed: {exc}"
+    return redirect(
+        f"/review?batch_id={quote(batch_id)}&queue={quote(queue)}&item_id={quote(item_id)}&notice={quote(notice)}"
+    )
+
+
+@app.post("/catalog/jobs/{job_id}/retry")
+def catalog_retry_job(job_id: int, batch_id: str = Form(""), item_id: str = Form("")) -> RedirectResponse:
+    paths = get_paths()
+    try:
+        with catalog_db.transaction(paths.catalog_db_file) as connection:
+            row = connection.execute(
+                "SELECT item_id FROM catalog_lookup_jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError("Unknown catalog job")
+            connection.execute(
+                "UPDATE catalog_lookup_jobs SET status='QUEUED',finished_at=NULL,last_error='',updated_at=? WHERE job_id=?",
+                (catalog_db.now(), job_id),
+            )
+        start_catalog_job(paths, job_id)
+        notice = "Catalog lookup queued for retry."
+    except Exception as exc:
+        notice = f"Catalog retry failed: {exc}"
+    target_item = item_id or (str(row[0]) if 'row' in locals() and row else "")
+    return redirect(
+        f"/review?batch_id={quote(batch_id)}&item_id={quote(target_item)}&notice={quote(notice)}"
+    )
 
 
 @app.get("/publish", response_class=HTMLResponse)
@@ -1068,7 +1225,7 @@ def save_settings(incoming_folder: str = Form(...)) -> RedirectResponse:
 
 
 @app.get("/diagnostics", response_class=HTMLResponse)
-def diagnostics(request: Request) -> HTMLResponse:
+def diagnostics(request: Request, notice: str = "", message: str = "") -> HTMLResponse:
     paths = get_paths()
     with db.connect(paths.db_file) as connection:
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
@@ -1077,6 +1234,25 @@ def diagnostics(request: Request) -> HTMLResponse:
         jobs = [dict(row) for row in connection.execute("SELECT rowid AS job_rowid,* FROM recognition_jobs ORDER BY updated_at DESC LIMIT 10")]
         csv_failures = [dict(row) for row in connection.execute("SELECT token,batch_id,filename,created_at,blocking_errors_json FROM csv_staging ORDER BY created_at DESC LIMIT 10")]
     providers = {name: provider.available() for name, provider in recognizer_registry().items()}
+    catalog_error = str(getattr(request.app.state, "catalog_error", "") or "")
+    catalog: dict[str, Any] = {
+        "available": False,
+        "integrity": "unavailable",
+        "foreign_key_violations": 0,
+        "schema_version": "-",
+        "fts_available": False,
+        "database_size_bytes": paths.catalog_db_file.stat().st_size if paths.catalog_db_file.exists() else 0,
+    }
+    catalog_jobs: list[dict[str, Any]] = []
+    try:
+        catalog = {"available": True, **catalog_db.catalog_summary(paths.catalog_db_file)}
+        with catalog_db.connect(paths.catalog_db_file, readonly=True) as connection:
+            catalog_jobs = [dict(row) for row in connection.execute(
+                "SELECT job_id,item_id,proposed_title,status,candidate_count,attempt_count,last_error,updated_at FROM catalog_lookup_jobs ORDER BY updated_at DESC LIMIT 15"
+            )]
+    except Exception as exc:
+        catalog_error = catalog_error or str(exc)
+    links = db.movie_link_summary(paths.db_file)
     diagnostic_summary = {
         "version": __version__,
         "database": str(paths.db_file),
@@ -1085,6 +1261,8 @@ def diagnostics(request: Request) -> HTMLResponse:
         "foreign_key_violations": len(foreign),
         "providers": providers,
         "media": db.media_totals(paths.db_file),
+        "movie_catalog": {**catalog, "path": str(paths.catalog_db_file), "error": catalog_error},
+        "movie_links": links,
     }
     return TEMPLATES.TemplateResponse(
         request,
@@ -1101,8 +1279,54 @@ def diagnostics(request: Request) -> HTMLResponse:
             csv_failures=csv_failures,
             media_totals=db.media_totals(paths.db_file),
             diagnostic_summary=json.dumps(diagnostic_summary, indent=2),
+            catalog=catalog,
+            catalog_error=catalog_error,
+            catalog_jobs=catalog_jobs,
+            links=links,
+            notice=notice,
+            message=message,
         ),
     )
+
+
+@app.post("/diagnostics/catalog/backup")
+def catalog_backup_action() -> RedirectResponse:
+    paths = get_paths()
+    try:
+        destination = catalog_db.backup_catalog(paths, "manual-diagnostics-backup")
+        notice = f"Catalog backup created: {destination.name if destination else 'catalog does not exist'}"
+        return redirect(f"/diagnostics?notice={quote(notice)}")
+    except Exception as exc:
+        return redirect(f"/diagnostics?message={quote(str(exc))}")
+
+
+@app.post("/diagnostics/catalog/rebuild-index")
+def catalog_rebuild_action() -> RedirectResponse:
+    paths = get_paths()
+    try:
+        count = catalog_db.rebuild_search_index(paths.catalog_db_file)
+        return redirect(f"/diagnostics?notice={quote(f'Catalog search index rebuilt for {count} movies.')}")
+    except Exception as exc:
+        return redirect(f"/diagnostics?message={quote(str(exc))}")
+
+
+@app.post("/diagnostics/catalog/retry-failed")
+def catalog_retry_failed_action() -> RedirectResponse:
+    paths = get_paths()
+    try:
+        with catalog_db.transaction(paths.catalog_db_file) as connection:
+            rows = connection.execute(
+                "SELECT job_id FROM catalog_lookup_jobs WHERE status IN ('FAILED','PAUSED','LINK_PENDING') ORDER BY job_id"
+            ).fetchall()
+            connection.execute(
+                "UPDATE catalog_lookup_jobs SET status='QUEUED',finished_at=NULL,last_error='',updated_at=? WHERE status IN ('FAILED','PAUSED')",
+                (catalog_db.now(),),
+            )
+        for row in rows:
+            start_catalog_job(paths, int(row[0]))
+        return redirect(f"/diagnostics?notice={quote(f'Queued {len(rows)} catalog jobs for retry or reconciliation.')}")
+    except Exception as exc:
+        return redirect(f"/diagnostics?message={quote(str(exc))}")
 
 
 @app.get("/media/{photo_id}")

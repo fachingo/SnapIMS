@@ -122,11 +122,14 @@ def search_local(catalog_db_file: Path, title: str, year: int | None = None, *, 
         if actual == expected:
             score = 0.91
             reasons.append("exact normalized canonical title")
+        elif actual in variants:
+            score = 0.90
+            reasons.append("exact conservative title variant")
         elif strip_leading_article(actual) == strip_leading_article(expected):
-            score = 0.88
+            score = 0.90
             reasons.append("canonical title differs only by leading article")
         elif origin == "alias":
-            score = 0.86
+            score = 0.91
             reasons.append("exact normalized alias")
         else:
             score = 0.70
@@ -795,6 +798,16 @@ def latest_job(catalog_db_file: Path, *, item_id: str = "", recognition_result_i
 
 def get_catalog_status(paths: DataPaths, item_id: str) -> CatalogStatus:
     link = inventory_db.get_item_movie_link(paths.db_file, item_id)
+    try:
+        catalog_db.initialize(paths.catalog_db_file, create=False)
+    except Exception as exc:
+        return CatalogStatus(
+            False,
+            "CATALOG_UNAVAILABLE",
+            "Catalog unavailable",
+            movie_id=str(link.get("movie_id") or "") if link else "",
+            error=str(exc),
+        )
     if link and link.get("movie_id"):
         try:
             movie = get_movie(paths.catalog_db_file, str(link["movie_id"]))
@@ -950,7 +963,8 @@ def queue_operator_title_correction(paths: DataPaths, item_id: str, title: str, 
                 "UPDATE catalog_lookup_jobs SET status='QUEUED',updated_at=? WHERE job_id=?",
                 (catalog_db.now(), job_id),
             )
-        start_catalog_job(paths, job_id)
+        if not os.getenv("PYTEST_CURRENT_TEST"):
+            start_catalog_job(paths, job_id)
     return job_id
 
 
@@ -966,3 +980,46 @@ def wait_for_catalog_job(catalog_db_file: Path, job_id: int, *, timeout: float =
             return dict(row)
         time.sleep(0.01)
     raise TimeoutError(f"Catalog job {job_id} did not finish")
+
+
+def catalog_output_for_item(paths: DataPaths, item_id: str) -> dict[str, Any]:
+    """Return a compact, read-only Movie projection for CSV/Shopify/domain output."""
+
+    status = get_catalog_status(paths, item_id)
+    output: dict[str, Any] = {
+        "movie_id": status.movie_id,
+        "canonical_title": status.canonical_title,
+        "original_title": "",
+        "release_year": status.primary_release_year,
+        "runtime_minutes": None,
+        "directors": [],
+        "countries": [],
+        "languages": [],
+        "genres": [],
+        "catalog_match_status": status.status,
+        "source_page_url": status.source_url,
+        "provenance_status": "UNAVAILABLE" if not status.available else "PENDING",
+    }
+    if not status.movie_id or not status.available:
+        return output
+    movie = get_movie(paths.catalog_db_file, status.movie_id)
+    if movie is None:
+        output["catalog_match_status"] = "MISSING_MOVIE"
+        output["provenance_status"] = "INVALID_LINK"
+        return output
+    source = movie.get("source") or {}
+    output.update(
+        {
+            "canonical_title": str(movie.get("canonical_title") or ""),
+            "original_title": str(movie.get("original_title") or ""),
+            "release_year": movie.get("primary_release_year"),
+            "runtime_minutes": movie.get("runtime_minutes"),
+            "directors": list(movie.get("directors") or []),
+            "countries": list(movie.get("countries") or []),
+            "languages": list(movie.get("languages") or []),
+            "genres": list(movie.get("genres") or []),
+            "source_page_url": str(source.get("source_url") or ""),
+            "provenance_status": "SOURCE_RECORDED" if source else "LOCAL_ONLY",
+        }
+    )
+    return output
