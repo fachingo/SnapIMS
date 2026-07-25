@@ -1,19 +1,20 @@
-# SnapIMS 0.6.0 Operator Audit
+# SnapIMS 0.6.1 Operator Audit
 
-## Primary finding
+The patch preserves the routine rhythm:
 
-The application now behaves as an operator workstation rather than a conventional record-entry screen.
+1. Look at the photo.
+2. Confirm the displayed title or open manual edit when required.
+3. Optionally change Price or Discount.
+4. Press Enter or choose Approve & Next.
+5. The next unfinished tape opens immediately.
 
-## Strong paths
+High-confidence fixes:
 
-- Correctly recognized tape: inspect photo, accept/replace Price, press Enter, next Price is selected.
-- Exception: open Edit details or continue manual review without AI.
-- Batch work: filter uncertainty, edit visible high-value fields, select rows, apply a previewed bulk operation, and retain rollback.
-- Spreadsheet work: upload edited CSV, inspect exact differences, apply only after confirmation.
+- Price receives focus and Enter advances one tape.
+- Suggestions are labelled as suggestions and are not shown as saved values.
+- Missing AI credentials lead to a clear manual path, not a dead end.
+- Bulk Price is one dialog and one operation.
+- CSV upload shows a difference preview before replacing working values.
+- Every major terminal state points to the next action.
 
-## Known pilot questions
-
-- Actual OpenAI recognition accuracy and token use on difficult real VHS photos.
-- Real Pixel folder selection and photo-transfer timing.
-- Real Shopify media processing and product-draft reconciliation.
-- Batch Editor usability beyond 200 items on the target Mac/Linux hardware.
+Deferred operator concerns are warehouse-scale row virtualization and a deeper per-photo import sequence viewer.

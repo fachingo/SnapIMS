@@ -1,15 +1,17 @@
-# SnapIMS 0.6.0 Demo and Pilot Data
+# SnapIMS 0.6.1 Demo and Pilot Data
 
-Create a deterministic demo camera folder from Python:
+Synthetic fixtures exist only for development, automated tests, and browser verification.
+
+## Safety rule
+
+Production mode does not list or accept Mock, fixture, demo, or synthetic recognition providers. Explicit test mode requires:
 
 ```bash
-python - <<'PY'
-from pathlib import Path
-from snapims.demo import create_demo_batch
-print(create_demo_batch(Path.home() / "SnapIMS-demo-camera", item_count=20, photos_per_item=2))
-PY
+export SNAPIMS_ENABLE_TEST_PROVIDERS=true
 ```
 
-Launch SnapIMS, open Import, choose the generated folder, Preview, and Preserve and Import Batch.
+Test-sourced results retain provider provenance and cannot satisfy production publish readiness until a deliberate manual replacement or trusted live-provider result becomes authoritative.
 
-For a more difficult recognition/import test, use the separately supplied `SnapIMS_Synthetic_Hard_Batch.zip`. Its `import_photos/` directory is the flat chronological camera stream.
+## Pilot rule
+
+Synthetic browser evidence verifies workflows; it does not prove live AI recognition, billing, latency, real Pixel capture quality, physical CSV reconciliation, or Shopify draft creation. Those remain mandatory 1.0 acceptance gates.

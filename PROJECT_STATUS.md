@@ -1,25 +1,16 @@
-# SnapIMS 0.6.0 Project Status
+# SnapIMS 0.6.1 Project Status
 
-Classification: **functional beta candidate for controlled pilot testing**.
+SnapIMS 0.6.1 is a patch-level stabilization of the v0.6.0 operator workstation.
 
-## Implemented
+Current capabilities:
 
-- Deterministic QR/photo import and duplicate protection.
-- Durable SQLite records, migrations, backups, checkpoints, and restart recovery.
-- Mock and OpenAI recognition adapters with durable failure recovery.
-- One-click/Enter Review path with inline price and discount.
-- Completed-item correction with immutable item identity.
-- Batch Editor and bulk operator workflow.
-- CSV export, upload, difference preview, apply, rollback, and external review.
-- Shopify simulation and live adapter boundaries.
-- Browser preview and AI image derivatives.
-- Operator documentation and native browser verification.
+- QR-delimited local photo import with immutable Batch and Item IDs.
+- Durable SQLite schema 7 with structural startup verification.
+- Live-provider recognition framework with production-safe test-provider quarantine.
+- Keyboard-first Review and completed-item correction.
+- Batch Editor with explicit suggestion/saved states and atomic bulk actions.
+- Staged CSV difference preview, atomic apply and audited rollback checkpoints.
+- Shopify draft simulation and controlled live-draft architecture.
+- Operational Diagnostics, recovery journals and browser evidence.
 
-## Not yet accepted for 1.0
-
-- Real 20-tape Pixel pilot.
-- Live OpenAI recognition against the real pilot.
-- One live Shopify draft created and inspected.
-- Physical CSV reconciliation.
-- Final operator-guide walkthrough using the real pilot.
-- No known blockers after that pilot.
+Next acceptance work is the real 20-tape Pixel/live-AI pilot, followed by one live Shopify draft and physical CSV reconciliation. Movie metadata enrichment is a future minor feature release, not part of 0.6.1.

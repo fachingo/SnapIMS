@@ -1,20 +1,16 @@
-# SnapIMS 0.6.0 Documentation Verification
+# SnapIMS 0.6.1 Documentation Verification
 
-The v0.6.0 Operator Guide and active Markdown documents were synchronized against the browser-verified UI.
+The 35-page Operator Guide was regenerated from the v0.6.1 browser evidence and describes the final UI used in the release audit.
 
-Verified labels and workflows include:
+Verification method:
 
-- Browse Folder...
-- Preview batch
-- Preserve and import batch
-- Retry Batch / Retry Failed Items Only
-- Continue With Manual Review
-- Approve & Next
-- Batch Editor
-- Bulk Price / Fill Down / checkpoints
-- Upload and preview differences
-- Apply Valid Changes
-- Mark valid batch externally reviewed
-- Run Shopify simulation
+- screenshots captured at 1440 x 1000;
+- all changed pages and button names compared with the running application;
+- DOCX rendered to PNG pages;
+- PDF rendered independently to PNG pages;
+- every rendered page inspected for clipping, overlap and missing controls;
+- final guide walkthrough compared against Home, Import, Review, Batch Editor, Publish and Diagnostics.
 
-Historical v0.5.x reports and generation scripts were moved under `docs/history/v0.5.1/` and `scripts/history/v0.5.1/` so they are clearly non-current.
+The guide does not claim live AI quality, a live Shopify draft or warehouse-scale acceptance. Those remain explicit 1.0 blockers.
+
+Final artifacts: `SnapIMS_Operator_Guide.docx`, `SnapIMS_Operator_Guide.pdf`, and versioned copies with the `v0.6.1` suffix.

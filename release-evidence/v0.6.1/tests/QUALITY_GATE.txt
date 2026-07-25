@@ -1,0 +1,35 @@
+SnapIMS 0.6.1 local release quality gate
+Date: 2026-07-25
+
+PASS pytest -q
+  136 collected tests
+  Exit status: 0
+
+PASS python -m compileall -q snapims tests scripts/native_browser_audit_v061.py scripts/generate_operator_guide_v061.py
+PASS node --check snapims/web/static/app.js
+PASS git diff --check
+PASS python -m pip wheel . --no-deps --no-build-isolation -w dist
+  Artifact: snapims-0.6.1-py3-none-any.whl
+PASS wheel import smoke
+  snapims.__version__ = 0.6.1
+  FastAPI app.version = 0.6.1
+  SCHEMA_VERSION = 7
+  CLI --version = 0.6.1
+PASS SQLite browser workspace
+  integrity_check = ok
+  foreign_key_check = []
+  user_version = 7
+PASS native Chromium browser audit
+  console errors = 0
+  page errors = 0
+  relevant failed requests = 0
+  relevant HTTP errors = 0
+
+NOT RUN LOCALLY ruff/mypy
+  Package installation was unavailable from the isolated package index.
+  The GitHub quality workflow is configured to run both.
+
+HOST ENVIRONMENT NOTE python -m pip check
+  The shared execution image reports an unrelated moviepy/Pillow conflict:
+  moviepy 2.2.1 requires Pillow <12.0, while the host has Pillow 12.2.0.
+  SnapIMS does not depend on moviepy. GitHub CI performs pip check in a clean environment.

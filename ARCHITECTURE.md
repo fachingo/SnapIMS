@@ -1,30 +1,34 @@
-# SnapIMS 0.6.0 Architecture
+# SnapIMS 0.6.1 Architecture
 
-## System boundaries
+## Runtime
 
-- `snapims/protocol.py`, `pipeline.py`, `processor.py`: deterministic QR/photo import.
-- `snapims/db.py`: SQLite persistence, migrations, checkpoints, history, cursors, recognition jobs.
-- `snapims/recognition/`: provider adapters and durable recognition orchestration.
-- `snapims/inventory.py`: record validation, CSV export/import staging, diff application, external review.
-- `snapims/shopify/`: Shopify adapter, idempotency, and simulation/live boundaries.
-- `snapims/web/`: FastAPI routes, Jinja templates, browser interactions.
+FastAPI/Jinja browser workstation, local SQLite and filesystem media storage. The CLI binds to localhost by default. SnapIMS is single-operator and does not auto-publish Shopify products.
 
-The SQLite working batch is authoritative. Review, Batch Editor, CSV apply, and recovery all update the same item records. Original and AI values remain available through recognition history, change history, and rollback checkpoints.
+## Durable authority
 
-## Media pipeline
+- SQLite: batches, immutable items, photos, recognition history, working values, audits, Shopify linkage, operation requests, checkpoints and import journals.
+- CSV: staged editing surface keyed only by immutable Item ID.
+- Original media: never overwritten.
+- Shopify: external draft/sales channel; local rollback does not pretend remote state was reverted.
 
-Each product photo has three durable representations:
+## Transaction boundaries
 
-1. Original: exact preserved source file.
-2. Preview: 1080-pixel browser derivative.
-3. Recognition: 1920-pixel AI derivative.
+- CSV apply: one validation pass, one checkpoint, one SQLite transaction, field audit and stage completion together.
+- Bulk edit: full selection validation, idempotent request ID, one checkpoint and one transaction.
+- External review: all items validate before any completion state changes.
+- Checkpoint restore: protected safety checkpoint plus audited field changes in one transaction.
 
-QR cards, duplicates, blank images, and ineligible photos are excluded from provider payloads without being deleted.
+## Cross-resource import recovery
 
-## Concurrency safety
+Import writes a durable journal before final filesystem moves. Startup reconciliation completes, resumes, fails or quarantines incomplete operations without inventing new identities.
 
-SQLite uses WAL, busy timeouts, transactions, and item record revisions. Browser edits include the expected revision; stale writes are rejected rather than silently replacing newer values.
+## Value-state model
 
-## Extension points
+`SUGGESTED` -> provider output not accepted.
+`SAVED` -> durable working value.
+`REVIEWED` -> human or approved external workflow accepted the record.
+`DRAFTED/PUBLISHED` -> remote Shopify state, separate from local working state.
 
-Provider adapters, Shopify publishing, CSV tooling, and UI services remain separate enough to support future Android capture clients, Docker/server deployment, ERP adapters, and additional AI providers without replacing the deterministic import core.
+## Security boundary
+
+Test providers require `SNAPIMS_ENABLE_TEST_PROVIDERS=true`. Production mode rejects them server-side. Application authentication and multi-user security remain deferred.

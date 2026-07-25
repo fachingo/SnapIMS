@@ -1,18 +1,30 @@
-# SnapIMS 0.6.0 Test Results
+# SnapIMS 0.6.1 Test Results
 
 ## Automated tests
 
-Result: **123 passed**.
+- Collected: 136 tests across 13 test modules.
+- Full-suite result: **PASS**, exit status 0.
+- Full-suite log: `release-evidence/v0.6.1/tests/full-pytest.log`.
+- Every module also passed independently; counts are recorded in `release-evidence/v0.6.1/tests/per-file-results.txt`.
+- New stabilization coverage includes test-provider quarantine, Shopify provenance guards, BLOCKED provider semantics, atomic CSV/bulk/external-review failure injection, audited restore, fail-closed schema verification, legacy constraint repair, import-journal restart recovery, exact money, and browser-visible confidence.
 
-Coverage includes protocol parsing, imports, migrations, recognition, Review, Batch Editor, CSV diff/apply/rollback, Shopify idempotency, web routes, and restart behavior.
+## Static and packaging gates
 
-The full suite reached `123 passed in 37.19s` in the container. The hosting harness occasionally retained the completed Python process after pytest printed its final result; individual test modules and grouped release tests exited normally.
+- `python -m compileall -q snapims tests scripts/native_browser_audit_v061.py scripts/generate_operator_guide_v061.py`: **PASS**.
+- `node --check snapims/web/static/app.js`: **PASS**.
+- `git diff --check`: **PASS**.
+- `python -m pip wheel . --no-deps --no-build-isolation -w dist`: **PASS**.
+- Wheel import/CLI smoke: **PASS** (`snapims`, FastAPI application, and CLI all report 0.6.1; schema constant is 7).
+- Local Ruff/mypy installation was unavailable because the isolated package index returned no package/503 responses. The GitHub quality workflow remains configured to run Ruff, mypy, pytest, compileall, build, pip check, and an installed-wheel smoke test in a clean Python 3.12 environment.
+- The shared host's `pip check` reports an unrelated pre-existing `moviepy` versus `Pillow` conflict. SnapIMS does not depend on moviepy; clean CI remains the authoritative dependency check.
 
-## Additional checks
+## Database gates
 
-- `python -m compileall -q snapims scripts/native_browser_audit_v060.py`: passed.
-- `node --check snapims/web/static/app.js`: passed.
-- Native Chromium audit: passed.
-- SQLite migration/integrity tests: passed.
+- SQLite `integrity_check`: `ok` on the browser audit workspace before evidence cleanup.
+- SQLite `foreign_key_check`: zero violations.
+- Schema manifest: passed at schema version 7.
+- Interrupted import, CSV, bulk edit, external review, and checkpoint restore tests passed.
 
-Ruff is declared in the development dependencies and remains part of `scripts/run_quality_gate.sh`. The artifact environment used for this reconstruction did not contain a Ruff executable and had no package-network access; run the repository quality gate in the installed project environment before merge.
+## Browser gate
+
+Status: **PASS**. See `NATIVE_BROWSER_VERIFICATION.md`, `release-evidence/v0.6.1/browser/results.json`, screenshots, logs, and trace.

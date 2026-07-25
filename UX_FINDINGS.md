@@ -1,18 +1,19 @@
-# SnapIMS 0.6.0 UX Findings
+# SnapIMS 0.6.1 UX Findings
 
-Resolved in this release:
+Closed:
 
-- Raw API validation responses were replaced with operator-facing errors.
-- Recognition failure is no longer a dead refresh.
-- Manual-path entry is an Advanced fallback rather than the normal path.
-- Review is keyboard-first.
-- Batch uncertainty is sortable and filterable.
-- Long batch edits no longer require mandatory Excel round trips.
-- CSV changes are visible before they become authoritative.
-- Every major destructive batch action creates a recovery point.
+- Mock no longer appears as a routine production provider.
+- BLOCKED, failed, skipped, suggested, saved and reviewed states use distinct language.
+- Review editor fields are grouped by operator frequency.
+- Batch Editor shows suggestion placeholders without silently filling saved inputs.
+- Save All and bulk actions report real outcomes.
+- Duplicate confirmation layers were removed.
+- Command palette actions are context-aware.
+- Favicon and relevant browser-console errors are clean.
 
-Deferred until after the real pilot:
+Deferred:
 
-- Advanced analytics and cost calculation from configurable provider price tables.
-- Full multi-operator server coordination.
-- Dedicated photography workspace/mobile capture application.
+- full virtualized warehouse grid;
+- visual command-stream/photo inspector;
+- true adaptive recognition controls;
+- multi-user claims and assignment UI.

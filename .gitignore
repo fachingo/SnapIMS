@@ -27,3 +27,9 @@ operator-audit-assets/**/logs/
 operator-audit-assets/**/camera-roll/
 .guide-assets-*/
 _guide_render/
+
+# Local release/build environments
+.venv-release/
+.guide-assets-v061/
+*.pyc
+release-evidence/**/browser/workspace/

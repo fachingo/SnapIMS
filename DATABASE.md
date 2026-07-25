@@ -1,17 +1,25 @@
-# SnapIMS 0.6.0 Database
+# SnapIMS 0.6.1 Database
 
-Current schema version: **6**.
+Schema version: **7**
 
-Important durable entities:
+Startup verifies:
 
-- `batches`: immutable import identity and source fingerprint.
-- `items`: authoritative working inventory records and immutable Item IDs/SKUs.
-- `photos`: original, preview, recognition paths and byte accounting.
-- `recognition_results`: append-only AI suggestions, confidence, uncertainty, pricing-source label, and token use.
-- `recognition_jobs`: durable provider state, progress, failure details, and recovery timestamps.
-- `item_change_log`: field-level audit trail.
-- `batch_checkpoints`: rollback snapshots before CSV replacement and bulk edits.
-- `csv_staging`: unapplied CSV previews and blocking errors.
-- `review_cursors`: restart-durable Review position.
+- required tables and columns;
+- primary and unique constraints;
+- required foreign keys;
+- operational indexes;
+- `PRAGMA integrity_check`;
+- `PRAGMA foreign_key_check`.
 
-Migrations back up an existing database before schema changes. Legacy recognition-job tables that allow multiple rows per batch remain supported through SQLite `rowid` selection until a future explicit normalization migration is justified.
+A database claiming schema 7 but missing required structure fails closed. Older valid databases are backed up before migration. Legacy `recognition_jobs` tables are rebuilt so `batch_id` is the primary key, retaining the most recent job per batch.
+
+New durability structures include:
+
+- `schema_migrations`
+- `batch_checkpoints` with size/protection/restore provenance
+- `csv_staging` lifecycle and limits
+- `import_journal`
+- `operation_requests`
+- recognition provider/model/source and measured payload fields
+
+Run Diagnostics before restore or pilot work. Required state is integrity `ok`, zero foreign-key violations and a passing schema manifest.

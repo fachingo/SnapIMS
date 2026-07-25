@@ -1,0 +1,11 @@
+===== tests/test_csv.py =====
+..                                                                       [100%]
+PASS 5s tests/test_csv.py
+===== tests/test_csv_extended.py =====
+..............                                                           [100%]
+PASS 19s tests/test_csv_extended.py
+===== tests/test_db_migration.py =====
+........                                                                 [100%]
+PASS 3s tests/test_db_migration.py
+===== tests/test_processor.py =====
+...                                                                      [100%]

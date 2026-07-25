@@ -1,84 +1,71 @@
-# SnapIMS 0.6.0
+# SnapIMS 0.6.1
 
-SnapIMS is a photo-first, exception-driven inventory workstation for converting physical-media collections into validated inventory records, CSV exports, and Shopify draft products.
+SnapIMS is a photo-first, exception-driven inventory workstation for Canada VHS. It converts QR-delimited camera rolls into durable local inventory, human review, CSV workflows and controlled Shopify draft preparation.
 
-The operating model is deliberately simple:
+## Routine workflow
 
-```text
-Photograph + QR events
--> deterministic import
--> AI recognition
--> individual Review or Batch Editor
--> validated working batch
--> CSV / Shopify output
-```
+1. Photograph START, location, tape photos, NEXT between tapes, and END.
+2. Preview counts and warnings.
+3. Preserve and import one durable batch.
+4. Identify with a configured live provider or continue manually.
+5. Confirm title, optionally change Price/Discount, and use Approve & Next.
+6. Resolve exceptions in Batch Editor or through a staged CSV difference preview.
+7. Simulate Shopify drafts before any deliberate live draft test.
 
-SnapIMS is not designed as a conventional data-entry application. Routine records should move through with minimal effort; operators spend their time on uncertainty and exceptions.
+## What changed in 0.6.1
 
-## What is new in 0.6.0
+- Test/mock recognition is quarantined from production mode.
+- CSV, bulk edit and external review are atomic.
+- Interrupted import finalization is journaled and recoverable.
+- Checkpoint restore is audited.
+- Schema 7 verifies real SQLite structure.
+- Money uses exact cents/Decimal rules.
+- AI suggestions, saved values, reviewed values and Shopify state are separate.
+- BLOCKED provider recovery and manual review are explicit.
+- Metrics and Diagnostics are based on measured facts.
+- Browser verification covers the 20-item operator path and restart durability.
 
-- Actionable recognition-failure recovery, including missing API-key guidance.
-- Safe import-folder validation and a native **Browse Folder...** action for local desktop use.
-- Three-tier media handling: preserved original, fast browser preview, and optimized AI derivative.
-- Keyboard-first Review: Price is selected automatically and Enter executes **Approve & Next**.
-- Integrated Batch Editor with inline editing, filters, confidence buckets, bulk operations, checkpoints, undo/redo, and session-view restoration.
-- CSV upload with staged difference preview, validation, explicit apply, and rollback checkpoint.
-- Externally reviewed batch confirmation for validated CSV/bulk workflows.
-- Durable change history, optimistic-revision conflict protection, and recognition token accounting.
-
-## Install on Linux
+## Install
 
 ```bash
+git clone https://github.com/fachingo/SnapIMS.git
 cd SnapIMS
+git switch fix/v0.6.1-mega-stabilization
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install -e ".[dev]"
-python -m playwright install chromium
+pip install -e '.[dev]'
 ```
 
-## Launch
+## Run
 
 ```bash
-cd ~/Projects/SnapIMS
-source .venv/bin/activate
 snapims --data-dir ~/SnapIMS-data serve
 ```
 
-Open `http://127.0.0.1:8767`.
+SnapIMS binds to `127.0.0.1:8767` by default. It does not auto-run at boot unless you deliberately create and enable a service.
 
-The terminal remains occupied while the server runs. A quiet terminal means SnapIMS is waiting normally. Stop it with `Ctrl+C`.
-
-## Fast operator paths
-
-### Individual Review
-
-1. Confirm the photo and title.
-2. Accept the displayed price by pressing Enter, or type a replacement price and press Enter.
-3. The next unfinished tape opens with Price selected again.
-
-### Batch Editor
-
-Use the Batch Editor when many records need the same treatment or when low-confidence results should be grouped together. It supports inline edits, confidence filtering, bulk price/discount/location/tag operations, Fill Down, checkpoints, and row approval.
-
-### CSV round trip
-
-1. Download CSV from Publish.
-2. Edit in Excel or LibreOffice.
-3. Upload the edited file.
-4. Inspect the field-level difference preview.
-5. Apply valid changes; SnapIMS creates a rollback checkpoint first.
-6. Optionally confirm the batch as externally reviewed after all validation blockers are resolved.
-
-## Quality gates
+## Quality gate
 
 ```bash
-scripts/run_quality_gate.sh
-python scripts/native_browser_audit_v060.py
+ruff check .
+mypy snapims
+pytest -q
+python -m compileall -q snapims tests
+python -m build
+pip check
+git diff --check
 ```
 
-Current verification evidence is documented in `TEST_RESULTS.md` and `NATIVE_BROWSER_VERIFICATION.md`.
+## Safety boundaries
 
-## Version status
+- Keep production data and `.env` outside Git.
+- Original images are never overwritten.
+- Item ID and Batch ID are immutable.
+- CSV updates by Item ID only.
+- Live Shopify mode creates drafts only and requires deliberate confirmation.
+- SnapIMS remains single-operator and localhost-first.
+- Mock/test providers require `SNAPIMS_ENABLE_TEST_PROVIDERS=true` and are not production truth.
 
-SnapIMS 0.6.0 is a functional beta candidate for controlled pilot work. It is **not** 1.0.0. The real Pixel pilot, live AI run, live Shopify draft, physical CSV reconciliation, and final operator acceptance remain mandatory before production release.
+## 1.0 gate
+
+Do not label SnapIMS 1.0.0 until the real 20-tape Pixel pilot, live AI, one live Shopify draft, physical CSV verification, restart durability, independent Operator Guide walkthrough, browser verification and blocker review all pass.

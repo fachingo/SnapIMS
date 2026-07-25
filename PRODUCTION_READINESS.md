@@ -1,25 +1,34 @@
-# SnapIMS 0.6.0 Production Readiness
+# SnapIMS 0.6.1 Production Readiness
 
-Verdict: **not production 1.0; ready for controlled real-pilot testing**.
+Status: **controlled-pilot candidate; not production 1.0.0**
 
-## Closed blockers in 0.6.0
+## Closed in this patch
 
-- Empty folder submission no longer exposes raw FastAPI 422 JSON.
-- `recognition_jobs.started_at` is defaulted safely and cannot be overwritten by `None`.
-- Recognition failure now shows the cause and recovery actions.
-- AI-title approval follows displayed-value precedence.
-- Legacy recognition-job schema remains compatible.
-- Browser and AI payloads use persistent derivatives rather than original phone files.
-- CSV replacement is staged, diffed, validated, confirmed, and checkpointed.
-- Bulk edits create rollback checkpoints and record change history.
+- Test/mock provider quarantine and provenance protection.
+- Atomic CSV, bulk edit and external-review operations.
+- Durable import-finalization journal and restart reconciliation.
+- Audited checkpoint restore.
+- Structural schema verification and legacy recognition-job repair.
+- Exact currency handling across Review, Batch Editor, CSV, bulk and Shopify payload preparation.
+- Truthful suggestion/saved/reviewed/confidence states.
+- BLOCKED/manual provider recovery and distinct retry scopes.
+- Accurate Home and diagnostics metrics.
+- Browser-console, favicon, keyboard and restart regression coverage.
 
-## Remaining 1.0 acceptance work
+## Mandatory 1.0 blockers
 
-1. Run a real 20-tape Pixel batch.
-2. Run live AI with a real API key and inspect token use/results.
-3. Review and correct the batch using both Review and Batch Editor.
-4. Reconcile downloaded CSV against physical tapes.
-5. Create one live Shopify draft and verify product, variant, inventory, media, SKU, and price.
-6. Restart during/after recognition and confirm durability.
-7. Follow the Operator Guide step by step with the final UI.
-8. Resolve every pilot blocker before labelling 1.0.0.
+- Real 20-tape Pixel pilot.
+- Live AI tested on real images and billing/latency measured.
+- Exactly one live Shopify draft created and inspected.
+- CSV reconciled against physical tapes and images.
+- Restart durability repeated on the operator's Linux Mint machine.
+- Operator Guide followed independently against the final browser UI.
+- Final browser verification on the production machine.
+- No known production blockers.
+
+## Scale and security boundaries
+
+- Full 5,000-row virtualization and warehouse-scale import architecture are deferred.
+- SnapIMS remains single-operator and localhost-first.
+- Cloudflare/Tailscale infrastructure does not make the application multi-user safe.
+- Authentication, roles, CSRF, secure sessions, batch claims and concurrency controls remain a dedicated future package.

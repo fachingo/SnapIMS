@@ -1,0 +1,7 @@
+Starting branch: feature/v0.6.0-operator-workstation
+Starting commit: 5c316ca
+Starting version: 0.6.0
+Date: 2026-07-25T08:40:05+00:00
+## fix/v0.6.1-mega-stabilization
+?? release-evidence/
+5c316ca feat: deliver SnapIMS v0.6.0 operator workstation
