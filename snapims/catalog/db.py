@@ -260,6 +260,17 @@ def _base_schema(connection: sqlite3.Connection) -> None:
             value TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS catalog_maintenance_jobs (
+            maintenance_job_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            operation TEXT NOT NULL,
+            status TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            result_json TEXT NOT NULL DEFAULT '{}',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            finished_at TEXT
+        );
         CREATE TABLE IF NOT EXISTS catalog_events (
             catalog_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
             occurred_at TEXT NOT NULL,
@@ -280,6 +291,7 @@ def _base_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_jobs_item ON catalog_lookup_jobs(item_id, recognition_result_id DESC);
         CREATE INDEX IF NOT EXISTS idx_candidates_job_score ON movie_candidates(job_id, score DESC);
         CREATE INDEX IF NOT EXISTS idx_events_movie ON catalog_events(movie_id, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_maintenance_status ON catalog_maintenance_jobs(status, updated_at);
         """
     )
     connection.execute(
@@ -320,6 +332,7 @@ def expected_manifest() -> dict[str, tuple[str, ...]]:
         "catalog_lookup_jobs": ("recognition_result_id", "item_id", "status", "link_state"),
         "movie_candidates": ("job_id", "source_page_id", "score", "candidate_payload_json"),
         "catalog_events": ("event_type", "movie_id", "details_json"),
+        "catalog_maintenance_jobs": ("operation", "status", "payload_json", "result_json"),
     }
 
 
