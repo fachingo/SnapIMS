@@ -1,27 +1,25 @@
-# SnapIMS Project Status
+# SnapIMS 0.6.0 Project Status
 
-Version: **0.5.1 verification-hardening release candidate**
+Classification: **functional beta candidate for controlled pilot testing**.
 
-## Completed
+## Implemented
 
-- deterministic QR/event parser and original preservation;
-- immutable Batch/Item identity and SQLite schema v5;
-- configured/recent Import workflow;
-- persisted recognition jobs with real interruption recovery;
-- one-click Review with inline Price and Discount;
-- Later and completed-item correction;
-- safe partial CSV round-trip with year and discount;
-- Shopify simulation and checkpoint/retry service tests;
-- legacy migration backup/rollback tests;
-- 110 pytest tests;
-- real Chromium-to-uvicorn operator audit;
-- synchronized phase reports, final audit, screenshots, and Operator Guide.
+- Deterministic QR/photo import and duplicate protection.
+- Durable SQLite records, migrations, backups, checkpoints, and restart recovery.
+- Mock and OpenAI recognition adapters with durable failure recovery.
+- One-click/Enter Review path with inline price and discount.
+- Completed-item correction with immutable item identity.
+- Batch Editor and bulk operator workflow.
+- CSV export, upload, difference preview, apply, rollback, and external review.
+- Shopify simulation and live adapter boundaries.
+- Browser preview and AI image derivatives.
+- Operator documentation and native browser verification.
 
-## Pending before 1.0
+## Not yet accepted for 1.0
 
-- real 20-tape Pixel pilot;
-- live AI acceptance;
-- one live Shopify draft;
-- physical CSV reconciliation;
-- independent first-time operator guide walkthrough;
-- successful Ruff/MyPy/build-frontend execution in an environment where those tools are available.
+- Real 20-tape Pixel pilot.
+- Live OpenAI recognition against the real pilot.
+- One live Shopify draft created and inspected.
+- Physical CSV reconciliation.
+- Final operator-guide walkthrough using the real pilot.
+- No known blockers after that pilot.

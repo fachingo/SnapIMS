@@ -1,33 +1,17 @@
-# SnapIMS 0.5.1 Database
+# SnapIMS 0.6.0 Database
 
-SQLite schema version: **5**.
+Current schema version: **6**.
 
-## Safety properties
+Important durable entities:
 
-- immutable `item_id` and matching SKU;
-- foreign keys enabled on every application connection;
-- WAL mode for local durability;
-- explicit write transactions;
-- backup before import, CSV import, Shopify live attempt, and legacy migration;
-- post-migration integrity and foreign-key checks;
-- unsupported future schema refused without modification;
-- partial CSV import preserves absent columns;
-- optimistic `record_revision` protects concurrent/stale edits;
-- publish checkpoints and attempt history support reconciliation.
+- `batches`: immutable import identity and source fingerprint.
+- `items`: authoritative working inventory records and immutable Item IDs/SKUs.
+- `photos`: original, preview, recognition paths and byte accounting.
+- `recognition_results`: append-only AI suggestions, confidence, uncertainty, pricing-source label, and token use.
+- `recognition_jobs`: durable provider state, progress, failure details, and recovery timestamps.
+- `item_change_log`: field-level audit trail.
+- `batch_checkpoints`: rollback snapshots before CSV replacement and bulk edits.
+- `csv_staging`: unapplied CSV previews and blocking errors.
+- `review_cursors`: restart-durable Review position.
 
-## Verified migration path
-
-The test suite creates a real legacy v0.3-format fixture, upgrades it to schema 5, and verifies retained Item IDs, SKU, items, photos, recognition history, backup creation, and integrity. Failure injection verifies restoration of the original database. Future schema versions are refused safely.
-
-## Integrity command
-
-```bash
-snapims --data-dir /path/to/workspace integrity
-```
-
-Expected:
-
-```text
-integrity_check=ok
-foreign_key_violations=0
-```
+Migrations back up an existing database before schema changes. Legacy recognition-job tables that allow multiple rows per batch remain supported through SQLite `rowid` selection until a future explicit normalization migration is justified.

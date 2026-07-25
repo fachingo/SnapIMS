@@ -1,26 +1,27 @@
 # SnapIMS Release Notes
 
-## 0.5.1 - Verification hardening patch
+## 0.6.0 - Operator workstation and stabilization
 
-This patch repairs the verification and delivery gaps in the 0.5.0 reconstruction candidate without introducing a new operator workflow.
+### Added
 
-### Fixed and verified
+- Native folder browse workflow and safe import errors.
+- Recognition failure classification and recovery screen.
+- Preview and recognition image derivatives.
+- Keyboard-first Price -> Enter Review flow.
+- Batch Editor with inline editing, filtering, confidence buckets, command palette, bulk operations, checkpoints, undo/redo, and session restoration.
+- CSV upload, field-level difference preview, apply confirmation, difference report, and rollback.
+- External review workflow.
+- Field-level audit history, token recording, media bandwidth metrics, and stale-edit conflict detection.
 
-- created real local Git history and recovery artifacts;
-- expanded regression coverage from 17 to 110 collected pytest tests;
-- added migration backup/rollback/future-schema tests;
-- added Shopify checkpoint, reconciliation, failure, media, and retry tests;
-- replaced the hybrid audit with Chromium navigating a separately running uvicorn server;
-- proved genuine recognition interruption by killing and restarting the process;
-- regenerated Phase 1-5 browser reports;
-- corrected timing terminology and audit evidence categories;
-- regenerated and completely indexed 31 screenshots;
-- synchronized application and documentation version references to 0.5.1.
+### Fixed
 
-### Historical note: 0.5.0
+- Legacy recognition-job schema compatibility.
+- `started_at` NOT NULL failures.
+- Final-item recognition-job upsert failures.
+- AI suggestion/title precedence during approval.
+- Silent recognition failure refresh.
+- Unnecessary original-image browser/AI payload use.
 
-Version 0.5.0 reconstructed the missing fast Review, Import, recognition, CSV, and Shopify boundaries. Its audit used a hybrid TestClient transport and had only 17 tests; 0.5.1 supersedes it as the verification-hardened candidate.
+## 0.5.1 - Verification hardening
 
-### Still required before 1.0
-
-Real Pixel pilot, live AI, one live Shopify draft, physical CSV verification, and independent guide walkthrough.
+Historical release candidate. Its reports and generation scripts are retained under `docs/history/v0.5.1/`.

@@ -1,26 +1,15 @@
-# SnapIMS 0.5.1 Demonstration
+# SnapIMS 0.6.0 Demo and Pilot Data
 
-## Generate a QR-delimited camera roll
-
-```bash
-snapims demo demo-data/camera-roll
-```
-
-## Start the browser application
+Create a deterministic demo camera folder from Python:
 
 ```bash
-snapims --data-dir demo-data/workspace serve
+python - <<'PY'
+from pathlib import Path
+from snapims.demo import create_demo_batch
+print(create_demo_batch(Path.home() / "SnapIMS-demo-camera", item_count=20, photos_per_item=2))
+PY
 ```
 
-Then use only the browser:
+Launch SnapIMS, open Import, choose the generated folder, Preview, and Preserve and Import Batch.
 
-1. Import -> Advanced -> choose `demo-data/camera-roll`.
-2. Preview and confirm the non-durable identity and grouping counts.
-3. Preserve and import.
-4. Continue to Review.
-5. Select Mock and Identify items.
-6. Confirm title; optionally adjust Price or Discount; select **Approve & Next**.
-7. Use Later for a postponed tape or Edit for an exception.
-8. Open Publish, simulate drafts, and download the CSV.
-
-Mock is deterministic test data. It does not prove live AI quality.
+For a more difficult recognition/import test, use the separately supplied `SnapIMS_Synthetic_Hard_Batch.zip`. Its `import_photos/` directory is the flat chronological camera stream.

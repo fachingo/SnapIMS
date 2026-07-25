@@ -1,23 +1,30 @@
-# SnapIMS 0.5.1 Architecture
+# SnapIMS 0.6.0 Architecture
 
-## Core rule
+## System boundaries
 
-The camera roll is an ordered event stream. Time gaps never define item boundaries. `CVHS1:ITEM:NEXT` is the sole normal boundary.
+- `snapims/protocol.py`, `pipeline.py`, `processor.py`: deterministic QR/photo import.
+- `snapims/db.py`: SQLite persistence, migrations, checkpoints, history, cursors, recognition jobs.
+- `snapims/recognition/`: provider adapters and durable recognition orchestration.
+- `snapims/inventory.py`: record validation, CSV export/import staging, diff application, external review.
+- `snapims/shopify/`: Shopify adapter, idempotency, and simulation/live boundaries.
+- `snapims/web/`: FastAPI routes, Jinja templates, browser interactions.
 
-## Layers
+The SQLite working batch is authoritative. Review, Batch Editor, CSV apply, and recovery all update the same item records. Original and AI values remain available through recognition history, change history, and rollback checkpoints.
 
-- `snapims/protocol.py`, `sorter.py`, `interpreter.py`, `pipeline.py`: deterministic capture/event interpretation.
-- `snapims/processor.py`: preserved originals, sanitized product copies, staging, fingerprinting, and transactional import.
-- `snapims/db.py`: SQLite schema v5, migrations, events, settings, cursors, recognition jobs, and publish checkpoints.
-- `snapims/recognition/`: provider-neutral suggestion interface, durable jobs, acceptance, failure, and retry.
-- `snapims/inventory.py`: validation and immutable-ID CSV round-trip.
-- `snapims/shopify/`: draft-only payload, transport boundary, checkpointed publication, media verification, and reconciliation.
-- `snapims/web/`: FastAPI/Jinja browser client. UI actions call application services; SQLite remains authoritative.
+## Media pipeline
 
-## Durability
+Each product photo has three durable representations:
 
-Each recognized item is committed independently. A process killed during recognition leaves the job RUNNING in SQLite; startup converts orphaned RUNNING jobs to PAUSED. Continue reconstructs completed boundaries from recognition history and does not duplicate results.
+1. Original: exact preserved source file.
+2. Preview: 1080-pixel browser derivative.
+3. Recognition: 1920-pixel AI derivative.
 
-## Future clients
+QR cards, duplicates, blank images, and ineligible photos are excluded from provider payloads without being deleted.
 
-A mobile capture client can emit the same START, LOCATION, NEXT, FLAG, PHOTO, and END event vocabulary. A server/multi-operator edition requires authentication and concurrency policy beyond 0.5.1.
+## Concurrency safety
+
+SQLite uses WAL, busy timeouts, transactions, and item record revisions. Browser edits include the expected revision; stale writes are rejected rather than silently replacing newer values.
+
+## Extension points
+
+Provider adapters, Shopify publishing, CSV tooling, and UI services remain separate enough to support future Android capture clients, Docker/server deployment, ERP adapters, and additional AI providers without replacing the deterministic import core.
