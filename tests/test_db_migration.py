@@ -123,7 +123,7 @@ def test_pre_migration_backup_created(tmp_path: Path) -> None:
     paths = DataPaths.from_root(tmp_path / "workspace").ensure()
     legacy_v03_database(paths.db_file)
     db.initialize(paths.db_file, paths=paths)
-    backups = list(paths.backups.glob("*before-schema-v5*.sqlite3"))
+    backups = list(paths.backups.glob("*before-schema-v6*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
@@ -190,7 +190,7 @@ def test_current_schema_initialize_is_idempotent(tmp_path: Path) -> None:
     db.initialize(db_file)
     # WAL metadata may vary, but the logical schema and version remain stable.
     with db.connect(db_file) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     assert first
 

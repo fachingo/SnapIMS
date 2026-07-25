@@ -52,6 +52,7 @@ class ProcessedPhoto:
     original_copy_path: Path
     processed_path: Path | None = None
     thumbnail_path: Path | None = None
+    recognition_path: Path | None = None
     photo_order: int | None = None
 
 

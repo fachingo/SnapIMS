@@ -31,7 +31,7 @@ class HTTPShopifyTransport:
             self.endpoint,
             data=json.dumps({"query": query, "variables": variables}).encode(),
             method="POST",
-            headers={"Content-Type": "application/json", "X-Shopify-Access-Token": self.config.access_token, "User-Agent": "SnapIMS/0.5.1"},
+            headers={"Content-Type": "application/json", "X-Shopify-Access-Token": self.config.access_token, "User-Agent": "SnapIMS/0.6.0"},
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:

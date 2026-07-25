@@ -54,6 +54,7 @@ class MockRecognizer(BaseRecognizer):
             uncertainty_reasons=("Synthetic mock result; verify against the cover",),
             provider_name=self.name,
             raw_response_reference=f"mock:{reference}",
+            pricing_source="MOCK_ESTIMATE_NO_LIVE_MARKET_DATA",
             requires_review=True,
         )
 
@@ -99,7 +100,8 @@ class OpenAIRecognizer(BaseRecognizer):
             "type": "input_text",
             "text": (
                 "Identify this VHS tape from the cover photographs. Return only catalog metadata. "
-                "Use a sensible CAD listing price in cents when possible; use 999 when uncertain."
+                "Suggest a CAD listing price in cents only as an AI estimate. You do not have live sold-market data. "
+                "Use 999 when uncertain and include the lack of live comparable sales in uncertainty_reasons."
             ),
         }]
         for path in images[:MAX_IMAGES]:
@@ -112,6 +114,9 @@ class OpenAIRecognizer(BaseRecognizer):
             text={"format": {"type": "json_schema", "name": "vhs_recognition", "strict": True, "schema": SCHEMA}},
         )
         payload = json.loads(response.output_text)
+        usage = getattr(response, "usage", None)
+        input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+        output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
         return RecognitionResult(
             suggested_title=str(payload["title"]),
             edition=str(payload["edition"]),
@@ -124,6 +129,9 @@ class OpenAIRecognizer(BaseRecognizer):
             uncertainty_reasons=tuple(payload["uncertainty_reasons"]),
             provider_name=self.name,
             raw_response_reference=str(response.id),
+            pricing_source="AI_ESTIMATE_NO_LIVE_MARKET_DATA",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             requires_review=True,
         )
 

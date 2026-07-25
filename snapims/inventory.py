@@ -228,3 +228,214 @@ def import_inventory_csv(db_file: Path, csv_path: Path, *, paths: DataPaths | No
                 )
     validate_items(db_file, identifiers)
     return len(prepared)
+
+
+def preview_inventory_csv(
+    db_file: Path,
+    batch_id: str,
+    csv_text: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
+    """Parse a SnapIMS CSV without mutating the working batch."""
+    import io
+
+    reader = csv.DictReader(io.StringIO(csv_text.lstrip("\ufeff")))
+    fields = reader.fieldnames or []
+    blocking: list[str] = []
+    for required in ("Item ID",):
+        if required not in fields:
+            blocking.append(f"Missing required CSV column: {required}")
+    if blocking:
+        return [], {"total_rows": 0, "matched": 0, "changed": 0}, blocking
+
+    rows = list(reader)
+    identifiers = [str(row.get("Item ID") or "").strip() for row in rows]
+    if any(not identifier for identifier in identifiers):
+        blocking.append("Every CSV row must contain an Item ID.")
+    duplicate_ids = sorted({identifier for identifier in identifiers if identifiers.count(identifier) > 1})
+    if duplicate_ids:
+        blocking.append(f"Duplicate Item ID in CSV: {duplicate_ids[0]}")
+
+    batch_items = {item["item_id"]: item for item in db.list_items(db_file, batch_id=batch_id)}
+    all_items = {item["item_id"]: item for item in db.list_items(db_file)}
+    staged: list[dict[str, Any]] = []
+    field_counts: dict[str, int] = {}
+    unmatched = 0
+    changed_items = 0
+    unchanged_items = 0
+
+    editable_columns = [column for column in fields if column in COLUMN_MAP]
+    if not editable_columns:
+        blocking.append("CSV contains no editable SnapIMS columns")
+
+    for row_number, row in enumerate(rows, start=2):
+        item_id = str(row.get("Item ID") or "").strip()
+        item = batch_items.get(item_id)
+        row_errors: list[str] = []
+        if not item:
+            unmatched += 1
+            if item_id in all_items:
+                row_errors.append(f"Item belongs to another batch: {item_id}")
+            else:
+                row_errors.append(f"Unknown Item ID: {item_id}")
+            staged.append(
+                {
+                    "row_number": row_number,
+                    "item_id": item_id,
+                    "title": str(row.get("Title") or ""),
+                    "updates": {},
+                    "changes": [],
+                    "errors": row_errors,
+                }
+            )
+            continue
+
+        csv_batch = str(row.get("Batch ID") or "").strip()
+        if csv_batch and csv_batch != batch_id:
+            row_errors.append(f"Batch ID {csv_batch} does not match {batch_id}")
+
+        csv_sku = str(row.get("SKU") or "").strip()
+        if csv_sku and csv_sku != item_id:
+            row_errors.append("SKU must remain equal to immutable Item ID")
+
+        updates: dict[str, Any] = {}
+        changes: list[dict[str, Any]] = []
+        for column in editable_columns:
+            raw = str(row.get(column) or "")
+            try:
+                value = COLUMN_MAP[column][1](raw)
+            except (ValueError, TypeError, CSVImportError):
+                row_errors.append(f"Invalid {column}: {raw!r}")
+                continue
+            field_name = COLUMN_MAP[column][0]
+            updates[field_name] = value
+            if item.get(field_name) != value:
+                changes.append(
+                    {
+                        "column": column,
+                        "field": field_name,
+                        "old": item.get(field_name),
+                        "new": value,
+                    }
+                )
+                field_counts[column] = field_counts.get(column, 0) + 1
+
+        candidate = {**item, **updates}
+        candidate_errors = validation_errors(candidate, db.get_item_photos(db_file, item_id))
+        # Empty titles and invalid prices are blocking for external review and publishing.
+        row_errors.extend(error for error in candidate_errors if error not in row_errors)
+        if changes:
+            changed_items += 1
+        else:
+            unchanged_items += 1
+        staged.append(
+            {
+                "row_number": row_number,
+                "item_id": item_id,
+                "title": item.get("title") or str(row.get("Title") or ""),
+                "thumbnail": item.get("front_thumbnail") or "",
+                "updates": updates,
+                "changes": changes,
+                "errors": row_errors,
+            }
+        )
+
+    blocking.extend(
+        error
+        for staged_row in staged
+        for error in staged_row["errors"]
+        if error not in blocking
+    )
+    missing = sorted(set(batch_items) - set(identifiers))
+    summary = {
+        "total_rows": len(rows),
+        "matched": len(rows) - unmatched,
+        "unmatched": unmatched,
+        "items_added": unmatched,
+        "items_missing": len(missing),
+        "missing_item_ids": missing,
+        "changed": changed_items,
+        "unchanged": unchanged_items,
+        "field_counts": field_counts,
+        "blocking_errors": len(blocking),
+        "total_edits": sum(len(row["changes"]) for row in staged),
+    }
+    return staged, summary, blocking
+
+
+def apply_staged_csv(
+    db_file: Path,
+    token: str,
+    *,
+    paths: DataPaths | None = None,
+) -> tuple[str, int, int]:
+    stage = db.get_csv_staging(db_file, token)
+    if stage is None:
+        raise CSVImportError("CSV preview expired or no longer exists")
+    if stage["blocking_errors"]:
+        raise CSVImportError("Resolve blocking CSV errors before applying changes")
+    batch_id = str(stage["batch_id"])
+    if paths:
+        db.backup_database(paths, "before-csv-apply")
+    checkpoint_id = db.create_batch_checkpoint(
+        db_file,
+        batch_id,
+        reason=f"Before CSV upload {stage['filename']}",
+        source="CSV_UPLOAD",
+    )
+    changed = 0
+    identifiers: list[str] = []
+    for row in stage["payload"]:
+        if row["errors"] or not row["updates"]:
+            continue
+        item_id = row["item_id"]
+        identifiers.append(item_id)
+        updates = dict(row["updates"])
+        updates["working_source"] = "CSV_UPLOAD"
+        db.update_item(
+            db_file,
+            item_id,
+            updates,
+            source="CSV_UPLOAD",
+            reason=f"CSV upload: {stage['filename']}",
+        )
+        if row["changes"]:
+            changed += 1
+    validate_items(db_file, identifiers)
+    db.delete_csv_staging(db_file, token)
+    return batch_id, changed, checkpoint_id
+
+
+def mark_batch_externally_reviewed(db_file: Path, batch_id: str) -> tuple[int, list[str]]:
+    items = db.list_items(db_file, batch_id=batch_id)
+    blockers: list[str] = []
+    valid_ids: list[str] = []
+    for item in items:
+        errors = validation_errors(item, db.get_item_photos(db_file, item["item_id"]))
+        if errors:
+            blockers.extend(f"{item['item_id']}: {error}" for error in errors)
+        else:
+            valid_ids.append(item["item_id"])
+    if blockers:
+        return 0, blockers
+    db.create_batch_checkpoint(
+        db_file,
+        batch_id,
+        reason="Before external CSV review confirmation",
+        source="CSV_EXTERNAL_REVIEW",
+    )
+    for item_id in valid_ids:
+        db.update_item(
+            db_file,
+            item_id,
+            {
+                "ready": 1,
+                "review_status": "DONE",
+                "validation_status": "READY",
+                "validation_errors": "[]",
+                "review_source": "CSV_EXTERNAL_REVIEW",
+                "working_source": "CSV_UPLOAD",
+            },
+            source="CSV_EXTERNAL_REVIEW",
+        )
+    db.upsert_recognition_job(db_file, batch_id, status="REVIEW_COMPLETE")
+    return len(valid_ids), []

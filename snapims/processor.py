@@ -7,7 +7,13 @@ from pathlib import Path
 
 from snapims import db
 from snapims.config import DataPaths
-from snapims.images import copy_original, create_safe_jpeg
+from snapims.images import (
+    copy_original,
+    create_preview,
+    create_recognition_derivative,
+    create_safe_jpeg,
+    is_nearly_blank,
+)
 from snapims.interpreter import make_batch_id
 from snapims.inventory import export_inventory_csv
 from snapims.manifests import item_id, photo_name, write_manifests
@@ -45,7 +51,13 @@ def _artifact_plan(batch: BatchRecord, paths: DataPaths) -> list[ProcessedPhoto]
         original_copy = original_root / f"{photo.stream_index:04d}-{photo.original_name}"
         if photo.stream_index in products:
             identifier, order, name = products[photo.stream_index]
-            artifacts.append(ProcessedPhoto(identifier, photo, "product", name, original_copy, processed_root / "images" / name, processed_root / "thumbnails" / name, order))
+            artifacts.append(ProcessedPhoto(
+                identifier, photo, "product", name, original_copy,
+                processed_root / "images" / name,
+                processed_root / "previews" / name,
+                processed_root / "recognition" / name,
+                order,
+            ))
         elif photo.stream_index in command_streams:
             payload = (photo.qr_payload or "UNKNOWN").replace(":", "-")
             name = f"{photo.stream_index:04d}-{payload}.jpg"
@@ -79,9 +91,28 @@ def _insert_batch(db_file: Path, batch: BatchRecord, artifacts: list[ProcessedPh
         photo_ids: dict[int, int] = {}
         for artifact in artifacts:
             cursor = connection.execute(
-                """INSERT INTO photos(batch_id,item_id,kind,stream_index,photo_order,original_name,captured_at,timestamp_source,sha256,qr_payload,source_path,original_copy_path,proposed_name,processed_path,thumbnail_path)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (batch.batch_id, artifact.item_id, artifact.kind, artifact.source.stream_index, artifact.photo_order, artifact.source.original_name, artifact.source.captured_at.isoformat(), artifact.source.timestamp_source, artifact.source.sha256, artifact.source.qr_payload, str(artifact.source.path), str(artifact.original_copy_path), artifact.proposed_name, str(artifact.processed_path) if artifact.processed_path else None, str(artifact.thumbnail_path) if artifact.thumbnail_path else None),
+                """INSERT INTO photos(
+                       batch_id,item_id,kind,stream_index,photo_order,original_name,captured_at,
+                       timestamp_source,sha256,qr_payload,source_path,original_copy_path,
+                       proposed_name,processed_path,thumbnail_path,preview_path,recognition_path,
+                       original_bytes,preview_bytes,recognition_bytes,ai_eligible,image_role
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    batch.batch_id, artifact.item_id, artifact.kind, artifact.source.stream_index,
+                    artifact.photo_order, artifact.source.original_name,
+                    artifact.source.captured_at.isoformat(), artifact.source.timestamp_source,
+                    artifact.source.sha256, artifact.source.qr_payload, str(artifact.source.path),
+                    str(artifact.original_copy_path), artifact.proposed_name,
+                    str(artifact.processed_path) if artifact.processed_path else None,
+                    str(artifact.thumbnail_path) if artifact.thumbnail_path else None,
+                    str(artifact.thumbnail_path) if artifact.thumbnail_path else None,
+                    str(artifact.recognition_path) if artifact.recognition_path else None,
+                    artifact.original_copy_path.stat().st_size if artifact.original_copy_path.is_file() else 0,
+                    artifact.thumbnail_path.stat().st_size if artifact.thumbnail_path and artifact.thumbnail_path.is_file() else 0,
+                    artifact.recognition_path.stat().st_size if artifact.recognition_path and artifact.recognition_path.is_file() else 0,
+                    int(artifact.kind == "product" and artifact.recognition_path is not None and not is_nearly_blank(artifact.recognition_path)),
+                    ({1: "front", 2: "spine", 3: "back", 4: "cassette"}.get(artifact.photo_order or 0, "support") if artifact.kind == "product" else artifact.kind),
+                ),
             )
             photo_ids[artifact.source.stream_index] = int(cursor.lastrowid)
         for command_photo in batch.commands:
@@ -93,8 +124,9 @@ def _insert_batch(db_file: Path, batch: BatchRecord, artifacts: list[ProcessedPh
                     (batch.batch_id, command_photo.stream_index, command_photo.captured_at.isoformat(), command.payload, command.kind.value, command.value, photo_ids.get(command_photo.stream_index)),
                 )
         connection.execute(
-            "INSERT INTO recognition_jobs(batch_id,provider,status,total,updated_at) VALUES(?, 'mock','READY',?,?)",
-            (batch.batch_id, len(batch.items), timestamp),
+            "INSERT INTO recognition_jobs(batch_id,provider,status,total,started_at,updated_at) "
+            "VALUES(?, 'mock','READY',?,?,?)",
+            (batch.batch_id, len(batch.items), timestamp, timestamp),
         )
 
 
@@ -137,7 +169,10 @@ def process_batch(
             create_safe_jpeg(artifact.source.path, processed_destination)
         if artifact.thumbnail_path:
             thumb_destination = staging_processed / artifact.thumbnail_path.relative_to(paths.processed / batch.batch_id)
-            create_safe_jpeg(artifact.source.path, thumb_destination, max_dimension=640)
+            create_preview(artifact.source.path, thumb_destination)
+        if artifact.recognition_path:
+            recognition_destination = staging_processed / artifact.recognition_path.relative_to(paths.processed / batch.batch_id)
+            create_recognition_derivative(artifact.source.path, recognition_destination)
         temporary = progress_path.with_suffix(".tmp")
         temporary.write_text(json.dumps({"batch_id": batch.batch_id, "completed_artifacts": completed, "total_artifacts": len(artifacts)}), encoding="utf-8")
         os.replace(temporary, progress_path)
@@ -159,6 +194,7 @@ def process_batch(
             final_originals / artifact.original_copy_path.relative_to(paths.originals / batch.batch_id),
             final_processed / artifact.processed_path.relative_to(paths.processed / batch.batch_id) if artifact.processed_path else None,
             final_processed / artifact.thumbnail_path.relative_to(paths.processed / batch.batch_id) if artifact.thumbnail_path else None,
+            final_processed / artifact.recognition_path.relative_to(paths.processed / batch.batch_id) if artifact.recognition_path else None,
             artifact.photo_order,
         ))
     _insert_batch(paths.db_file, batch, final_artifacts)

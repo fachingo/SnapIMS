@@ -19,6 +19,9 @@ class RecognitionResult:
     uncertainty_reasons: tuple[str, ...] = ()
     provider_name: str = "unknown"
     raw_response_reference: str = ""
+    pricing_source: str = "AI_ESTIMATE_NO_LIVE_MARKET_DATA"
+    input_tokens: int = 0
+    output_tokens: int = 0
     requires_review: bool = True
 
 
