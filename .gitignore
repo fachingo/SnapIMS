@@ -24,3 +24,6 @@ operator-audit-assets/**/downloads/
 
 operator-audit-assets/**/camera-rolls/
 operator-audit-assets/**/logs/
+operator-audit-assets/**/camera-roll/
+.guide-assets-*/
+_guide_render/

@@ -1,0 +1,20 @@
+{
+  "version": "0.6.0",
+  "scenarios": [
+    "Home dashboard rendered",
+    "Empty folder action disabled; no raw FastAPI response",
+    "20-item import completed without started_at failure",
+    "Missing OpenAI key produced actionable recovery screen",
+    "Recognition recovered through mock provider",
+    "Price \u2192 Enter approved and focused next price",
+    "Batch Editor inline edit and 20-row bulk price completed",
+    "CSV round trip showed diff and updated working batch",
+    "External review and Shopify simulation completed",
+    "Working values survived process restart",
+    "Diagnostics rendered provider, schema, and media data"
+  ],
+  "browser_console_errors": [],
+  "batch_id": "20260725-054122",
+  "viewport": "1440x1000",
+  "passed": true
+}

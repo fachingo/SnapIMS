@@ -11,10 +11,32 @@
   <header class="topbar">
     <a class="brand" href="/">SnapIMS <span>v{{ version }}</span></a>
     <nav>
-      <a href="/">Home</a><a href="/import">Import</a><a href="/review">Review</a><a href="/publish">Publish</a><a href="/settings">Settings</a><a href="/diagnostics">Diagnostics</a>
+      <a href="/">Home</a>
+      <a href="/import">Import</a>
+      <a href="/review">Review</a>
+      <a href="/batch-editor">Batch Editor</a>
+      <a href="/publish">Publish</a>
+      <a href="/settings">Settings</a>
+      <a href="/diagnostics">Diagnostics</a>
     </nav>
+    <button class="command-trigger" type="button" data-command-open title="Command palette (Ctrl+Shift+P)">⌘</button>
   </header>
   <main class="page">{% block content %}{% endblock %}</main>
-  <footer>SnapIMS {{ version }} · Local inventory ingestion</footer>
+  <footer>SnapIMS {{ version }} · Exception-handling inventory workstation</footer>
+  <dialog id="command-palette" class="command-palette">
+    <div class="palette-head"><strong>Quick Command Palette</strong><button type="button" data-command-close>×</button></div>
+    <input id="command-search" autocomplete="off" placeholder="Type a command…">
+    <div class="command-list">
+      <a data-command href="/import">Open Import</a>
+      <a data-command href="/review">Open Review</a>
+      <a data-command href="/batch-editor">Open Batch Editor</a>
+      <a data-command href="/publish">Open Publish</a>
+      <a data-command href="/diagnostics">Open Diagnostics</a>
+      <button type="button" data-command data-command-action="focus-search">Search current batch</button>
+      <button type="button" data-command data-command-action="bulk-price">Set selected prices</button>
+      <button type="button" data-command data-command-action="approve-selected">Approve selected</button>
+    </div>
+    <small>Ctrl+Shift+P · Esc closes</small>
+  </dialog>
 </body>
 </html>
