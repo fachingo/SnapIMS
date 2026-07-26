@@ -178,11 +178,102 @@ def test_service_manager_status_smoke(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setenv("SNAPIMS_AUTH_SECRET", "")
     monkeypatch.setenv("SNAPIMS_ADMIN_PASSWORD_HASH", "")
     monkeypatch.setenv("CLOUDFLARE_TUNNEL_CONFIG", str(tmp_path / "missing-cloudflared.yml"))
+    monkeypatch.setenv("SNAPIMS_GUACAMOLE_CONFIG_DIR", str(tmp_path / "missing-guacamole"))
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
     config = SnapIMSConfig.load()
     manager = ServiceManager(config)
     status = manager.status()
     assert status["version"] == __version__
     assert "tunnel_problem" in status
+    assert "guacamole" in status
+    assert status["guacamole"]["available"] is False
+    assert "guacd" in status["guacamole"]["problem"]
+
+
+def test_guacamole_status_reports_inaccessible_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_guacd = fake_bin / "guacd"
+    fake_guacd.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_guacd.chmod(0o755)
+    config_dir = tmp_path / "guacamole"
+    config_dir.mkdir()
+
+    monkeypatch.setenv("SNAPIMS_PROJECT_PATH", str(ROOT))
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SNAPIMS_AUTH_SECRET", "")
+    monkeypatch.setenv("SNAPIMS_ADMIN_PASSWORD_HASH", "")
+    monkeypatch.setenv("CLOUDFLARE_TUNNEL_CONFIG", str(tmp_path / "missing-cloudflared.yml"))
+    monkeypatch.setenv("SNAPIMS_GUACAMOLE_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("PATH", str(fake_bin))
+
+    original_exists = Path.exists
+
+    def exists_with_permission_error(path: Path) -> bool:
+        if path in {config_dir / "guacamole.properties", config_dir / "user-mapping.xml"}:
+            raise PermissionError("Permission denied")
+        return original_exists(path)
+
+    monkeypatch.setattr(Path, "exists", exists_with_permission_error)
+
+    status = ServiceManager(SnapIMSConfig.load()).guacamole_status()
+
+    assert status["available"] is False
+    assert status["config_accessible"] is False
+    assert "cannot access" in status["warning"]
+    assert "Permission denied" in status["warning"]
+    assert "Permission denied" not in status["problem"]
+
+
+def test_guacamole_health_accepts_lowercase_guacamole_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Response:
+        status = 200
+        headers = {"content-type": "text/html"}
+
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _limit: int) -> bytes:
+            return b'<html><link rel="stylesheet" href="app.guacamole.css"></html>'
+
+    monkeypatch.setenv("SNAPIMS_PROJECT_PATH", str(ROOT))
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SNAPIMS_AUTH_SECRET", "")
+    monkeypatch.setenv("SNAPIMS_ADMIN_PASSWORD_HASH", "")
+    monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: Response())
+
+    assert ServiceManager(SnapIMSConfig.load()).guacamole_health() is True
+
+
+def test_guacamole_installer_scripts_are_present_and_valid() -> None:
+    scripts = [
+        ROOT / "scripts" / "install_guacamole.sh",
+        ROOT / "scripts" / "configure_cloudflare_guacamole.sh",
+    ]
+    for script in scripts:
+        assert script.is_file()
+        assert os.access(script, os.X_OK)
+        result = subprocess.run(
+            ["bash", "-n", str(script)],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+
+    installer = (ROOT / "scripts" / "install_guacamole.sh").read_text(encoding="utf-8")
+    assert "LISTEN_ADDRESS=${GUACD_HOST}" in installer
+    assert "LISTEN_PORT=${GUACD_PORT}" in installer
+    assert "SupplementaryGroups=${SERVICE_GROUP}" in installer
+    assert "$GUACAMOLE_HOME/guacd.conf" in installer
 
 
 def test_launcher_installer_uses_script_location_and_updates_path_once(tmp_path: Path) -> None:

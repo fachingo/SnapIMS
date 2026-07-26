@@ -1,34 +1,22 @@
-# SnapIMS 0.8.1 Release Notes
+# SnapIMS 0.9.0 Release Notes
 
-Release type: **patch**.
+Release type: **minor**.
 
-0.8.1 finalizes infrastructure for the current development stage without changing import, review, publish, AI recognition, database schema, or Shopify workflow architecture.
+0.9.0 completes the missing Apache Guacamole remote-workstation infrastructure without changing import, review, publish, AI recognition, catalog, database schema, or Shopify workflows.
 
-## Infrastructure hardening
+## Remote Workstation
 
-- Launcher refuses sudo/root installs.
-- Launcher discovers the repository root from its own location instead of assuming `~/Projects/SnapIMS`.
-- Installer manages `~/.local/bin` PATH setup for bash/zsh/profile without duplicate entries.
-- Installer validates launcher existence, executable bit, `snapims --help`, and `snapims version` before reporting success.
-- `.env` loading now resolves from the project root used by the launcher.
-- CLI diagnostics distinguish required local checks from optional external integrations.
-- Tunnel commands report missing `cloudflared`/config clearly instead of reporting `pid None`.
-- systemd app service now uses the installed launcher instead of a hard-coded clone path.
+- Added `scripts/install_guacamole.sh`, an idempotent Linux installer for guacd, Guacamole protocol modules, xrdp, Java, Tomcat 9, `guacamole.war`, `/etc/guacamole`, and systemd services.
+- Added authenticated Guacamole administrator setup with generated credentials stored in `/etc/guacamole/snapims-admin.env`.
+- Added Guacamole connections for Linux Mint desktop over RDP and SSH terminal access, with clipboard support and file transfer where supported.
+- Added `scripts/configure_cloudflare_guacamole.sh` to preserve `ims.canadavhs.ca` and add `desktop.ims.canadavhs.ca`.
 
-## Authentication
+## Service Manager
 
-- Password hashes use scrypt with embedded parameters.
-- Session cookies are signed and validated against the configured administrator username.
-- Partial authentication configuration fails closed.
-- Login/logout flow is covered by smoke tests.
-- Added `snapims auth generate-secret` and `snapims auth hash-password`.
-
-## Validation
-
-- Full automated test suite passes in the development environment.
-- Whole-repo Ruff check passes.
-- Compile validation passes for `snapims` and `tests`.
+- `snapims up`, `down`, `restart`, `status`, and `doctor` now include Guacamole.
+- Uninstalled hosts report Guacamole as unavailable with the missing component instead of silently omitting it.
+- Diagnostics cover guacd, Tomcat, xrdp, Guacamole HTTP, guacd port 4822, RDP backend, and SSH backend.
 
 ## Boundary
 
-0.8.1 is not production 1.0.0. Live OpenAI quality/cost validation, one live Shopify draft, physical CSV reconciliation, the real Pixel pilot, and final operator acceptance remain required before 1.0.0.
+This is not production 1.0.0. Live OpenAI quality/cost validation, one live Shopify draft, physical CSV reconciliation, and final operator acceptance remain required before 1.0.0.

@@ -1,62 +1,77 @@
-# SnapIMS 0.8.1 Operator Guide
+# SnapIMS 0.9.0 Operator Guide
 
-Install once from the SnapIMS repository root:
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -e .
-scripts/install_launcher.sh
-```
-
-After installation, use `snapims` from any directory:
+## Daily Operation
 
 ```bash
 snapims up
 snapims status
-snapims restart
+snapims doctor
 snapims logs
+snapims restart
 snapims down
 ```
 
-Tunnel controls are:
+`snapims up` is the normal startup command. It starts SnapIMS, Cloudflare Tunnel when configured, guacd, xrdp, and Guacamole Tomcat.
+
+Local URLs:
+
+- SnapIMS: `http://127.0.0.1:8767`
+- Guacamole: `http://127.0.0.1:8080/guacamole/`
+
+Remote URL after Cloudflare setup:
+
+- `https://desktop.ims.canadavhs.ca/guacamole/`
+
+## Guacamole Login
+
+Retrieve the generated Guacamole administrator credential:
 
 ```bash
-snapims tunnel start
-snapims tunnel status
-snapims tunnel restart
-snapims tunnel stop
+sudo cat /etc/guacamole/snapims-admin.env
 ```
 
-## First administrator account
+Log in as `snapims-admin`, then open one of the configured connections:
 
-1. Generate a signing secret:
+- `Linux Mint Desktop`: full desktop over local RDP, clipboard enabled, Guacamole drive file transfer enabled where supported;
+- `SSH Terminal`: local SSH session with SFTP file transfer enabled where supported.
 
-   ```bash
-   snapims auth generate-secret
-   ```
+The RDP and SSH connections use the Linux operator username by default and prompt for that Linux account password when connecting.
 
-2. Generate the password hash:
+## SnapIMS Administrator
 
-   ```bash
-   snapims auth hash-password
-   ```
+Create the first SnapIMS administrator in `.env`:
 
-3. Put the values in `.env`:
+```bash
+snapims auth generate-secret
+snapims auth hash-password
+```
 
-   ```bash
-   SNAPIMS_AUTH_SECRET=<generated secret>
-   SNAPIMS_ADMIN_USERNAME=admin
-   SNAPIMS_ADMIN_PASSWORD_HASH=<generated hash>
-   ```
+Set:
 
-4. Restart SnapIMS:
+```bash
+SNAPIMS_AUTH_SECRET=<generated secret>
+SNAPIMS_ADMIN_USERNAME=admin
+SNAPIMS_ADMIN_PASSWORD_HASH=<generated hash>
+```
 
-   ```bash
-   snapims restart
-   ```
+Restart:
 
-## Password reset
+```bash
+snapims restart
+```
 
-Run `snapims auth hash-password`, replace `SNAPIMS_ADMIN_PASSWORD_HASH` in `.env`, then run `snapims restart`. Existing sessions expire naturally or can be ended with Log out.
+Reset a SnapIMS password by generating a new hash, replacing `SNAPIMS_ADMIN_PASSWORD_HASH`, and restarting.
 
-Logs and PID files live below `SNAPIMS_DATA_DIR/logs`, defaulting to `~/SnapIMS-data/logs`.
+## Remote Desktop Troubleshooting
+
+```bash
+which guacd
+systemctl status guacd
+systemctl status snapims-guacamole-tomcat
+systemctl status xrdp
+ss -ltn
+snapims status
+snapims doctor
+```
+
+If `desktop.ims.canadavhs.ca` does not load, check `~/.cloudflared/config.yml` and the Cloudflare dashboard Public Hostname for `desktop.ims.canadavhs.ca -> http://127.0.0.1:8080`.

@@ -53,6 +53,39 @@ def _ensure_venv(config: SnapIMSConfig) -> None:
     )
 
 
+def _pass_fail(ok: bool) -> str:
+    return "PASS" if ok else "FAIL"
+
+
+def _running_stopped(ok: bool) -> str:
+    return "RUNNING" if ok else "STOPPED"
+
+
+def _auth_state(config: SnapIMSConfig) -> tuple[str, str]:
+    problem = authentication_problem(config.auth_secret, config.admin_password_hash)
+    if authentication_enabled(config.auth_secret, config.admin_password_hash):
+        return "PASS", "enabled"
+    if problem:
+        return "FAIL", problem
+    return "WARN", "disabled"
+
+
+def _database_ok(config: SnapIMSConfig) -> bool:
+    try:
+        db.initialize(config.data.db_file, paths=config.data)
+        with db.connect(config.data.db_file) as connection:
+            return connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    except Exception:
+        return False
+
+
+def _print_service_urls(config: SnapIMSConfig) -> None:
+    print(f"SnapIMS local URL: http://{config.host}:{config.port}")
+    print(f"Guacamole local URL: {config.guacamole_url}/")
+    if config.guacamole_public_url:
+        print(f"Guacamole public URL: {config.guacamole_public_url}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="snapims")
     parser.add_argument("--data-dir", default=None)
@@ -125,38 +158,76 @@ def main() -> None:
     manager = ServiceManager(config)
     if args.command == "up":
         _ensure_venv(config)
+        auth_state, auth_detail = _auth_state(config)
+        if auth_state == "FAIL":
+            print(f"Authentication: FAIL ({auth_detail})")
         manager.start_app()
         tunnel = manager.start_tunnel()
+        guacamole_started = manager.start_guacamole()
         healthy = manager.wait_for_health()
-        print(f"SnapIMS running: http://{config.host}:{config.port}")
-        print(f"Health check: {'passed' if healthy else 'FAILED'}")
+        guacamole = manager.guacamole_status()
+        _print_service_urls(config)
+        print(f"SnapIMS: {_running_stopped(bool(manager._read_pid('app')))}")
+        print(f"Health check: {_pass_fail(healthy)}")
         print(
-            "Public URL is provided by the configured Cloudflare tunnel."
+            "Cloudflare Tunnel: RUNNING"
             if tunnel
-            else "Tunnel not started (check cloudflared credentials/config)."
+            else f"Cloudflare Tunnel: STOPPED ({manager.tunnel_problem() or 'not started'})"
+        )
+        print(
+            "Guacamole: RUNNING"
+            if guacamole_started or guacamole["available"]
+            else f"Guacamole: UNAVAILABLE ({guacamole['problem'] or 'not installed'})"
         )
     elif args.command == "down":
+        manager.stop_guacamole()
         manager.stop("tunnel")
         manager.stop("app")
         print("SnapIMS stopped")
     elif args.command == "restart":
+        manager.stop_guacamole()
         manager.stop("tunnel")
         manager.stop("app")
         _ensure_venv(config)
         manager.start_app()
         manager.start_tunnel()
+        manager.start_guacamole()
         healthy = manager.wait_for_health()
         print("SnapIMS restarted")
-        print(f"Health check: {'passed' if healthy else 'FAILED'}")
+        print(f"Health check: {_pass_fail(healthy)}")
+        guacamole = manager.guacamole_status()
+        print(
+            "Guacamole: RUNNING"
+            if guacamole["available"]
+            else f"Guacamole: UNAVAILABLE ({guacamole['problem'] or 'not installed'})"
+        )
     elif args.command == "status":
         status = manager.status()
+        guacamole = status["guacamole"]
+        auth_state, auth_detail = _auth_state(config)
+        database_ok = _database_ok(config)
         print(
-            f"SnapIMS ........ {'Running' if status['app'] else 'Stopped'}\n"
-            f"Health ......... {'Healthy' if status['health'] else 'Unavailable'}\n"
-            f"Tunnel ......... {'Connected' if status['tunnel'] else 'Unavailable'}\n"
-            f"Port ........... {status['port']}\n"
-            f"Version ........ {status['version']}"
+            f"SnapIMS .............. {_running_stopped(bool(status['app']))}\n"
+            f"Health ............... {_pass_fail(bool(status['health']))}\n"
+            f"Cloudflare Tunnel .... {_running_stopped(bool(status['tunnel']))}\n"
+            f"Guacamole ............ {'RUNNING' if guacamole['available'] else 'UNAVAILABLE'}\n"
+            f"guacd ................ {_running_stopped(bool(guacamole['guacd_service_active']))}\n"
+            f"Tomcat ............... {_running_stopped(bool(guacamole['tomcat_service_active']))}\n"
+            f"xrdp desktop ......... {_running_stopped(bool(guacamole['xrdp_service_active']))}\n"
+            f"Authentication ....... {auth_state}\n"
+            f"Database ............. {_pass_fail(database_ok)}\n"
+            f"OpenAI ............... {_pass_fail(bool(config.openai_api_key))}\n"
+            f"Port ................. {status['port']}\n"
+            f"Version .............. {status['version']}"
         )
+        if status["tunnel_problem"] and not status["tunnel"]:
+            print(f"Cloudflare detail .... {status['tunnel_problem']}")
+        if guacamole["problem"]:
+            print(f"Guacamole detail ..... {guacamole['problem']}")
+        if guacamole["warning"]:
+            print(f"Guacamole warning .... {guacamole['warning']}")
+        if auth_detail and auth_state != "PASS":
+            print(f"Authentication detail  {auth_detail}")
     elif args.command == "logs":
         subprocess.run(["tail", "-n", "100", "-f", str(config.app_log)], check=False)
     elif args.command == "tunnel":
@@ -197,7 +268,7 @@ def main() -> None:
             ("Python", sys.version_info >= (3, 12)),
             ("venv", (config.project_path / ".venv" / "bin" / "python").exists()),
             ("dependencies", dependencies),
-            ("SQLite", True),
+            ("SQLite", _database_ok(config)),
             ("logs directory", config.data.logs.is_dir()),
             ("config", config.project_path.is_dir()),
             ("write permissions", os.access(config.data.root, os.W_OK)),
@@ -216,6 +287,44 @@ def main() -> None:
             "PASS  Cloudflare tunnel"
             if not manager.tunnel_problem()
             else f"WARN  Cloudflare tunnel - {manager.tunnel_problem()}"
+        )
+        guacamole = manager.guacamole_status()
+        print(
+            "PASS  Guacamole web application"
+            if guacamole["web"]
+            else f"FAIL  Guacamole web application - {guacamole['problem'] or 'not installed'}"
+        )
+        if guacamole["warning"]:
+            print(f"WARN  Guacamole config - {guacamole['warning']}")
+        print(
+            "PASS  guacd service"
+            if guacamole["guacd_service_active"]
+            else f"FAIL  guacd service - {guacamole['guacd_service']} is not running"
+        )
+        print(
+            "PASS  Tomcat service"
+            if guacamole["tomcat_service_active"]
+            else f"FAIL  Tomcat service - {guacamole['tomcat_service']} is not running"
+        )
+        print(
+            "PASS  Guacamole HTTP port"
+            if guacamole["http_port_open"]
+            else "FAIL  Guacamole HTTP port is not listening"
+        )
+        print(
+            "PASS  guacd port 4822"
+            if guacamole["guacd_port_open"]
+            else "FAIL  guacd port 4822 is not listening"
+        )
+        print(
+            "PASS  RDP desktop backend"
+            if guacamole["rdp_port_open"]
+            else "FAIL  RDP desktop backend is not listening on 127.0.0.1:3389"
+        )
+        print(
+            "PASS  SSH backend"
+            if guacamole["ssh_port_open"]
+            else "FAIL  SSH backend is not listening on 127.0.0.1:22"
         )
     elif args.command == "shell":
         os.execv(

@@ -1,6 +1,6 @@
-# SnapIMS 0.8.1 Deployment Guide
+# SnapIMS 0.9.0 Deployment Guide
 
-SnapIMS is a single-operator local web application. It should bind to localhost and be exposed only through a trusted tunnel or reverse proxy.
+SnapIMS and Guacamole both bind to localhost. Public access must go through Cloudflare Tunnel or another trusted reverse proxy.
 
 ## Managed CLI
 
@@ -9,50 +9,78 @@ snapims up
 snapims status
 snapims restart
 snapims down
+snapims doctor
 ```
 
-`snapims up` starts the app, attempts to start the configured Cloudflare tunnel, and waits for the local health check. `snapims status` reports app process state, health, tunnel state, port, and version.
+`snapims up` verifies the virtual environment and auth configuration, starts SnapIMS, attempts the configured Cloudflare tunnel, starts or verifies guacd, xrdp, and `snapims-guacamole-tomcat`, then checks the SnapIMS health endpoint and the Guacamole login page.
 
-## Cloudflare Tunnel
+`snapims down` stops the SnapIMS app, Cloudflare tunnel process, Guacamole Tomcat service, and guacd. It leaves SSH and xrdp installed so the host remains administrable.
 
-SnapIMS does not create tunnels or change DNS. Keep the existing Cloudflare credentials and config, normally:
+## Guacamole Services
+
+The installer creates:
+
+- `guacd.service`: packaged Guacamole proxy daemon;
+- `xrdp.service`: local-only RDP desktop backend;
+- `snapims-guacamole-tomcat.service`: dedicated Tomcat 9 service for `guacamole.war`.
+
+Local ports:
+
+- `4822`: guacd;
+- `3389`: xrdp, bound to `127.0.0.1`;
+- `8080`: Tomcat/Guacamole.
+
+Configuration:
 
 ```bash
-~/.cloudflared/config.yml
+/etc/guacamole/guacamole.properties
+/etc/guacamole/user-mapping.xml
+/etc/guacamole/snapims-admin.env
 ```
 
-Optional `.env` settings:
+## Cloudflare
 
-```bash
-SNAPIMS_CLOUDFLARED_BIN=cloudflared
-CLOUDFLARE_TUNNEL_CONFIG=~/.cloudflared/config.yml
-CLOUDFLARE_TUNNEL_NAME=
+Do not replace the existing `ims.canadavhs.ca` route. Add a second ingress:
+
+```yaml
+ingress:
+  - hostname: ims.canadavhs.ca
+    service: http://127.0.0.1:8767
+  - hostname: desktop.ims.canadavhs.ca
+    service: http://127.0.0.1:8080
+  - service: http_status:404
 ```
 
-Validate tunnel readiness:
+Use:
 
 ```bash
-snapims tunnel status
-snapims tunnel start
+scripts/configure_cloudflare_guacamole.sh
 ```
 
-If credentials or `cloudflared` are missing, SnapIMS reports the specific reason and keeps the local app usable.
+If DNS routing cannot be completed locally, add `desktop.ims.canadavhs.ca` in the Cloudflare dashboard as a Public Hostname on the same tunnel, with service `http://127.0.0.1:8080`.
 
-## Optional systemd user services
+## Environment
 
-Service files are in `deployment/`. They intentionally depend on the installed `~/.local/bin/snapims` launcher so they do not hard-code a clone path.
+Relevant `.env` settings:
 
 ```bash
-mkdir -p ~/.config/systemd/user
-cp deployment/snapims.service deployment/cloudflared.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user start snapims.service
-systemctl --user status snapims.service
+SNAPIMS_GUACAMOLE_URL=http://127.0.0.1:8080/guacamole
+SNAPIMS_GUACAMOLE_PUBLIC_URL=https://desktop.ims.canadavhs.ca/guacamole
+SNAPIMS_GUACD_SERVICE=guacd
+SNAPIMS_TOMCAT_SERVICE=snapims-guacamole-tomcat
+SNAPIMS_XRDP_SERVICE=xrdp
+SNAPIMS_MANAGE_GUACAMOLE_SERVICES=true
 ```
 
-Enable services only after manual validation:
+## Validation
 
 ```bash
-systemctl --user enable snapims.service
-systemctl --user enable cloudflared.service
+which guacd
+systemctl status guacd
+systemctl status snapims-guacamole-tomcat
+systemctl status xrdp
+ss -ltn
+curl -fsSL http://127.0.0.1:8080/guacamole/ >/dev/null
+snapims status
+snapims doctor
 ```

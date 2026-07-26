@@ -82,6 +82,15 @@ class SnapIMSConfig:
     cloudflared_bin: str
     tunnel_config: Path
     tunnel_name: str
+    guacamole_url: str
+    guacamole_public_url: str
+    guacd_host: str
+    guacd_port: int
+    guacd_service: str
+    tomcat_service: str
+    xrdp_service: str
+    guacamole_config_dir: Path
+    manage_guacamole_services: bool
     auth_secret: str
     admin_username: str
     admin_password_hash: str
@@ -117,6 +126,24 @@ class SnapIMSConfig:
                 os.getenv("CLOUDFLARE_TUNNEL_CONFIG", "~/.cloudflared/config.yml")
             ).expanduser(),
             tunnel_name=os.getenv("CLOUDFLARE_TUNNEL_NAME", ""),
+            guacamole_url=os.getenv(
+                "SNAPIMS_GUACAMOLE_URL", "http://127.0.0.1:8080/guacamole"
+            ).rstrip("/"),
+            guacamole_public_url=os.getenv("SNAPIMS_GUACAMOLE_PUBLIC_URL", "").rstrip("/"),
+            guacd_host=os.getenv("SNAPIMS_GUACD_HOST", "127.0.0.1"),
+            guacd_port=int(os.getenv("SNAPIMS_GUACD_PORT", "4822")),
+            guacd_service=os.getenv("SNAPIMS_GUACD_SERVICE", "guacd"),
+            tomcat_service=os.getenv("SNAPIMS_TOMCAT_SERVICE", "snapims-guacamole-tomcat"),
+            xrdp_service=os.getenv("SNAPIMS_XRDP_SERVICE", "xrdp"),
+            guacamole_config_dir=Path(
+                os.getenv("SNAPIMS_GUACAMOLE_CONFIG_DIR", "/etc/guacamole")
+            ).expanduser(),
+            manage_guacamole_services=os.getenv(
+                "SNAPIMS_MANAGE_GUACAMOLE_SERVICES", "true"
+            )
+            .strip()
+            .casefold()
+            not in {"false", "0", "no"},
             auth_secret=os.getenv("SNAPIMS_AUTH_SECRET", ""),
             admin_username=os.getenv("SNAPIMS_ADMIN_USERNAME", "admin"),
             admin_password_hash=os.getenv("SNAPIMS_ADMIN_PASSWORD_HASH", ""),

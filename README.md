@@ -1,40 +1,42 @@
-# SnapIMS 0.8.1
+# SnapIMS 0.9.0
 
-SnapIMS is a photo-first, exception-driven inventory workstation for Canada VHS. This release is an infrastructure patch: launcher installation, CLI validation, authentication setup, service/tunnel management, diagnostics, deployment docs, and regression coverage were hardened without redesigning import, review, publish, AI recognition, database schema, or Shopify workflows.
+SnapIMS is a photo-first, exception-driven inventory workstation for Canada VHS. This release adds the missing remote-workstation infrastructure: Apache Guacamole, guacd, a SnapIMS-owned Tomcat service, RDP desktop access, SSH terminal access, Cloudflare hostname setup, and CLI diagnostics. Import, review, publish, AI recognition, database schema, catalog, and Shopify workflows are unchanged.
 
 ## Install
-
-Clone SnapIMS anywhere, then install from the repository root:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .
 scripts/install_launcher.sh
+sudo scripts/install_guacamole.sh
+scripts/configure_cloudflare_guacamole.sh
 ```
 
-Do not run the installer with `sudo`. It installs `snapims` into the current operator’s `~/.local/bin`, updates bash/zsh PATH startup files without duplicating entries, and reports success only after `snapims --help` and `snapims version` pass.
+`install_launcher.sh` must run as the operator user. It installs `snapims` into `~/.local/bin`, avoids duplicate PATH entries, and validates `snapims --help` and `snapims version`.
+
+`install_guacamole.sh` installs packaged `guacd`, RDP/SSH/VNC protocol modules, `xrdp`, Java, and a dedicated Tomcat 9 under `/opt/snapims/tomcat9`. It deploys `guacamole.war`, writes `/etc/guacamole`, creates an authenticated `snapims-admin` account, and validates the local Guacamole login page before reporting success.
 
 ## Operate
 
 ```bash
-snapims doctor
 snapims up
 snapims status
+snapims doctor
 snapims restart
 snapims down
 ```
 
-Foreground development remains:
+`snapims up` starts SnapIMS, Cloudflare Tunnel when configured, guacd, xrdp, and the SnapIMS Guacamole Tomcat service. If Guacamole is not installed, `status` and `doctor` report it as unavailable with the missing component.
 
-```bash
-snapims serve
-```
+Default local URLs:
 
-SnapIMS binds to `127.0.0.1:8767` by default. Use Cloudflare Tunnel or another trusted reverse proxy; do not expose the app directly with router port forwarding.
+- SnapIMS: `http://127.0.0.1:8767`
+- Guacamole: `http://127.0.0.1:8080/guacamole/`
+- Remote desktop hostname: `https://desktop.ims.canadavhs.ca/guacamole/`
 
 ## Authentication
 
-Set these in `.env` before exposing SnapIMS beyond local-only development:
+SnapIMS auth is configured in `.env`:
 
 ```bash
 SNAPIMS_AUTH_SECRET=<from snapims auth generate-secret>
@@ -42,8 +44,8 @@ SNAPIMS_ADMIN_USERNAME=admin
 SNAPIMS_ADMIN_PASSWORD_HASH=<from snapims auth hash-password>
 ```
 
-Reset an administrator password by running `snapims auth hash-password`, replacing `SNAPIMS_ADMIN_PASSWORD_HASH` in `.env`, then running `snapims restart`.
+Guacamole credentials are separate. The installer stores the generated Guacamole admin credential in `/etc/guacamole/snapims-admin.env`; retrieve it with `sudo cat /etc/guacamole/snapims-admin.env`.
 
-## Release status
+## Release Status
 
-Version 0.8.1 is a **patch** release. It is not production 1.0.0. Live OpenAI quality/cost validation, one live Shopify draft, physical CSV reconciliation, the real Pixel pilot, and final operator acceptance remain required before 1.0.0.
+Version 0.9.0 is a **minor** infrastructure release. Production 1.0.0 still requires final live OpenAI, Shopify, physical CSV reconciliation, and operator acceptance gates.
