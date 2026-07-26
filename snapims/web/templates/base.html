@@ -11,6 +11,7 @@
 <body>
   <header class="topbar">
     <a class="brand" href="/">SnapIMS <span>v{{ version }}</span></a>
+    {% if show_nav is not defined or show_nav %}
     <nav>
       <a href="/">Home</a>
       <a href="/import">Import</a>
@@ -19,11 +20,14 @@
       <a href="/publish">Publish</a>
       <a href="/settings">Settings</a>
       <a href="/diagnostics">Diagnostics</a>
+      <form method="post" action="/logout" style="display:inline"><button type="submit">Log out</button></form>
     </nav>
     <button class="command-trigger" type="button" data-command-open title="Command palette (Ctrl+Shift+P; Ctrl+K fallback)">⌘</button>
+    {% endif %}
   </header>
   <main class="page">{% block content %}{% endblock %}</main>
   <footer>SnapIMS {{ version }} · Exception-handling inventory workstation</footer>
+  {% if show_nav is not defined or show_nav %}
   <dialog id="command-palette" class="command-palette">
     <div class="palette-head"><strong>Quick Command Palette</strong><button type="button" data-command-close>×</button></div>
     <input id="command-search" autocomplete="off" placeholder="Type a command…">
@@ -39,5 +43,6 @@
     </div>
     <small>Ctrl+Shift+P · Ctrl+K fallback · Esc closes</small>
   </dialog>
+  {% endif %}
 </body>
 </html>

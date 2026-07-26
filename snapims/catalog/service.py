@@ -14,7 +14,7 @@ from snapims import db as inventory_db
 from snapims.catalog import db as catalog_db
 from snapims.catalog.models import CatalogLookupRequest, CatalogStatus, LocalMatch, MovieCandidate
 from snapims.catalog.normalization import normalize_title, strip_leading_article, title_variants
-from snapims.catalog.wikipedia import WikipediaClient, WikipediaError
+from snapims.catalog.wikipedia import WikipediaClient
 from snapims.config import DataPaths
 
 _ACTIVE: dict[int, threading.Thread] = {}

@@ -1,46 +1,49 @@
-# SnapIMS 0.7.0
+# SnapIMS 0.8.1
 
-SnapIMS is a photo-first, exception-driven inventory workstation for Canada VHS. Version 0.7.0 adds the local-first Movie Catalog, true spreadsheet-style Batch Editor keyboard operation, one-Enter manual-title Review, resilient CSV round trips, and migration/folder-picker repairs while preserving the v0.6.1 integrity foundation.
+SnapIMS is a photo-first, exception-driven inventory workstation for Canada VHS. This release is an infrastructure patch: launcher installation, CLI validation, authentication setup, service/tunnel management, diagnostics, deployment docs, and regression coverage were hardened without redesigning import, review, publish, AI recognition, database schema, or Shopify workflows.
 
-## Routine workflow
+## Install
 
-1. Photograph START, location, tape photos, NEXT between tapes, and END.
-2. Preview counts and warnings; then preserve one durable batch.
-3. Identify with a configured live provider or continue manually.
-4. Review the photograph. Title is focused only when empty; otherwise Price is selected. Press Enter once to approve and open the next unfinished tape.
-5. Use Batch Editor for keyboard-driven corrections, atomic bulk actions, checkpoints, and CSV staging.
-6. Let the background catalog search the local database first and bounded English Wikipedia only on a genuine local miss.
-7. Simulate Shopify drafts before any deliberate live draft test.
-
-## 0.7.0 highlights
-
-- **Local Movie Catalog:** separate rebuildable `movie_catalog.sqlite3`, local-first matching, bounded Wikipedia retrieval, source provenance, ambiguity resolution, restart-safe jobs, CSV/Shopify enrichment, diagnostics, backup and restore.
-- **Review:** inline Title/Price/Discount quick fields; Title receives focus only when required; one Enter submits the valid record exactly once.
-- **Batch Editor:** arrow-key grid navigation, Enter-to-save-and-move, Shift range selection, Ctrl/Cmd+A visible-row selection, Ctrl/Cmd+1–9 quick actions, persistent action order, and concise action descriptions.
-- **CSV:** unchanged SnapIMS exports round-trip successfully; BOM, CRLF/LF, comma/semicolon/tab delimiters, harmless header variation, and `item_id` aliases are handled without weakening immutable-ID safety.
-- **Import:** missing Tkinter becomes a clear manual-path fallback; `python3-tk` is an optional Linux dependency for the native folder picker.
-- **Migration:** schema 8 automatically removes the obsolete `recognition_job_items` table before rebuilding recognition jobs, preventing the v0.6.1 foreign-key mismatch on existing databases.
-
-## Install and run
+Clone SnapIMS anywhere, then install from the repository root:
 
 ```bash
-cd ~/Projects/SnapIMS-v0.7.0
 python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e .
-snapims --data-dir ~/SnapIMS-data serve
+.venv/bin/pip install -e .
+scripts/install_launcher.sh
 ```
 
-Open `http://127.0.0.1:8767`.
+Do not run the installer with `sudo`. It installs `snapims` into the current operator’s `~/.local/bin`, updates bash/zsh PATH startup files without duplicating entries, and reports success only after `snapims --help` and `snapims version` pass.
 
-For the native Linux folder picker:
+## Operate
 
 ```bash
-sudo apt install python3-tk
+snapims doctor
+snapims up
+snapims status
+snapims restart
+snapims down
 ```
 
-SnapIMS binds to localhost by default. Do not expose the application directly with router port forwarding.
+Foreground development remains:
+
+```bash
+snapims serve
+```
+
+SnapIMS binds to `127.0.0.1:8767` by default. Use Cloudflare Tunnel or another trusted reverse proxy; do not expose the app directly with router port forwarding.
+
+## Authentication
+
+Set these in `.env` before exposing SnapIMS beyond local-only development:
+
+```bash
+SNAPIMS_AUTH_SECRET=<from snapims auth generate-secret>
+SNAPIMS_ADMIN_USERNAME=admin
+SNAPIMS_ADMIN_PASSWORD_HASH=<from snapims auth hash-password>
+```
+
+Reset an administrator password by running `snapims auth hash-password`, replacing `SNAPIMS_ADMIN_PASSWORD_HASH` in `.env`, then running `snapims restart`.
 
 ## Release status
 
-Version 0.7.0 is a **minor feature release**, not production 1.0.0. The real 20-tape Pixel pilot, live AI test, one live Shopify draft, physical CSV reconciliation, restart durability on the production machine, final Operator Guide walkthrough, browser verification, and blocker review remain mandatory before 1.0.0.
+Version 0.8.1 is a **patch** release. It is not production 1.0.0. Live OpenAI quality/cost validation, one live Shopify draft, physical CSV reconciliation, the real Pixel pilot, and final operator acceptance remain required before 1.0.0.

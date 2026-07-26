@@ -3,6 +3,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 import json
 import logging
+from logging.handlers import RotatingFileHandler
+import mimetypes
 import os
 from pathlib import Path
 from typing import Any
@@ -10,8 +12,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from snapims import __version__, db
@@ -54,8 +55,18 @@ from snapims.recognition.service import (
 )
 from snapims.shopify.service import ShopifyService
 from snapims.runtime import test_providers_enabled
+from snapims.auth import (
+    COOKIE,
+    authentication_enabled,
+    authentication_problem,
+    issue_session,
+    read_session,
+    verify_password,
+)
+from snapims.config import SnapIMSConfig
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
+STATIC_ROOT = PACKAGE_ROOT / "static"
 TEMPLATES = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
 LOGGER = logging.getLogger(__name__)
 
@@ -63,6 +74,12 @@ LOGGER = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     paths = get_paths()
+    paths.logs.mkdir(parents=True, exist_ok=True)
+    if not any(isinstance(handler, RotatingFileHandler) for handler in LOGGER.handlers):
+        handler = RotatingFileHandler(paths.logs / "snapims.log", maxBytes=5_000_000, backupCount=5)
+        logging.getLogger("snapims").addHandler(handler)
+        logging.getLogger("snapims").setLevel(logging.INFO)
+    LOGGER.info("SnapIMS %s starting", __version__)
     db.initialize(paths.db_file, paths=paths)
     reconcile_import_journals(paths)
     db.mark_interrupted_jobs_paused(paths.db_file)
@@ -78,10 +95,119 @@ async def lifespan(app: FastAPI):
         app.state.catalog_error = str(exc)
         LOGGER.exception("Movie catalog startup failed; inventory remains available")
     yield
+    LOGGER.info("SnapIMS shutting down")
 
 
 app = FastAPI(title="SnapIMS", version=__version__, lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=str(PACKAGE_ROOT / "static")), name="static")
+
+
+async def stream_file(path: Path, chunk_size: int = 1024 * 128):
+    with path.open("rb") as handle:
+        while chunk := handle.read(chunk_size):
+            yield chunk
+
+
+def safe_file_response(
+    path: Path,
+    *,
+    media_type: str | None = None,
+    filename: str | None = None,
+) -> StreamingResponse:
+    if not path.is_file():
+        raise HTTPException(404)
+    headers = {}
+    if filename:
+        safe_name = filename.replace('"', "")
+        headers["Content-Disposition"] = f'attachment; filename="{safe_name}"'
+    return StreamingResponse(
+        stream_file(path),
+        media_type=media_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+        headers=headers,
+    )
+
+
+@app.get("/static/{path:path}", name="static", include_in_schema=False)
+async def static_asset(path: str) -> StreamingResponse:
+    candidate = (STATIC_ROOT / path).resolve()
+    static_root = STATIC_ROOT.resolve()
+    if candidate != static_root and static_root not in candidate.parents:
+        raise HTTPException(404)
+    return safe_file_response(candidate)
+
+
+@app.middleware("http")
+async def authentication(request: Request, call_next):
+    config = SnapIMSConfig.load()
+    public = request.url.path.startswith("/static") or request.url.path in {
+        "/favicon.ico",
+        "/login",
+        "/health",
+    }
+    auth_problem = authentication_problem(config.auth_secret, config.admin_password_hash)
+    if auth_problem and not public:
+        return RedirectResponse(
+            f"/login?error={quote('Authentication configuration error. Check .env.')}",
+            status_code=303,
+        )
+    if authentication_enabled(config.auth_secret, config.admin_password_hash) and not public:
+        session = request.cookies.get(COOKIE)
+        username = read_session(config.auth_secret, session) if session else None
+        if username != config.admin_username:
+            return RedirectResponse("/login", status_code=303)
+    response = await call_next(request)
+    return response
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, error: str = "") -> HTMLResponse:
+    config = SnapIMSConfig.load()
+    auth_problem = authentication_problem(config.auth_secret, config.admin_password_hash)
+    return TEMPLATES.TemplateResponse(
+        request,
+        "login.html",
+        context(
+            request,
+            error=error or auth_problem,
+            auth_disabled=not authentication_enabled(
+                config.auth_secret, config.admin_password_hash
+            )
+            and not auth_problem,
+            show_nav=False,
+        ),
+    )
+
+
+@app.post("/login")
+async def login(request: Request, username: str = Form(""), password: str = Form("")) -> RedirectResponse:
+    config = SnapIMSConfig.load()
+    auth_problem = authentication_problem(config.auth_secret, config.admin_password_hash)
+    if auth_problem:
+        return RedirectResponse(
+            f"/login?error={quote('Authentication configuration error. Check .env.')}",
+            status_code=303,
+        )
+    if not authentication_enabled(config.auth_secret, config.admin_password_hash):
+        return RedirectResponse("/", status_code=303)
+    if username == config.admin_username and verify_password(password, config.admin_password_hash):
+        response = RedirectResponse("/", status_code=303)
+        forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
+        response.set_cookie(
+            COOKIE,
+            issue_session(config.auth_secret, username),
+            httponly=True,
+            secure=request.url.scheme == "https" or forwarded_proto == "https",
+            samesite="lax",
+            max_age=86400,
+        )
+        return response
+    return RedirectResponse("/login?error=Invalid%20credentials", status_code=303)
+
+
+@app.post("/logout")
+async def logout() -> RedirectResponse:
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(COOKIE)
+    return response
 
 
 def get_paths() -> DataPaths:
@@ -167,7 +293,7 @@ def previous_item(items: list[dict[str, Any]], current_id: str) -> dict[str, Any
 
 
 @app.get("/", response_class=HTMLResponse)
-def home(request: Request) -> HTMLResponse:
+async def home(request: Request) -> HTMLResponse:
     paths = get_paths()
     batches = db.list_batches(paths.db_file)
     summary = db.database_summary(paths.db_file)
@@ -181,7 +307,7 @@ def home(request: Request) -> HTMLResponse:
 
 
 @app.get("/import", response_class=HTMLResponse)
-def import_page(
+async def import_page(
     request: Request,
     source_folder: str = "",
     batch_name: str = "",
@@ -214,7 +340,7 @@ def import_page(
 
 
 @app.post("/import/use-folder")
-def use_folder(
+async def use_folder(
     path: str | None = Form(None),
     save_as_incoming: bool = Form(False),
 ) -> RedirectResponse:
@@ -229,7 +355,7 @@ def use_folder(
 
 
 @app.post("/import/browse")
-def browse_folder(current_folder: str = Form("")) -> RedirectResponse:
+async def browse_folder(current_folder: str = Form("")) -> RedirectResponse:
     try:
         selected = choose_folder(current_folder)
     except FolderPickerUnavailable:
@@ -238,7 +364,9 @@ def browse_folder(current_folder: str = Form("")) -> RedirectResponse:
             f"/import?source_folder={quote(current_folder)}&manual=true&notice={quote(notice)}"
         )
     if not selected:
-        return redirect(f"/import?source_folder={quote(current_folder)}&notice={quote('Folder selection cancelled.')}")
+        return redirect(
+            f"/import?source_folder={quote(current_folder)}&notice={quote('Folder selection cancelled.')}"
+        )
     resolved, error = validate_folder(selected)
     if error:
         return redirect(f"/import?source_folder={quote(selected)}&message={quote(error)}")
@@ -248,7 +376,7 @@ def browse_folder(current_folder: str = Form("")) -> RedirectResponse:
 
 
 @app.post("/import/remove-recent")
-def remove_recent_folder(path: str = Form("")) -> RedirectResponse:
+async def remove_recent_folder(path: str = Form("")) -> RedirectResponse:
     paths = get_paths()
     remaining = [folder for folder in db.recent_folders(paths.db_file, limit=20) if folder != path]
     db.set_setting(paths.db_file, "recent_import_folders", json.dumps(remaining[:5]))
@@ -286,7 +414,7 @@ def import_context(
 
 
 @app.post("/import/preview", response_class=HTMLResponse)
-def import_preview(
+async def import_preview(
     request: Request,
     source_folder: str | None = Form(None),
     batch_name: str = Form(""),
@@ -294,7 +422,9 @@ def import_preview(
 ) -> HTMLResponse:
     selected, error = validate_folder(source_folder)
     if error:
-        return import_context(request, selected=source_folder or "", batch_name=batch_name, message=error)
+        return import_context(
+            request, selected=source_folder or "", batch_name=batch_name, message=error
+        )
     try:
         batch = parse_batch(Path(selected), batch_name=batch_name or None, recursive=recursive)
         paths = get_paths()
@@ -313,7 +443,7 @@ def import_preview(
 
 
 @app.post("/import/commit", response_class=HTMLResponse)
-def import_commit(
+async def import_commit(
     request: Request,
     source_folder: str | None = Form(None),
     batch_name: str = Form(""),
@@ -321,11 +451,19 @@ def import_commit(
 ) -> HTMLResponse:
     selected, error = validate_folder(source_folder)
     if error:
-        return import_context(request, selected=source_folder or "", batch_name=batch_name, message=error)
+        return import_context(
+            request, selected=source_folder or "", batch_name=batch_name, message=error
+        )
     try:
-        result = process_batch(Path(selected), paths=get_paths(), batch_name=batch_name or None, recursive=recursive)
+        result = process_batch(
+            Path(selected), paths=get_paths(), batch_name=batch_name or None, recursive=recursive
+        )
         db.set_setting(get_paths().db_file, "active_batch", result.batch_id)
-        notice = "Existing imported batch opened; no duplicate was created." if result.duplicate else "Batch preserved and imported."
+        notice = (
+            "Existing imported batch opened; no duplicate was created."
+            if result.duplicate
+            else "Batch preserved and imported."
+        )
         return import_context(
             request,
             selected=selected,
@@ -338,7 +476,7 @@ def import_commit(
 
 
 @app.get("/review", response_class=HTMLResponse)
-def review_page(
+async def review_page(
     request: Request,
     batch_id: str | None = None,
     queue: str = Query("UNRESOLVED", pattern="^(UNRESOLVED|DONE|FAILED|BLOCKED|ALL)$"),
@@ -456,7 +594,9 @@ def review_page(
     )
 
 
-def recognition_status(paths: DataPaths, batch_id: str, job: dict[str, Any] | None) -> tuple[str, str]:
+def recognition_status(
+    paths: DataPaths, batch_id: str, job: dict[str, Any] | None
+) -> tuple[str, str]:
     items = db.list_items(paths.db_file, batch_id=batch_id)
     unfinished = sum(1 for item in items if item["review_status"] == "UNFINISHED")
     if items and unfinished == 0:
@@ -465,23 +605,38 @@ def recognition_status(paths: DataPaths, batch_id: str, job: dict[str, Any] | No
         return f"{len(items)} items ready to identify", "identify"
     if job["status"] in {"RUNNING", "IDENTIFYING"}:
         remaining = max(0, int(job["total"]) - int(job["completed"]))
-        return f"Identifying · {job['completed']} of {job['total']} complete · {remaining} remaining", ""
+        return (
+            f"Identifying · {job['completed']} of {job['total']} complete · {remaining} remaining",
+            "",
+        )
     if job["status"] == "PAUSED":
         remaining = max(0, int(job["total"]) - int(job["completed"]))
-        return f"Identification paused · {job['completed']} of {job['total']} complete · {remaining} remaining", "continue"
+        return (
+            f"Identification paused · {job['completed']} of {job['total']} complete · {remaining} remaining",
+            "continue",
+        )
     if job["status"] == "BLOCKED":
-        return "Recognition is blocked before an attempt · configure a live provider or continue manually", "blocked"
+        return (
+            "Recognition is blocked before an attempt · configure a live provider or continue manually",
+            "blocked",
+        )
     if job["status"] in {"COMPLETE_WITH_FAILURES", "FAILED"}:
-        return f"Recognition failed or incomplete · {job['recognized']} ready · {job['failed']} failed", "failure"
+        return (
+            f"Recognition failed or incomplete · {job['recognized']} ready · {job['failed']} failed",
+            "failure",
+        )
     if job["status"] == "SKIPPED":
-        return "Recognition intentionally skipped · complete the unfinished tapes manually", "manual"
+        return (
+            "Recognition intentionally skipped · complete the unfinished tapes manually",
+            "manual",
+        )
     if job["status"] in {"COMPLETE", "REVIEW_COMPLETE"}:
         return f"Recognition complete · {job['recognized']} items ready to review", ""
     return str(job["status"]), ""
 
 
 @app.post("/review/identify")
-def identify(
+async def identify(
     batch_id: str = Form(...),
     provider: str = Form("openai"),
     delay: float = Form(0),
@@ -491,14 +646,18 @@ def identify(
     effective_delay = delay if delay > 0 else configured_delay
     try:
         started = start_batch_recognition(paths.db_file, batch_id, provider, delay=effective_delay)
-        notice = "Identification started." if started else "Recognition could not start. Review the failure details below."
+        notice = (
+            "Identification started."
+            if started
+            else "Recognition could not start. Review the failure details below."
+        )
     except Exception as exc:
         notice = f"Recognition could not start: {exc}"
     return redirect(f"/review?batch_id={quote(batch_id)}&notice={quote(notice)}")
 
 
 @app.post("/review/retry-batch")
-def retry_batch(
+async def retry_batch(
     batch_id: str = Form(...),
     provider: str = Form("openai"),
     failed_only: bool = Form(False),
@@ -511,24 +670,28 @@ def retry_batch(
             retry_failed=failed_only,
         )
         scope = "failed items" if failed_only else "batch"
-        notice = f"Retry started for {scope}." if started else "Retry could not start. Review the updated failure details."
+        notice = (
+            f"Retry started for {scope}."
+            if started
+            else "Retry could not start. Review the updated failure details."
+        )
     except Exception as exc:
         notice = f"Retry failed: {exc}"
     return redirect(f"/review?batch_id={quote(batch_id)}&notice={quote(notice)}")
 
 
 @app.post("/review/manual")
-def continue_manual_review(batch_id: str = Form(...)) -> RedirectResponse:
+async def continue_manual_review(batch_id: str = Form(...)) -> RedirectResponse:
     items = db.list_items(get_paths().db_file, batch_id=batch_id, queue="UNRESOLVED")
     target = items[0]["item_id"] if items else ""
-    url = f"/review?batch_id={quote(batch_id)}&queue=UNRESOLVED&edit=true&notice={quote('Manual review opened. AI recognition is not required.') }"
+    url = f"/review?batch_id={quote(batch_id)}&queue=UNRESOLVED&edit=true&notice={quote('Manual review opened. AI recognition is not required.')}"
     if target:
         url += f"&item_id={quote(target)}"
     return redirect(url)
 
 
 @app.post("/review/skip-recognition")
-def skip_recognition(batch_id: str = Form(...)) -> RedirectResponse:
+async def skip_recognition(batch_id: str = Form(...)) -> RedirectResponse:
     skip_batch_recognition(get_paths().db_file, batch_id)
     return redirect(
         f"/review?batch_id={quote(batch_id)}&queue=UNRESOLVED&notice="
@@ -537,15 +700,20 @@ def skip_recognition(batch_id: str = Form(...)) -> RedirectResponse:
 
 
 @app.get("/review/job/{batch_id}")
-def job_status(batch_id: str) -> dict[str, Any]:
+async def job_status(batch_id: str) -> dict[str, Any]:
     paths = get_paths()
     job = db.get_recognition_job(paths.db_file, batch_id)
     text, action = recognition_status(paths, batch_id, job)
-    return {"job": job, "text": text, "action": action, "health": db.batch_health(paths.db_file, batch_id)}
+    return {
+        "job": job,
+        "text": text,
+        "action": action,
+        "health": db.batch_health(paths.db_file, batch_id),
+    }
 
 
 @app.post("/review/approve")
-def approve(
+async def approve(
     batch_id: str = Form(...),
     item_id: str = Form(...),
     title: str = Form(""),
@@ -596,11 +764,13 @@ def approve(
             f"/review?batch_id={quote(batch_id)}&queue=UNRESOLVED&item_id={quote(target)}&notice="
             + quote("Approved. Next unfinished tape opened.")
         )
-    return redirect(f"/review?batch_id={quote(batch_id)}&queue=DONE&notice={quote('Review complete.')}")
+    return redirect(
+        f"/review?batch_id={quote(batch_id)}&queue=DONE&notice={quote('Review complete.')}"
+    )
 
 
 @app.post("/review/later")
-def later(batch_id: str = Form(...), item_id: str = Form(...)) -> RedirectResponse:
+async def later(batch_id: str = Form(...), item_id: str = Form(...)) -> RedirectResponse:
     paths = get_paths()
     postpone_item(paths.db_file, item_id)
     items = db.list_items(paths.db_file, batch_id=batch_id, queue="UNRESOLVED")
@@ -614,7 +784,7 @@ def later(batch_id: str = Form(...), item_id: str = Form(...)) -> RedirectRespon
 
 
 @app.post("/review/navigate")
-def navigate(
+async def navigate(
     batch_id: str = Form(...),
     queue: str = Form(...),
     item_id: str = Form(...),
@@ -625,11 +795,13 @@ def navigate(
     target = previous_item(items, item_id) if direction == "previous" else next_item(items, item_id)
     target_id = target["item_id"] if target else item_id
     db.set_cursor(paths.db_file, batch_id, queue, target_id)
-    return redirect(f"/review?batch_id={quote(batch_id)}&queue={quote(queue)}&item_id={quote(target_id)}")
+    return redirect(
+        f"/review?batch_id={quote(batch_id)}&queue={quote(queue)}&item_id={quote(target_id)}"
+    )
 
 
 @app.post("/review/retry")
-def retry(
+async def retry(
     batch_id: str = Form(...),
     item_id: str = Form(...),
     provider: str = Form("openai"),
@@ -645,7 +817,7 @@ def retry(
 
 
 @app.post("/review/save")
-def save_item(
+async def save_item(
     batch_id: str = Form(...),
     item_id: str = Form(...),
     queue: str = Form(...),
@@ -727,7 +899,9 @@ def save_item(
             or values["release_year"] != current.get("release_year")
         ):
             try:
-                queue_operator_title_correction(paths, item_id, values["title"], values["release_year"])
+                queue_operator_title_correction(
+                    paths, item_id, values["title"], values["release_year"]
+                )
             except Exception as exc:
                 LOGGER.exception("Catalog correction lookup failed for %s: %s", item_id, exc)
     except Exception as exc:
@@ -741,7 +915,7 @@ def save_item(
 
 
 @app.get("/batch-editor", response_class=HTMLResponse)
-def batch_editor(request: Request, batch_id: str | None = None, notice: str = "") -> HTMLResponse:
+async def batch_editor(request: Request, batch_id: str | None = None, notice: str = "") -> HTMLResponse:
     paths = get_paths()
     batches = db.list_batches(paths.db_file)
     batch_id = selected_batch(paths, batch_id)
@@ -783,7 +957,7 @@ def normalize_editor_value(field: str, value: Any) -> Any:
 
 
 @app.get("/api/batches/{batch_id}/items")
-def api_batch_items(batch_id: str) -> dict[str, Any]:
+async def api_batch_items(batch_id: str) -> dict[str, Any]:
     paths = get_paths()
     return {
         "items": db.list_editor_items(paths.db_file, batch_id),
@@ -825,7 +999,9 @@ async def api_update_item(item_id: str, request: Request) -> JSONResponse:
             {field: value, "working_source": "BATCH_EDITOR"},
             source="BATCH_EDITOR",
             reason=reason,
-            expected_revision=int(payload.get("revision")) if payload.get("revision") is not None else None,
+            expected_revision=int(payload.get("revision"))
+            if payload.get("revision") is not None
+            else None,
         )
         validate_items(paths.db_file, [item_id])
     except Exception as exc:
@@ -838,16 +1014,20 @@ async def api_update_item(item_id: str, request: Request) -> JSONResponse:
                     paths,
                     item_id,
                     str(updated["title"]),
-                    int(updated["release_year"]) if updated.get("release_year") is not None else None,
+                    int(updated["release_year"])
+                    if updated.get("release_year") is not None
+                    else None,
                 )
             except Exception as exc:
                 LOGGER.exception("Catalog correction lookup failed for %s: %s", item_id, exc)
     saved = db.get_item(paths.db_file, item_id)
-    return JSONResponse({"ok": True, "item": saved, "health": db.batch_health(paths.db_file, saved["batch_id"])})
+    return JSONResponse(
+        {"ok": True, "item": saved, "health": db.batch_health(paths.db_file, saved["batch_id"])}
+    )
 
 
 @app.get("/api/items/{item_id}/photos")
-def api_item_photos(item_id: str) -> dict[str, Any]:
+async def api_item_photos(item_id: str) -> dict[str, Any]:
     item = db.get_item(get_paths().db_file, item_id)
     if item is None:
         raise HTTPException(404)
@@ -900,7 +1080,7 @@ async def api_bulk_edit(batch_id: str, request: Request) -> JSONResponse:
 
 
 @app.post("/api/checkpoints/{checkpoint_id}/restore")
-def restore_checkpoint(checkpoint_id: int) -> JSONResponse:
+async def restore_checkpoint(checkpoint_id: int) -> JSONResponse:
     try:
         count = db.restore_batch_checkpoint(get_paths().db_file, checkpoint_id)
     except Exception as exc:
@@ -909,37 +1089,52 @@ def restore_checkpoint(checkpoint_id: int) -> JSONResponse:
 
 
 @app.get("/api/catalog/status/{item_id}")
-def api_catalog_status(item_id: str) -> dict[str, Any]:
+async def api_catalog_status(item_id: str) -> dict[str, Any]:
     paths = get_paths()
     if db.get_item(paths.db_file, item_id) is None:
         raise HTTPException(404)
     status = get_catalog_status(paths, item_id)
     return {
-        "available": status.available, "status": status.status, "label": status.label,
-        "movie_id": status.movie_id, "canonical_title": status.canonical_title,
-        "release_year": status.primary_release_year, "candidate_count": status.candidate_count,
+        "available": status.available,
+        "status": status.status,
+        "label": status.label,
+        "movie_id": status.movie_id,
+        "canonical_title": status.canonical_title,
+        "release_year": status.primary_release_year,
+        "candidate_count": status.candidate_count,
         "error": status.error,
     }
 
 
 @app.get("/api/catalog/search")
-def api_catalog_search(q: str = Query(..., min_length=1), year: int | None = None) -> dict[str, Any]:
+async def api_catalog_search(
+    q: str = Query(..., min_length=1), year: int | None = None
+) -> dict[str, Any]:
     paths = get_paths()
     matches = search_local(paths.catalog_db_file, q, year)
-    return {"matches": [
-        {
-            "movie_id": match.movie_id, "canonical_title": match.canonical_title,
-            "release_year": match.primary_release_year, "score": match.match_score,
-            "method": match.method, "reason": match.reason, "unique": match.unique,
-        }
-        for match in matches
-    ]}
+    return {
+        "matches": [
+            {
+                "movie_id": match.movie_id,
+                "canonical_title": match.canonical_title,
+                "release_year": match.primary_release_year,
+                "score": match.match_score,
+                "method": match.method,
+                "reason": match.reason,
+                "unique": match.unique,
+            }
+            for match in matches
+        ]
+    }
 
 
 @app.post("/catalog/jobs/{job_id}/select")
-def catalog_select_candidate(
-    job_id: int, candidate_id: int = Form(...), batch_id: str = Form(...),
-    queue: str = Form("UNRESOLVED"), item_id: str = Form(...),
+async def catalog_select_candidate(
+    job_id: int,
+    candidate_id: int = Form(...),
+    batch_id: str = Form(...),
+    queue: str = Form("UNRESOLVED"),
+    item_id: str = Form(...),
 ) -> RedirectResponse:
     try:
         movie_id = select_candidate(get_paths(), job_id, candidate_id)
@@ -952,7 +1147,9 @@ def catalog_select_candidate(
 
 
 @app.post("/catalog/jobs/{job_id}/retry")
-def catalog_retry_job(job_id: int, batch_id: str = Form(""), item_id: str = Form("")) -> RedirectResponse:
+async def catalog_retry_job(
+    job_id: int, batch_id: str = Form(""), item_id: str = Form("")
+) -> RedirectResponse:
     paths = get_paths()
     row = None
     try:
@@ -971,11 +1168,13 @@ def catalog_retry_job(job_id: int, batch_id: str = Form(""), item_id: str = Form
     except Exception as exc:
         notice = f"Catalog retry failed: {exc}"
     target_item = item_id or (str(row[0]) if row else "")
-    return redirect(f"/review?batch_id={quote(batch_id)}&item_id={quote(target_item)}&notice={quote(notice)}")
+    return redirect(
+        f"/review?batch_id={quote(batch_id)}&item_id={quote(target_item)}&notice={quote(notice)}"
+    )
 
 
 @app.get("/publish", response_class=HTMLResponse)
-def publish_page(
+async def publish_page(
     request: Request,
     batch_id: str | None = None,
     simulate: bool = False,
@@ -1013,15 +1212,15 @@ def publish_page(
 
 
 @app.get("/publish/csv/{batch_id}")
-def download_csv(batch_id: str) -> FileResponse:
+async def download_csv(batch_id: str) -> StreamingResponse:
     paths = get_paths()
     destination = paths.exports / f"{batch_id}-inventory_work.csv"
     export_inventory_csv(paths.db_file, batch_id, destination)
-    return FileResponse(destination, media_type="text/csv", filename=destination.name)
+    return safe_file_response(destination, media_type="text/csv", filename=destination.name)
 
 
 @app.post("/publish/csv/preview")
-def upload_csv_preview(
+async def upload_csv_preview(
     request: Request,
     batch_id: str = Form(...),
     csv_file: UploadFile = File(...),
@@ -1062,7 +1261,7 @@ def upload_csv_preview(
 
 
 @app.get("/publish/csv/diff/{token}", response_class=HTMLResponse)
-def csv_diff_page(request: Request, token: str) -> HTMLResponse:
+async def csv_diff_page(request: Request, token: str) -> HTMLResponse:
     stage = db.get_csv_staging(get_paths().db_file, token)
     if stage is None:
         raise HTTPException(404)
@@ -1082,7 +1281,7 @@ def csv_diff_page(request: Request, token: str) -> HTMLResponse:
 
 
 @app.post("/publish/csv/apply")
-def apply_csv(token: str = Form(...), confirmation: bool = Form(False)) -> RedirectResponse:
+async def apply_csv(token: str = Form(...), confirmation: bool = Form(False)) -> RedirectResponse:
     if not confirmation:
         return redirect(f"/publish/csv/diff/{quote(token)}")
     try:
@@ -1104,32 +1303,44 @@ def apply_csv(token: str = Form(...), confirmation: bool = Form(False)) -> Redir
 
 
 @app.post("/publish/csv/cancel")
-def cancel_csv(token: str = Form(...), batch_id: str = Form(...)) -> RedirectResponse:
+async def cancel_csv(token: str = Form(...), batch_id: str = Form(...)) -> RedirectResponse:
     db.delete_csv_staging(get_paths().db_file, token)
-    return redirect(f"/publish?batch_id={quote(batch_id)}&notice={quote('CSV upload cancelled. No working values changed.')}")
+    return redirect(
+        f"/publish?batch_id={quote(batch_id)}&notice={quote('CSV upload cancelled. No working values changed.')}"
+    )
 
 
 @app.get("/publish/csv/difference-report/{token}")
-def difference_report(token: str) -> FileResponse:
+async def difference_report(token: str) -> StreamingResponse:
     stage = db.get_csv_staging(get_paths().db_file, token)
     if stage is None:
         raise HTTPException(404)
     destination = get_paths().exports / f"{stage['batch_id']}-csv-difference-{token[:8]}.json"
-    destination.write_text(json.dumps(stage["diff"] | {"rows": stage["payload"]}, indent=2), encoding="utf-8")
-    return FileResponse(destination, media_type="application/json", filename=destination.name)
+    destination.write_text(
+        json.dumps(stage["diff"] | {"rows": stage["payload"]}, indent=2), encoding="utf-8"
+    )
+    return safe_file_response(
+        destination,
+        media_type="application/json",
+        filename=destination.name,
+    )
 
 
 @app.post("/publish/external-review")
-def external_review(
+async def external_review(
     batch_id: str = Form(...),
     confirmation: bool = Form(False),
 ) -> RedirectResponse:
     if not confirmation:
-        return redirect(f"/publish?batch_id={quote(batch_id)}&message={quote('External review confirmation is required.')}")
+        return redirect(
+            f"/publish?batch_id={quote(batch_id)}&message={quote('External review confirmation is required.')}"
+        )
     try:
         count, errors = mark_batch_externally_reviewed(get_paths().db_file, batch_id)
     except Exception as exc:
-        return redirect(f"/publish?batch_id={quote(batch_id)}&message={quote(f'External review was not applied: {exc}')}")
+        return redirect(
+            f"/publish?batch_id={quote(batch_id)}&message={quote(f'External review was not applied: {exc}')}"
+        )
     if errors:
         return redirect(f"/publish?batch_id={quote(batch_id)}&message={quote(errors[0])}")
     return redirect(
@@ -1139,7 +1350,7 @@ def external_review(
 
 
 @app.post("/publish/restore-checkpoint")
-def publish_restore_checkpoint(
+async def publish_restore_checkpoint(
     batch_id: str = Form(...),
     checkpoint_id: int = Form(...),
 ) -> RedirectResponse:
@@ -1152,7 +1363,7 @@ def publish_restore_checkpoint(
 
 
 @app.get("/settings", response_class=HTMLResponse)
-def settings_page(request: Request, message: str = "") -> HTMLResponse:
+async def settings_page(request: Request, message: str = "") -> HTMLResponse:
     paths = get_paths()
     providers = {name: provider.available() for name, provider in recognizer_registry().items()}
     return TEMPLATES.TemplateResponse(
@@ -1169,7 +1380,7 @@ def settings_page(request: Request, message: str = "") -> HTMLResponse:
 
 
 @app.post("/settings")
-def save_settings(incoming_folder: str = Form(...)) -> RedirectResponse:
+async def save_settings(incoming_folder: str = Form(...)) -> RedirectResponse:
     resolved, error = validate_folder(incoming_folder)
     if error:
         return redirect(f"/settings?message={quote(error)}")
@@ -1178,48 +1389,70 @@ def save_settings(incoming_folder: str = Form(...)) -> RedirectResponse:
 
 
 @app.get("/diagnostics", response_class=HTMLResponse)
-def diagnostics(request: Request, notice: str = "", message: str = "") -> HTMLResponse:
+async def diagnostics(request: Request, notice: str = "", message: str = "") -> HTMLResponse:
     paths = get_paths()
     with db.connect(paths.db_file) as connection:
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
         foreign = connection.execute("PRAGMA foreign_key_check").fetchall()
         schema = connection.execute("PRAGMA user_version").fetchone()[0]
         manifest = db.schema_manifest_report(connection)
-        jobs = [dict(row) for row in connection.execute(
-            "SELECT * FROM recognition_jobs ORDER BY updated_at DESC LIMIT 10"
-        )]
-        csv_stages = [dict(row) for row in connection.execute(
-            "SELECT token,batch_id,filename,status,created_at,updated_at,expires_at,row_count,"
-            "upload_bytes,blocking_errors_json FROM csv_staging ORDER BY created_at DESC LIMIT 10"
-        )]
-        imports = [dict(row) for row in connection.execute(
-            "SELECT import_id,batch_id,status,updated_at,error AS error_message FROM import_journal "
-            "ORDER BY updated_at DESC LIMIT 10"
-        )]
-        operations = [dict(row) for row in connection.execute(
-            "SELECT request_id,operation_type,batch_id,status,created_at,completed_at,error_message "
-            "FROM operation_requests ORDER BY created_at DESC LIMIT 10"
-        )]
+        jobs = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM recognition_jobs ORDER BY updated_at DESC LIMIT 10"
+            )
+        ]
+        csv_stages = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT token,batch_id,filename,status,created_at,updated_at,expires_at,row_count,"
+                "upload_bytes,blocking_errors_json FROM csv_staging ORDER BY created_at DESC LIMIT 10"
+            )
+        ]
+        imports = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT import_id,batch_id,status,updated_at,error AS error_message FROM import_journal "
+                "ORDER BY updated_at DESC LIMIT 10"
+            )
+        ]
+        operations = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT request_id,operation_type,batch_id,status,created_at,completed_at,error_message "
+                "FROM operation_requests ORDER BY created_at DESC LIMIT 10"
+            )
+        ]
     providers = {name: provider.available() for name, provider in recognizer_registry().items()}
     storage = db.storage_summary(paths.db_file)
     checkpoint_info = db.checkpoint_summary(paths.db_file)
     stage_info = db.csv_stage_summary(paths.db_file)
     import_info = db.import_journal_summary(paths.db_file)
-    backups = sorted(paths.backups.glob("*.sqlite3"), key=lambda value: value.stat().st_mtime, reverse=True)
+    backups = sorted(
+        paths.backups.glob("*.sqlite3"), key=lambda value: value.stat().st_mtime, reverse=True
+    )
     catalog_error = str(getattr(request.app.state, "catalog_error", "") or "")
     catalog: dict[str, Any] = {
-        "available": False, "integrity": "unavailable", "foreign_key_violations": 0,
-        "schema_version": "-", "fts_available": False,
-        "database_size_bytes": paths.catalog_db_file.stat().st_size if paths.catalog_db_file.exists() else 0,
+        "available": False,
+        "integrity": "unavailable",
+        "foreign_key_violations": 0,
+        "schema_version": "-",
+        "fts_available": False,
+        "database_size_bytes": paths.catalog_db_file.stat().st_size
+        if paths.catalog_db_file.exists()
+        else 0,
     }
     catalog_jobs: list[dict[str, Any]] = []
     try:
         catalog = {"available": True, **catalog_db.catalog_summary(paths.catalog_db_file)}
         with catalog_db.connect(paths.catalog_db_file, readonly=True) as connection:
-            catalog_jobs = [dict(row) for row in connection.execute(
-                "SELECT job_id,item_id,proposed_title,status,candidate_count,attempt_count,last_error,updated_at "
-                "FROM catalog_lookup_jobs ORDER BY updated_at DESC LIMIT 15"
-            )]
+            catalog_jobs = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT job_id,item_id,proposed_title,status,candidate_count,attempt_count,last_error,updated_at "
+                    "FROM catalog_lookup_jobs ORDER BY updated_at DESC LIMIT 15"
+                )
+            ]
     except Exception as exc:
         catalog_error = catalog_error or str(exc)
     links = db.movie_link_summary(paths.db_file)
@@ -1267,14 +1500,18 @@ def diagnostics(request: Request, notice: str = "", message: str = "") -> HTMLRe
             import_info=import_info,
             last_backup=str(backups[0]) if backups else "No backup recorded",
             diagnostic_summary=json.dumps(diagnostic_summary, indent=2),
-            catalog=catalog, catalog_error=catalog_error, catalog_jobs=catalog_jobs, links=links,
-            notice=notice, message=message,
+            catalog=catalog,
+            catalog_error=catalog_error,
+            catalog_jobs=catalog_jobs,
+            links=links,
+            notice=notice,
+            message=message,
         ),
     )
 
 
 @app.post("/diagnostics/catalog/backup")
-def catalog_backup_action() -> RedirectResponse:
+async def catalog_backup_action() -> RedirectResponse:
     paths = get_paths()
     try:
         destination = catalog_db.backup_catalog(paths, "manual-diagnostics-backup")
@@ -1285,17 +1522,19 @@ def catalog_backup_action() -> RedirectResponse:
 
 
 @app.post("/diagnostics/catalog/rebuild-index")
-def catalog_rebuild_action() -> RedirectResponse:
+async def catalog_rebuild_action() -> RedirectResponse:
     paths = get_paths()
     try:
         count = catalog_db.rebuild_search_index(paths.catalog_db_file)
-        return redirect(f"/diagnostics?notice={quote(f'Catalog search index rebuilt for {count} movies.')}")
+        return redirect(
+            f"/diagnostics?notice={quote(f'Catalog search index rebuilt for {count} movies.')}"
+        )
     except Exception as exc:
         return redirect(f"/diagnostics?message={quote(str(exc))}")
 
 
 @app.post("/diagnostics/catalog/retry-failed")
-def catalog_retry_failed_action() -> RedirectResponse:
+async def catalog_retry_failed_action() -> RedirectResponse:
     paths = get_paths()
     try:
         with catalog_db.transaction(paths.catalog_db_file) as connection:
@@ -1309,13 +1548,19 @@ def catalog_retry_failed_action() -> RedirectResponse:
             )
         for row in rows:
             start_catalog_job(paths, int(row[0]))
-        return redirect(f"/diagnostics?notice={quote(f'Queued {len(rows)} catalog jobs for retry or reconciliation.')}")
+        return redirect(
+            f"/diagnostics?notice={quote(f'Queued {len(rows)} catalog jobs for retry or reconciliation.')}"
+        )
     except Exception as exc:
         return redirect(f"/diagnostics?message={quote(str(exc))}")
 
 
 @app.get("/media/{photo_id}")
-def media(photo_id: int, original: bool = False, recognition: bool = False) -> FileResponse:
+async def media(
+    photo_id: int,
+    original: bool = False,
+    recognition: bool = False,
+) -> StreamingResponse:
     paths = get_paths()
     with db.connect(paths.db_file) as connection:
         row = connection.execute(
@@ -1333,17 +1578,21 @@ def media(photo_id: int, original: bool = False, recognition: bool = False) -> F
         candidate = row[2] or row[3] or row[1]
     if not candidate or not Path(candidate).is_file():
         raise HTTPException(404)
-    return FileResponse(Path(candidate), media_type="image/jpeg")
+    return safe_file_response(Path(candidate), media_type="image/jpeg")
 
 
 @app.get("/favicon.ico", include_in_schema=False)
-def favicon() -> FileResponse:
-    return FileResponse(PACKAGE_ROOT / "static" / "favicon.svg", media_type="image/svg+xml")
+async def favicon() -> StreamingResponse:
+    return safe_file_response(STATIC_ROOT / "favicon.svg", media_type="image/svg+xml")
 
 
 @app.get("/health")
-def health() -> dict[str, Any]:
+async def health() -> dict[str, Any]:
     paths = get_paths()
     with db.connect(paths.db_file) as connection:
         manifest = db.schema_manifest_report(connection)
-    return {"status": "ok" if manifest["ok"] else "degraded", "version": __version__, "schema": manifest}
+    return {
+        "status": "ok" if manifest["ok"] else "degraded",
+        "version": __version__,
+        "schema": manifest,
+    }

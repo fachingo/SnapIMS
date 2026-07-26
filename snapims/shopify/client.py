@@ -8,6 +8,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Protocol
 
+from snapims import __version__
 from snapims.config import ShopifyConfig
 from snapims.money import final_price_cents, format_price_cents
 
@@ -32,7 +33,11 @@ class HTTPShopifyTransport:
             self.endpoint,
             data=json.dumps({"query": query, "variables": variables}).encode(),
             method="POST",
-            headers={"Content-Type": "application/json", "X-Shopify-Access-Token": self.config.access_token, "User-Agent": "SnapIMS/0.7.0"},
+            headers={
+                "Content-Type": "application/json",
+                "X-Shopify-Access-Token": self.config.access_token,
+                "User-Agent": f"SnapIMS/{__version__}",
+            },
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:

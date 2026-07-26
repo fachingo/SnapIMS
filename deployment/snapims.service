@@ -1,0 +1,12 @@
+[Unit]
+Description=SnapIMS inventory application
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+ExecStart=%h/.local/bin/snapims serve
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

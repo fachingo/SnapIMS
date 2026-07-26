@@ -16,12 +16,16 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from snapims import __version__
 from snapims.catalog import db as catalog_db
 from snapims.catalog.models import MovieCandidate
 from snapims.catalog.normalization import normalize_title, strip_leading_article
 
 API_URL = "https://en.wikipedia.org/w/api.php"
-DEFAULT_USER_AGENT = "SnapIMS/0.7.0 (Canada VHS local movie catalog; configure SNAPIMS_WIKIPEDIA_USER_AGENT)"
+DEFAULT_USER_AGENT = (
+    f"SnapIMS/{__version__} "
+    "(Canada VHS local movie catalog; configure SNAPIMS_WIKIPEDIA_USER_AGENT)"
+)
 _LOCK = threading.Lock()
 _LAST_REQUEST_AT = 0.0
 

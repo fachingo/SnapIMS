@@ -6,6 +6,23 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def default_project_path() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _load_dotenv(project: Path) -> None:
+    if os.getenv("SNAPIMS_SKIP_DOTENV"):
+        return
+    env_file = project / ".env"
+    if not env_file.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(env_file, override=False)
+
+
 @dataclass(frozen=True, slots=True)
 class DataPaths:
     root: Path
@@ -52,6 +69,67 @@ class DataPaths:
 
 
 @dataclass(frozen=True, slots=True)
+class SnapIMSConfig:
+    """Central operator configuration, sourced from environment variables."""
+
+    project_path: Path
+    host: str
+    port: int
+    data: DataPaths
+    pid_dir: Path
+    app_log: Path
+    tunnel_log: Path
+    cloudflared_bin: str
+    tunnel_config: Path
+    tunnel_name: str
+    auth_secret: str
+    admin_username: str
+    admin_password_hash: str
+    openai_api_key: str
+
+    @classmethod
+    def load(cls) -> "SnapIMSConfig":
+        initial_project = Path(
+            os.getenv("SNAPIMS_PROJECT_PATH") or default_project_path()
+        ).expanduser().resolve()
+        _load_dotenv(initial_project)
+        configured_project = os.getenv("SNAPIMS_PROJECT_PATH", "").strip()
+        project = (
+            Path(configured_project).expanduser().resolve()
+            if configured_project
+            else initial_project
+        )
+        if project != initial_project:
+            _load_dotenv(project)
+        data = DataPaths.from_root()
+        data.ensure()
+        logs = data.logs
+        return cls(
+            project_path=project,
+            host=os.getenv("SNAPIMS_HOST", "127.0.0.1"),
+            port=int(os.getenv("SNAPIMS_PORT", "8767")),
+            data=data,
+            pid_dir=logs / "pids",
+            app_log=logs / "snapims.log",
+            tunnel_log=logs / "cloudflared.log",
+            cloudflared_bin=os.getenv("SNAPIMS_CLOUDFLARED_BIN", "cloudflared"),
+            tunnel_config=Path(
+                os.getenv("CLOUDFLARE_TUNNEL_CONFIG", "~/.cloudflared/config.yml")
+            ).expanduser(),
+            tunnel_name=os.getenv("CLOUDFLARE_TUNNEL_NAME", ""),
+            auth_secret=os.getenv("SNAPIMS_AUTH_SECRET", ""),
+            admin_username=os.getenv("SNAPIMS_ADMIN_USERNAME", "admin"),
+            admin_password_hash=os.getenv("SNAPIMS_ADMIN_PASSWORD_HASH", ""),
+            openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+        )
+
+    def ensure(self) -> "SnapIMSConfig":
+        self.data.ensure()
+        self.pid_dir.mkdir(parents=True, exist_ok=True)
+        return self
+
+
+@dataclass(frozen=True, slots=True)
 class ShopifyConfig:
     store_domain: str
     access_token: str
@@ -81,5 +159,5 @@ class ShopifyConfig:
         if not re.fullmatch(r"\d{4}-\d{2}", self.api_version):
             problems.append("SHOPIFY_API_VERSION must look like 2026-07")
         if not self.draft_only:
-            problems.append("SnapIMS v0.7.0 permits Shopify draft-only mode")
+            problems.append("SnapIMS permits Shopify draft-only mode only at this stage")
         return problems

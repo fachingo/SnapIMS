@@ -10,6 +10,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from snapims.config import default_project_path
 from snapims.recognition.base import BaseRecognizer, RecognitionResult
 from snapims.runtime import test_providers_enabled
 
@@ -36,6 +37,13 @@ SCHEMA: dict[str, Any] = {
     ],
     "additionalProperties": False,
 }
+
+
+def _load_environment() -> None:
+    if os.getenv("SNAPIMS_SKIP_DOTENV"):
+        return
+    project = Path(os.getenv("SNAPIMS_PROJECT_PATH") or default_project_path()).expanduser().resolve()
+    load_dotenv(project / ".env", override=False)
 
 
 class MockRecognizer(BaseRecognizer):
@@ -78,11 +86,11 @@ class OpenAIRecognizer(BaseRecognizer):
         self.model = model
 
     def model_name(self) -> str:
-        load_dotenv()
+        _load_environment()
         return self.model or os.getenv("SNAPIMS_OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
 
     def available(self) -> tuple[bool, str]:
-        load_dotenv()
+        _load_environment()
         return (True, f"OpenAI available ({self.model_name()})") if os.getenv("OPENAI_API_KEY") else (False, "OPENAI_API_KEY is not configured")
 
     def _client(self) -> Any:

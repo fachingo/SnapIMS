@@ -15,7 +15,6 @@ from snapims.catalog import db as catalog_db
 from snapims.catalog.models import MovieCandidate
 from snapims.catalog.normalization import normalize_title, title_variants
 from snapims.catalog.service import (
-    catalog_output_for_item,
     create_or_update_movie,
     get_catalog_status,
     process_catalog_job_sync,
@@ -391,7 +390,7 @@ def test_catalog_output_has_provenance(data_paths) -> None:
     summary = catalog_db.catalog_summary(data_paths.catalog_db_file)
     assert summary["movies"] == 1
     assert summary["new_movie_records"] == 1
-    export = tmp_path = data_paths.root / "exports" / "catalog.json"
+    export = data_paths.root / "exports" / "catalog.json"
     catalog_db.export_catalog_json(data_paths.catalog_db_file, export)
     payload = json.loads(export.read_text())
     assert payload["manifest"]["schema_version"] == 1

@@ -33,3 +33,9 @@ _guide_render/
 .guide-assets-v061/
 *.pyc
 release-evidence/**/browser/workspace/
+
+# Runtime state and generated operator artifacts
+logs/
+*.pid
+*.tmp
+.snapims/

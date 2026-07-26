@@ -7,7 +7,7 @@ from typing import Any
 from snapims import db as inventory_db
 from snapims.catalog import db as catalog_db
 from snapims.catalog.normalization import normalize_title, strip_leading_article
-from snapims.catalog.service import create_or_update_movie, get_movie, search_local
+from snapims.catalog.service import get_movie, search_local
 from snapims.catalog.wikipedia import WikipediaClient
 from snapims.config import DataPaths
 
