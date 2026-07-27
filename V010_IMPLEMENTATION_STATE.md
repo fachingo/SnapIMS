@@ -4,10 +4,10 @@
 
 - Project: SnapIMS
 - Branch: `feature/v0.10.0-final-preproduction`
-- HEAD: `c74d09e` (verified Phase 0 exit)
+- HEAD: `c9a0fd5` (verified Phase 1 orchestration/Shopify milestone)
 - Upstream: none (branch not yet pushed)
 - Started: 2026-07-26T18:59:00-06:00
-- Last updated: 2026-07-26T19:29:00-06:00
+- Last updated: 2026-07-26T20:38:00-06:00
 - Current application version: source/package metadata `0.9.0`; installed editable distribution metadata `0.7.0`
 - Inventory schema: 8
 - Catalog schema: 1
@@ -18,7 +18,7 @@
 - Inventory backup: `databases/inventory.sqlite3`, SHA-256 `c7e98c31c4c4cfe78d22a8c900917588e181057e1dfa3eb70b20e0b10fa68fb0`
 - Catalog backup: `databases/movie_catalog.sqlite3`, SHA-256 `a0ab5e86c76c4d4f2df84c2d72a90b255f5f28c4c4cc4677d87b5202d99cdcd0`
 - Media manifest: `manifests/media-sha256.jsonl`; 1,306 files; 433,149,821 bytes; media was not duplicated
-- Secret/config backup: project `.env`, prior `.env` backup, Cloudflare directory, accessible Guacamole files, and service units copied with owner-only backup permissions. `/etc/guacamole/snapims-admin.env` remains root-only and requires the owner action below.
+- Secret/config backup: project `.env`, prior `.env` backup, Cloudflare directory, Guacamole files, and service units copied with owner-only backup permissions. The owner-copied credential backup was verified without reading or printing its value.
 - Git preservation: `git/repository.bundle`, worktree/index patches, status/log/remote records, and an external copy of the untracked work-order package
 - Integrity result: both backups `PRAGMA integrity_check=ok`; zero foreign-key violations
 - Restore probe: both backup databases copied to `restore-probe/` and opened successfully at schemas 8 and 1
@@ -28,9 +28,9 @@
 - Phase: 1 — Stabilization, Security and Truthful Orchestration
 - Phase file: `docs/codex-work-orders/v0.10.0/03_PHASE_1_STABILIZATION_SECURITY.md`
 - Status: IN PROGRESS
-- Latest verified commit: `c74d09e` (`chore: complete v0.10.0 preservation gate`)
+- Latest verified commit: `c9a0fd5` (`fix: make orchestration and Shopify retries truthful`)
 - NEXT_PHASE: `03_PHASE_1_STABILIZATION_SECURITY.md`
-- NEXT_ACTION: Implement CSRF/origin protection, login hardening, session generation, security headers, and failure-path tests as the first Phase 1 milestone.
+- NEXT_ACTION: Repair the remaining baseline type defects, then implement the schema-backed Controlled Tags workflow and verified Firefox shortcuts.
 
 ## Completed criteria
 
@@ -55,6 +55,11 @@
 - [x] Added bounded identity/IP login failure tracking with stepped backoff and generic client responses.
 - [x] Added safe authentication success/failure/throttle/logout operational log facts without password values.
 - [x] Restored declared build tooling, built the package, and passed an isolated no-dependency installed-wheel version smoke.
+- [x] Made required database health failures machine-readable and non-200 while keeping optional catalog degradation distinct.
+- [x] Made doctor exit nonzero for required failures and exposed managed-service ownership, PID identity, and tunnel connector truth.
+- [x] Added explicit safe update check/apply modes, dirty/detached/upstream refusal, database restore metadata, dependency update, migration, restart, and rollback guidance.
+- [x] Replaced interpolated shell execution with safe `cwd`, environment, and argv execution.
+- [x] Persisted Shopify inventory activation idempotency identity and request evidence before the network call, reused it on retry, reconciled uncertain outcomes, and rejected ambiguous SKUs.
 
 ## Migrations
 
@@ -71,7 +76,7 @@ No v0.10.0 migration has been authored or applied.
 |---|---|---|---|
 | `python -m pytest -q` | PASS | `release-evidence/v0.10.0/baseline/pytest.txt` | One expected skip; exit 0 |
 | `python -m ruff check .` | PASS | `release-evidence/v0.10.0/baseline/ruff.txt` | Exit 0 |
-| `python -m mypy snapims --ignore-missing-imports` | FAIL | `release-evidence/v0.10.0/baseline/mypy.txt` | 19 pre-existing errors |
+| `python -m mypy snapims --ignore-missing-imports` | FAIL | `release-evidence/v0.10.0/baseline/mypy.txt` | 19 baseline errors |
 | `python -m compileall -q snapims tests scripts` | PASS | `release-evidence/v0.10.0/baseline/compileall.txt` | Exit 0 |
 | `node --check snapims/web/static/app.js` | PASS | `release-evidence/v0.10.0/baseline/node-check.txt` | Exit 0 |
 | `python -m build --no-isolation` | FAIL | `release-evidence/v0.10.0/baseline/build.txt` | venv lacks setuptools/wheel; no wheel smoke possible |
@@ -87,6 +92,10 @@ No v0.10.0 migration has been authored or applied.
 | Phase 1 JavaScript syntax | PASS | `release-evidence/v0.10.0/phase-1-security/node-check.txt` | Exit 0 |
 | Phase 1 mypy | FAIL at baseline count | `release-evidence/v0.10.0/phase-1-security/mypy.txt` | 19 pre-existing errors; no errors from security changes |
 | Installed-wheel smoke | PASS | `release-evidence/v0.10.0/phase-1-security/installed-wheel-smoke.txt` | Wheel and source both report 0.9.0 |
+| Phase 1 orchestration/Shopify focused tests | PASS | `release-evidence/v0.10.0/phase-1-orchestration/VERIFICATION.md` | 40 tests |
+| Full regression after orchestration/Shopify milestone | PASS | `release-evidence/v0.10.0/phase-1-orchestration/VERIFICATION.md` | One expected skip |
+| Build and dependency verification | PASS | `release-evidence/v0.10.0/phase-1-orchestration/VERIFICATION.md` | sdist, wheel, and pip check pass |
+| Current mypy | FAIL, improved | `release-evidence/v0.10.0/phase-1-orchestration/VERIFICATION.md` | 16 remaining baseline defects; none in changed modules |
 
 ## Browser verification
 
@@ -110,7 +119,7 @@ No v0.10.0 migration has been authored or applied.
 
 | ID | Severity | Reproduction | Current state | Next action |
 |---|---|---|---|---|
-| V010-P0-001 | High | `python -m mypy snapims --ignore-missing-imports` | 19 baseline type errors | Repair in first Phase 1 bounded milestone |
+| V010-P0-001 | High | `python -m mypy snapims --ignore-missing-imports` | Improved from 19 to 16 baseline type errors | Repair before Phase 1 exit |
 | V010-P0-002 | High | `python -m build --no-isolation` | RESOLVED | Installed declared setuptools/wheel; build and isolated wheel smoke pass |
 | V010-P0-003 | High | Resolve `desktop.ims.canadavhs.ca` | DNS resolution fails | Treat `remote.canadavhs.ca` as compatibility evidence; owner/infrastructure decision before docs claim official hostname |
 | V010-P0-004 | High | Backup root-only Guacamole secret file | RESOLVED | Owner completed copy; checksum/mode verified and external manifest updated |
@@ -127,10 +136,14 @@ No v0.10.0 migration has been authored or applied.
 
 ## Files/areas currently being edited
 
-- `snapims/auth.py`
+- `snapims/db.py`
+- `snapims/catalog/`
+- `snapims/inventory.py`
+- `snapims/processor.py`
+- `snapims/recognition/`
+- `snapims/shopify/`
 - `snapims/web/app.py`
-- `snapims/web/templates/`
-- Phase 1 security tests
+- Phase 1 stabilization tests
 
 ## Resume checklist
 
