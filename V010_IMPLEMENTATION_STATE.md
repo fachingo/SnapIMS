@@ -4,10 +4,10 @@
 
 - Project: SnapIMS
 - Branch: `feature/v0.10.0-final-preproduction`
-- HEAD: `bda7093d8ca9b776b2e881ce38a09f10b222f56f`
+- HEAD: `d2b6670` (Phase 0 preservation milestone)
 - Upstream: none (branch not yet pushed)
 - Started: 2026-07-26T18:59:00-06:00
-- Last updated: 2026-07-26T19:15:10-06:00
+- Last updated: 2026-07-26T19:18:00-06:00
 - Current application version: source/package metadata `0.9.0`; installed editable distribution metadata `0.7.0`
 - Inventory schema: 8
 - Catalog schema: 1
@@ -28,7 +28,7 @@
 - Phase: 0 — Baseline, Preservation and Architecture Reconciliation
 - Phase file: `docs/codex-work-orders/v0.10.0/02_PHASE_0_BASELINE_AND_PRESERVATION.md`
 - Status: BLOCKED
-- Latest verified commit: `bda7093d8ca9b776b2e881ce38a09f10b222f56f`
+- Latest verified commit: `d2b6670` (`chore: preserve and baseline v0.10.0 work`)
 - NEXT_PHASE: `02_PHASE_0_BASELINE_AND_PRESERVATION.md`
 - NEXT_ACTION: Owner runs the exact sudo copy under External actions; verify its presence/mode, update this state, commit the Phase 0 exit milestone, then begin Phase 1.
 
@@ -44,6 +44,7 @@
 - [x] Captured baseline pytest, Ruff, mypy, compileall, JavaScript, build, pip, diff, database, service, endpoint, and secret-scan results.
 - [x] Created the architecture reconciliation and migration design baseline.
 - [x] Verified every present work-order file against `SHA256SUMS`; all present files match.
+- [x] Confirmed `snapims-admin.env` is an installer credential-retrieval file and is not loaded by either the `guacd` or SnapIMS Tomcat systemd unit; the runtime-authoritative `user-mapping.xml`, `guacamole.properties`, `guacd.conf`, and units are backed up.
 - [ ] Back up `/etc/guacamole/snapims-admin.env` using owner-authorized sudo and verify the copied file is owner-only.
 - [ ] Capture an installed-wheel smoke test after the baseline build-tool failure is repaired in Phase 1.
 - [ ] Create the verified Phase 0 exit commit after the root-only config backup is complete.
@@ -91,7 +92,7 @@ No v0.10.0 migration has been authored or applied.
 | Read-only local/public endpoint probes | No | N/A | Completed |
 | Live Shopify write | Yes | No | Not attempted |
 | Full Wikidata dump | Yes | No | Not attempted |
-| Copy root-only Guacamole credential into backup | Yes — sudo credential | No | BLOCKED; run `sudo cp -a /etc/guacamole/snapims-admin.env /home/isaiah/SnapIMS-backups/v0.10.0-prework-20260726-190242/config/guacamole/snapims-admin.env` then `sudo chown isaiah:isaiah /home/isaiah/SnapIMS-backups/v0.10.0-prework-20260726-190242/config/guacamole/snapims-admin.env` and `chmod 600 /home/isaiah/SnapIMS-backups/v0.10.0-prework-20260726-190242/config/guacamole/snapims-admin.env` |
+| Copy root-only Guacamole credential into backup | Yes — sudo credential | Blanket command approval received; OS credential unavailable | BLOCKED; run `sudo cp -a /etc/guacamole/snapims-admin.env /home/isaiah/SnapIMS-backups/v0.10.0-prework-20260726-190242/config/guacamole/snapims-admin.env` then `sudo chown isaiah:isaiah /home/isaiah/SnapIMS-backups/v0.10.0-prework-20260726-190242/config/guacamole/snapims-admin.env` and `chmod 600 /home/isaiah/SnapIMS-backups/v0.10.0-prework-20260726-190242/config/guacamole/snapims-admin.env` |
 
 ## Known failures
 
@@ -108,7 +109,8 @@ No v0.10.0 migration has been authored or applied.
 
 | Decision | Choice | Date | Consequence |
 |---|---|---|---|
-| Root-only Guacamole backup | Pending | — | Phase 0 cannot claim a complete config restore point until copied |
+| Tool/command approvals | Owner approved all remaining commands | 2026-07-26 | No further tool-level confirmation is needed, but approval cannot supply the host's interactive sudo password |
+| Root-only Guacamole backup | Pending local sudo credential | — | Phase 0 cannot claim a complete secret/config restore point until copied |
 | Official vs compatibility Guacamole hostname | Pending | — | Current evidence supports only `remote.canadavhs.ca` |
 
 ## Files/areas currently being edited
