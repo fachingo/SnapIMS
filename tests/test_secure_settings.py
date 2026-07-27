@@ -122,6 +122,15 @@ def test_secret_replacement_has_recoverable_backup(tmp_path: Path) -> None:
     assert service.value("OPENAI_API_KEY") == "sk-first"
 
 
+def test_insecure_secret_store_permissions_are_refused(tmp_path: Path) -> None:
+    service = service_for(tmp_path)
+    service.save_secrets("recognition", {"OPENAI_API_KEY": "sk-protected"})
+    service.secret_file.chmod(0o644)
+
+    with pytest.raises(ConfigurationError, match="0600"):
+        service.value("OPENAI_API_KEY")
+
+
 def test_legacy_secret_migration_copies_without_deleting_env_file(tmp_path: Path) -> None:
     legacy_value = "sk-legacy-only"
     service = service_for(

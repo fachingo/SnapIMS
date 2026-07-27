@@ -20,6 +20,7 @@ from snapims import __version__
 from snapims.catalog import db as catalog_db
 from snapims.catalog.models import MovieCandidate
 from snapims.catalog.normalization import normalize_title, strip_leading_article
+from snapims.settings import ConfigurationService
 
 API_URL = "https://en.wikipedia.org/w/api.php"
 DEFAULT_USER_AGENT = (
@@ -36,6 +37,10 @@ class WikipediaError(RuntimeError):
 
 class WikipediaRateLimit(WikipediaError):
     code = "RATE_LIMIT"
+
+    def __init__(self, message: str, *, retry_after: float = 0) -> None:
+        super().__init__(message)
+        self.retry_after = max(0, min(retry_after, 120))
 
 
 class WikipediaTimeout(WikipediaError):
@@ -199,23 +204,33 @@ class WikipediaClient:
         timeout: float | None = None,
         max_retries: int | None = None,
         min_interval: float | None = None,
+        max_concurrency: int | None = None,
+        cache_seconds: int | None = None,
     ) -> None:
         self.catalog_db_file = catalog_db_file
+        settings = ConfigurationService.load_runtime()
         fixture = os.getenv("SNAPIMS_WIKIPEDIA_FIXTURE_DIR", "").strip()
         self.transport = transport or (FixtureTransport(Path(fixture)) if fixture else self._http_transport)
         self.user_agent = (
             user_agent
-            or os.getenv("SNAPIMS_WIKIPEDIA_USER_AGENT")
+            or settings.value("SNAPIMS_WIKIPEDIA_USER_AGENT", "")
             or DEFAULT_USER_AGENT
         )
         self.timeout = timeout if timeout is not None else float(
-            catalog_db.get_setting(catalog_db_file, "wikipedia_timeout_seconds", "10")
+            settings.value("SNAPIMS_WIKIPEDIA_TIMEOUT_SECONDS", "10")
         )
         self.max_retries = max_retries if max_retries is not None else int(
-            catalog_db.get_setting(catalog_db_file, "wikipedia_max_retries", "2")
+            settings.value("SNAPIMS_WIKIPEDIA_MAX_RETRIES", "2")
         )
         self.min_interval = min_interval if min_interval is not None else float(
-            catalog_db.get_setting(catalog_db_file, "wikipedia_min_interval_seconds", "1.0")
+            settings.value("SNAPIMS_WIKIPEDIA_MIN_INTERVAL_SECONDS", "1.0")
+        )
+        concurrency = max_concurrency if max_concurrency is not None else int(
+            settings.value("SNAPIMS_MOVIE_REQUEST_CONCURRENCY", "1")
+        )
+        self._request_slots = threading.BoundedSemaphore(max(1, min(concurrency, 4)))
+        self.cache_seconds = cache_seconds if cache_seconds is not None else int(
+            settings.value("SNAPIMS_MOVIE_CACHE_SECONDS", "86400")
         )
 
     def _rate_limit(self) -> None:
@@ -237,7 +252,15 @@ class WikipediaClient:
                 headers = {key.casefold(): value for key, value in response.headers.items()}
         except HTTPError as exc:
             if exc.code == 429:
-                raise WikipediaRateLimit("Wikipedia rate limit reached") from exc
+                retry_after = 0.0
+                try:
+                    retry_after = float(exc.headers.get("Retry-After", "0"))
+                except (TypeError, ValueError):
+                    pass
+                raise WikipediaRateLimit(
+                    "Wikipedia rate limit reached",
+                    retry_after=retry_after,
+                ) from exc
             raise WikipediaError(f"Wikipedia HTTP error {exc.code}") from exc
         except TimeoutError as exc:
             raise WikipediaTimeout("Wikipedia request timed out") from exc
@@ -253,8 +276,16 @@ class WikipediaClient:
             raise WikipediaMalformedResponse("Wikipedia returned a non-object response")
         return status, payload, headers
 
-    def request(self, params: dict[str, str], *, cache_seconds: int = 86400) -> dict[str, Any]:
+    def request(
+        self,
+        params: dict[str, str],
+        *,
+        cache_seconds: int | None = None,
+    ) -> dict[str, Any]:
         catalog_db.initialize(self.catalog_db_file)
+        effective_cache_seconds = (
+            self.cache_seconds if cache_seconds is None else cache_seconds
+        )
         request_params = {"format": "json", "formatversion": "2", **params}
         key = _request_key(request_params)
         with catalog_db.connect(self.catalog_db_file, readonly=True) as connection:
@@ -271,9 +302,18 @@ class WikipediaClient:
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                status, payload, headers = self.transport(request_params)
+                with self._request_slots:
+                    status, payload, headers = self.transport(request_params)
                 if status == 429:
-                    raise WikipediaRateLimit("Wikipedia rate limit reached")
+                    retry_after = 0.0
+                    try:
+                        retry_after = float(headers.get("retry-after", "0"))
+                    except (TypeError, ValueError):
+                        pass
+                    raise WikipediaRateLimit(
+                        "Wikipedia rate limit reached",
+                        retry_after=retry_after,
+                    )
                 if status >= 500:
                     raise WikipediaError(f"Wikipedia server error {status}")
                 if "error" in payload:
@@ -282,7 +322,10 @@ class WikipediaClient:
                         raise WikipediaRateLimit("Wikipedia rate limit reached")
                     raise WikipediaError(f"Wikipedia API error: {code}")
                 response_hash = _json_hash(payload)
-                expires = (datetime.now().astimezone() + timedelta(seconds=cache_seconds)).isoformat(timespec="seconds")
+                expires = (
+                    datetime.now().astimezone()
+                    + timedelta(seconds=effective_cache_seconds)
+                ).isoformat(timespec="seconds")
                 with catalog_db.transaction(self.catalog_db_file) as connection:
                     connection.execute(
                         """INSERT INTO wikipedia_response_cache(
@@ -308,9 +351,12 @@ class WikipediaClient:
                 return payload
             except (WikipediaError, TimeoutError) as exc:
                 last_error = exc
-                if attempt >= self.max_retries or isinstance(exc, WikipediaRateLimit):
+                if attempt >= self.max_retries:
                     raise
-                time.sleep(min(2**attempt, 4))
+                retry_after = (
+                    exc.retry_after if isinstance(exc, WikipediaRateLimit) else 0
+                )
+                time.sleep(max(retry_after, min(2**attempt, 4)))
         assert last_error is not None
         raise last_error
 

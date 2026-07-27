@@ -46,8 +46,7 @@ class HTTPShopifyTransport:
                     raise ShopifyAPIError("Shopify returned a non-object response")
                 return payload
         except urllib.error.HTTPError as exc:
-            body = exc.read().decode(errors="replace")[:1000]
-            raise ShopifyAPIError(f"Shopify HTTP {exc.code}: {body}") from exc
+            raise ShopifyAPIError(f"Shopify returned HTTP {exc.code}") from exc
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise ShopifyAPIError(f"Shopify connection failed: {exc}") from exc
 

@@ -9,6 +9,7 @@ from logging.handlers import RotatingFileHandler
 import mimetypes
 import os
 from pathlib import Path
+import re
 import secrets
 import threading
 import time
@@ -68,16 +69,30 @@ from snapims.recognition.service import (
     start_batch_recognition,
 )
 from snapims.shopify.service import ShopifyService
+from snapims.provider_probes import (
+    OpenAIConnectionProbe,
+    ProviderProbeError,
+    ShopifyConnectionProbe,
+)
 from snapims.runtime import test_providers_enabled
 from snapims.auth import (
     COOKIE,
     authentication_enabled,
     authentication_problem,
+    generate_secret,
+    hash_password,
     issue_session,
     read_session_claims,
     verify_password,
 )
 from snapims.config import SnapIMSConfig
+from snapims.settings import (
+    DEFINITIONS,
+    SECRET_KEYS,
+    ConfigurationError,
+    ConfigurationService,
+)
+from snapims.catalog.wikipedia import WikipediaClient, WikipediaError
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 STATIC_ROOT = PACKAGE_ROOT / "static"
@@ -551,6 +566,10 @@ def get_paths() -> DataPaths:
     return DataPaths.from_root().ensure()
 
 
+def get_configuration_service() -> ConfigurationService:
+    return ConfigurationService.load_runtime()
+
+
 def context(request: Request, **values: Any) -> dict[str, Any]:
     return {
         "request": request,
@@ -658,7 +677,9 @@ async def import_page(
     manual: bool = False,
 ) -> HTMLResponse:
     paths = get_paths()
-    configured = db.get_setting(paths.db_file, "incoming_folder", str(paths.incoming))
+    configured = get_configuration_service().value(
+        "incoming_folder", str(paths.incoming)
+    )
     selected = source_folder or configured
     recent = db.recent_folders(paths.db_file)
     resolved, folder_error = validate_folder(selected)
@@ -691,7 +712,14 @@ async def use_folder(
     if error:
         return redirect(f"/import?source_folder={quote(path or '')}&message={quote(error)}")
     if save_as_incoming:
-        db.set_setting(paths.db_file, "incoming_folder", resolved)
+        try:
+            get_configuration_service().save_nonsecret(
+                "general", {"incoming_folder": resolved}
+            )
+        except ConfigurationError as exc:
+            return redirect(
+                f"/import?source_folder={quote(resolved)}&message={quote(str(exc))}"
+            )
     db.remember_folder(paths.db_file, Path(resolved))
     return redirect(f"/import?source_folder={quote(resolved)}&notice={quote('Folder selected.')}")
 
@@ -736,7 +764,9 @@ def import_context(
     notice: str = "",
 ) -> HTMLResponse:
     paths = get_paths()
-    configured = db.get_setting(paths.db_file, "incoming_folder", str(paths.incoming))
+    configured = get_configuration_service().value(
+        "incoming_folder", str(paths.incoming)
+    )
     return TEMPLATES.TemplateResponse(
         request,
         "import.html",
@@ -1854,21 +1884,123 @@ async def publish_restore_checkpoint(
         return redirect(f"/publish?batch_id={quote(batch_id)}&message={quote(str(exc))}")
 
 
-@app.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request, message: str = "") -> HTMLResponse:
-    paths = get_paths()
+def _safe_settings_model(service: ConfigurationService) -> dict[str, dict[str, dict[str, Any]]]:
+    sections: dict[str, dict[str, dict[str, Any]]] = {}
+    for key, definition in DEFINITIONS.items():
+        effective = service.effective(key)
+        sections.setdefault(definition.section, {})[key] = {
+            "key": key,
+            "value": effective.display_value,
+            "configured": effective.configured,
+            "provenance": effective.provenance,
+            "externally_managed": effective.externally_managed,
+            "secret": definition.secret,
+            "choices": definition.choices,
+        }
+    return sections
+
+
+def _reauthenticated(password: str) -> bool:
+    config = SnapIMSConfig.load()
+    return (
+        authentication_enabled(config.auth_secret, config.admin_password_hash)
+        and bool(password)
+        and verify_password(password, config.admin_password_hash)
+    )
+
+
+def _safe_form_values(form: Any) -> dict[str, str]:
+    safe_auxiliary = {"model_id", "candidate_title", "candidate_year"}
+    return {
+        str(key): str(value)
+        for key, value in form.multi_items()
+        if (key in DEFINITIONS and key not in SECRET_KEYS) or key in safe_auxiliary
+    }
+
+
+async def _render_settings(
+    request: Request,
+    *,
+    message: str = "",
+    error: str = "",
+    test_result: dict[str, Any] | None = None,
+    form_values: dict[str, str] | None = None,
+) -> HTMLResponse:
+    config = SnapIMSConfig.load()
+    paths = config.data
+    service = get_configuration_service()
     providers = {name: provider.available() for name, provider in recognizer_registry().items()}
+    with db.connect(paths.db_file) as connection:
+        inventory_integrity = str(
+            connection.execute("PRAGMA integrity_check").fetchone()[0]
+        )
+        schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    login_events = [
+        event
+        for event in query_events(paths.db_file, source="auth", last=100)
+        if str(event.get("event_type", "")).startswith("auth.login")
+    ][:20]
     return TEMPLATES.TemplateResponse(
         request,
         "settings.html",
         context(
             request,
-            incoming=db.get_setting(paths.db_file, "incoming_folder", str(paths.incoming)),
+            settings=_safe_settings_model(service),
+            form_values=form_values or {},
+            incoming=service.value("incoming_folder", str(paths.incoming)),
             recent=db.recent_folders(paths.db_file),
             providers=providers,
             message=message,
+            error=error,
+            test_result=test_result or {},
+            compatible_models=service.compatible_models(),
+            legacy_secret_fields=service.legacy_secret_fields(),
+            revisions=service.revisions(),
+            infrastructure={
+                "project_path": str(config.project_path),
+                "data_root": str(paths.root),
+                "inventory_db": str(paths.db_file),
+                "catalog_db": str(paths.catalog_db_file),
+                "backup_path": str(paths.backups),
+                "log_path": str(paths.logs),
+                "secret_path": str(paths.secrets),
+                "local_url": f"http://{config.host}:{config.port}",
+                "public_url": config.public_url,
+                "tunnel_name": config.tunnel_name,
+                "tunnel_config": str(config.tunnel_config),
+                "guacamole_url": config.guacamole_url,
+                "guacamole_public_url": config.guacamole_public_url,
+                "managed_services": config.manage_guacamole_services,
+            },
+            infrastructure_health={
+                "inventory_database": (
+                    "healthy"
+                    if inventory_integrity == "ok"
+                    and schema_version == db.SCHEMA_VERSION
+                    else "degraded"
+                ),
+                "movie_catalog": (
+                    "healthy"
+                    if not str(getattr(request.app.state, "catalog_error", ""))
+                    else "degraded"
+                ),
+                "external_endpoints": "See live Diagnostics status",
+            },
+            authentication_enabled=authentication_enabled(
+                config.auth_secret, config.admin_password_hash
+            ),
+            login_events=login_events,
         ),
     )
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(
+    request: Request,
+    message: str = "",
+    error: str = "",
+) -> HTMLResponse:
+    return await _render_settings(request, message=message, error=error)
 
 
 @app.post("/settings")
@@ -1885,7 +2017,13 @@ async def save_settings(incoming_folder: str = Form(...)) -> RedirectResponse:
             retention_class="SECURITY",
         )
         return redirect(f"/settings?message={quote(error)}")
-    db.set_setting(get_paths().db_file, "incoming_folder", resolved)
+    try:
+        get_configuration_service().save_nonsecret(
+            "general",
+            {"incoming_folder": resolved},
+        )
+    except ConfigurationError as exc:
+        return redirect(f"/settings?error={quote(str(exc))}")
     _event(
         "system",
         "settings.saved",
@@ -1895,6 +2033,509 @@ async def save_settings(incoming_folder: str = Form(...)) -> RedirectResponse:
         retention_class="SECURITY",
     )
     return redirect(f"/settings?message={quote('Settings saved.')}")
+
+
+@app.post("/settings/{section}/save", response_class=HTMLResponse)
+async def save_settings_section(request: Request, section: str) -> Any:
+    if section not in {"recognition", "shopify", "movie", "backup"}:
+        raise HTTPException(404)
+    form = await request.form()
+    changes = {
+        str(key): str(value)
+        for key, value in form.multi_items()
+        if key in DEFINITIONS
+        and not DEFINITIONS[str(key)].secret
+        and DEFINITIONS[str(key)].section == section
+    }
+    try:
+        revision = get_configuration_service().save_nonsecret(section, changes)
+    except (ConfigurationError, ValueError, json.JSONDecodeError) as exc:
+        _event(
+            "settings",
+            "settings.save_failed",
+            severity="WARNING",
+            status="REJECTED",
+            outcome="VALIDATION",
+            detail={"section": section, "changed_fields": sorted(changes)},
+            safe_summary=redact_text(str(exc), known_secrets=_configured_secrets()),
+            retention_class="SECURITY",
+        )
+        return await _render_settings(
+            request,
+            error=str(exc),
+            form_values=_safe_form_values(form),
+        )
+    _event(
+        "settings",
+        "settings.saved",
+        status="SAVED",
+        outcome="SUCCESS",
+        detail={
+            "section": section,
+            "changed_fields": sorted(changes),
+            "revision_id": revision,
+        },
+        retention_class="SECURITY",
+    )
+    return redirect(f"/settings?message={quote(f'{section.title()} settings saved.')}")
+
+
+@app.post("/settings/{section}/secrets", response_class=HTMLResponse)
+async def save_settings_secrets(request: Request, section: str) -> Any:
+    if section not in {"recognition", "shopify", "movie"}:
+        raise HTTPException(404)
+    form = await request.form()
+    current_password = str(form.get("current_password") or "")
+    if not _reauthenticated(current_password):
+        _event(
+            "settings",
+            "settings.secret_save_failed",
+            severity="WARNING",
+            status="REJECTED",
+            outcome="REAUTHENTICATION",
+            detail={"section": section, "changed_fields": []},
+            retention_class="SECURITY",
+        )
+        return await _render_settings(
+            request,
+            error="Administrator re-authentication is required to save secrets.",
+            form_values=_safe_form_values(form),
+        )
+    changes = {
+        str(key): str(value)
+        for key, value in form.multi_items()
+        if key in SECRET_KEYS
+        and DEFINITIONS[str(key)].section == section
+        and str(value)
+    }
+    try:
+        revision = get_configuration_service().save_secrets(section, changes)
+    except ConfigurationError as exc:
+        return await _render_settings(
+            request,
+            error=str(exc),
+            form_values=_safe_form_values(form),
+        )
+    _event(
+        "settings",
+        "settings.secrets_saved",
+        status="SAVED",
+        outcome="SUCCESS",
+        detail={
+            "section": section,
+            "changed_fields": sorted(changes),
+            "revision_id": revision,
+        },
+        retention_class="SECURITY",
+    )
+    return redirect(f"/settings?message={quote(f'{section.title()} secret saved securely.')}")
+
+
+@app.post("/settings/recognition/test", response_class=HTMLResponse)
+async def test_openai_settings(request: Request) -> HTMLResponse:
+    form = await request.form()
+    service = get_configuration_service()
+    submitted_key = str(form.get("OPENAI_API_KEY") or "")
+    api_key = submitted_key or service.value("OPENAI_API_KEY", "")
+    action = str(form.get("test_action") or "discover")
+    model_id = str(form.get("model_id") or "").strip()
+    try:
+        probe = OpenAIConnectionProbe(
+            api_key,
+            timeout=float(
+                str(
+                    form.get("SNAPIMS_RECOGNITION_TIMEOUT_SECONDS")
+                    or service.value("SNAPIMS_RECOGNITION_TIMEOUT_SECONDS", "60")
+                )
+            ),
+        )
+        if action == "probe":
+            result = probe.probe_image_and_schema(model_id)
+            service.save_model_capability(
+                model_id=result.model_id,
+                supports_images=result.supports_images,
+                supports_strict_schema=result.supports_strict_schema,
+                status=result.status,
+                safe_summary=result.safe_summary,
+            )
+            test_result = {
+                "kind": "openai_probe",
+                "status": result.status,
+                "model_id": result.model_id,
+                "compatible": result.compatible,
+                "summary": result.safe_summary,
+            }
+        else:
+            models = probe.discover_models()
+            test_result = {
+                "kind": "openai_models",
+                "status": "PASS",
+                "models": models,
+                "summary": f"OpenAI returned {len(models)} available model IDs.",
+            }
+    except (ProviderProbeError, ValueError) as exc:
+        test_result = {
+            "kind": "openai",
+            "status": "FAIL",
+            "summary": redact_text(str(exc), known_secrets=(api_key,)),
+        }
+    _event(
+        "recognition",
+        "recognition.connection_tested",
+        status="TESTED",
+        outcome=str(test_result["status"]),
+        detail={
+            "test_kind": str(test_result["kind"]),
+            "model_name": model_id,
+        },
+        retention_class="SECURITY",
+    )
+    return await _render_settings(
+        request,
+        test_result=test_result,
+        form_values=_safe_form_values(form),
+    )
+
+
+@app.post("/settings/shopify/test", response_class=HTMLResponse)
+async def test_shopify_settings(request: Request) -> HTMLResponse:
+    form = await request.form()
+    service = get_configuration_service()
+    token = str(form.get("SHOPIFY_ADMIN_ACCESS_TOKEN") or "") or service.value(
+        "SHOPIFY_ADMIN_ACCESS_TOKEN", ""
+    )
+    config = ShopifyConfig(
+        store_domain=str(
+            form.get("SHOPIFY_STORE_DOMAIN")
+            or service.value("SHOPIFY_STORE_DOMAIN", "")
+        ).strip(),
+        access_token=token,
+        location_id=str(
+            form.get("SHOPIFY_LOCATION_ID")
+            or service.value("SHOPIFY_LOCATION_ID", "")
+        ).strip(),
+        api_version=str(
+            form.get("SHOPIFY_API_VERSION")
+            or service.value("SHOPIFY_API_VERSION", "2026-07")
+        ).strip(),
+        draft_only=True,
+    )
+    test_result: dict[str, Any]
+    try:
+        result = ShopifyConnectionProbe(config).run()
+        test_result = {
+            "kind": "shopify",
+            "status": "PASS" if not result.missing_scopes else "INCOMPLETE",
+            "shop": result.shop,
+            "granted_scopes": result.granted_scopes,
+            "missing_by_capability": result.missing_by_capability,
+            "locations": result.locations,
+            "summary": (
+                "Shopify identity, scopes, and locations were read successfully."
+            ),
+        }
+        if str(form.get("save_after_test") or "") == "true":
+            if not _reauthenticated(str(form.get("current_password") or "")):
+                raise ProviderProbeError(
+                    "Administrator re-authentication is required to save the tested connection."
+                )
+            if str(form.get("SHOPIFY_ADMIN_ACCESS_TOKEN") or ""):
+                service.save_secrets(
+                    "shopify",
+                    {"SHOPIFY_ADMIN_ACCESS_TOKEN": token},
+                )
+            service.save_nonsecret(
+                "shopify",
+                {
+                    "SHOPIFY_STORE_DOMAIN": config.store_domain,
+                    "SHOPIFY_API_VERSION": config.api_version,
+                    "SHOPIFY_DRAFT_ONLY": "true",
+                },
+            )
+            test_result["summary"] += (
+                " The tested connection was saved; choose and save an intended location below."
+            )
+    except (ProviderProbeError, ConfigurationError) as exc:
+        test_result = {
+            "kind": "shopify",
+            "status": "FAIL",
+            "summary": redact_text(str(exc), known_secrets=(token,)),
+        }
+    _event(
+        "shopify",
+        "shopify.connection_tested",
+        status="TESTED",
+        outcome=str(test_result["status"]),
+        detail={"store_domain": config.store_domain},
+        retention_class="SECURITY",
+    )
+    return await _render_settings(
+        request,
+        test_result=test_result,
+        form_values=_safe_form_values(form),
+    )
+
+
+@app.post("/settings/movie/test", response_class=HTMLResponse)
+async def test_movie_settings(request: Request) -> HTMLResponse:
+    form = await request.form()
+    service = get_configuration_service()
+    title = str(form.get("candidate_title") or "").strip()
+    year_text = str(form.get("candidate_year") or "").strip()
+    user_agent = str(
+        form.get("SNAPIMS_WIKIPEDIA_USER_AGENT")
+        or service.value("SNAPIMS_WIKIPEDIA_USER_AGENT", "")
+    ).strip()
+    try:
+        if not title:
+            raise ConfigurationError("A candidate title is required.")
+        service._validate("SNAPIMS_WIKIPEDIA_USER_AGENT", user_agent)
+        client = WikipediaClient(
+            service.paths.catalog_db_file,
+            user_agent=user_agent,
+            timeout=float(
+                str(
+                    form.get("SNAPIMS_WIKIPEDIA_TIMEOUT_SECONDS")
+                    or service.value("SNAPIMS_WIKIPEDIA_TIMEOUT_SECONDS", "10")
+                )
+            ),
+            max_retries=int(
+                str(
+                    form.get("SNAPIMS_WIKIPEDIA_MAX_RETRIES")
+                    or service.value("SNAPIMS_WIKIPEDIA_MAX_RETRIES", "2")
+                )
+            ),
+            min_interval=float(
+                str(
+                    form.get("SNAPIMS_WIKIPEDIA_MIN_INTERVAL_SECONDS")
+                    or service.value("SNAPIMS_WIKIPEDIA_MIN_INTERVAL_SECONDS", "1")
+                )
+            ),
+        )
+        candidates = client.search(
+            title,
+            int(year_text) if year_text else None,
+            limit=3,
+        )
+        test_result = {
+            "kind": "movie",
+            "status": "PASS",
+            "candidates": candidates,
+            "summary": f"Wikipedia returned {len(candidates)} candidate records with source provenance.",
+        }
+    except (ConfigurationError, WikipediaError, ValueError) as exc:
+        test_result = {
+            "kind": "movie",
+            "status": "FAIL",
+            "summary": str(exc),
+        }
+    _event(
+        "catalog",
+        "catalog.connection_tested",
+        status="TESTED",
+        outcome=str(test_result["status"]),
+        detail={"provider": "wikipedia"},
+        retention_class="SECURITY",
+    )
+    return await _render_settings(
+        request,
+        test_result=test_result,
+        form_values=_safe_form_values(form),
+    )
+
+
+@app.post("/settings/legacy-secrets/migrate", response_class=HTMLResponse)
+async def migrate_legacy_settings_secrets(request: Request) -> Any:
+    form = await request.form()
+    if not _reauthenticated(str(form.get("current_password") or "")):
+        return await _render_settings(
+            request,
+            error="Administrator re-authentication is required for secret migration.",
+        )
+    fields = [
+        str(value)
+        for value in form.getlist("secret_field")
+        if str(value) in SECRET_KEYS
+    ]
+    try:
+        revision = get_configuration_service().migrate_legacy_secrets(fields)
+    except ConfigurationError as exc:
+        return await _render_settings(request, error=str(exc))
+    _event(
+        "settings",
+        "settings.legacy_secrets_migrated",
+        status="MIGRATED",
+        outcome="SUCCESS",
+        detail={"changed_fields": sorted(fields), "revision_id": revision},
+        retention_class="SECURITY",
+    )
+    return redirect(
+        "/settings?message="
+        + quote(
+            "Selected secrets were copied into the SnapIMS secret store. "
+            "The legacy .env values were not deleted and still remain."
+        )
+    )
+
+
+@app.post("/settings/rollback/{revision_id}", response_class=HTMLResponse)
+async def rollback_settings_revision(
+    request: Request,
+    revision_id: str,
+) -> Any:
+    form = await request.form()
+    service = get_configuration_service()
+    revision = next(
+        (row for row in service.revisions(limit=100) if row["revision_id"] == revision_id),
+        None,
+    )
+    if revision is None:
+        raise HTTPException(404)
+    try:
+        if revision["contains_secrets"]:
+            if not _reauthenticated(str(form.get("current_password") or "")):
+                raise ConfigurationError(
+                    "Administrator re-authentication is required for secret rollback."
+                )
+            backup_reference = str(revision["backup_reference"])
+            if not backup_reference:
+                raise ConfigurationError("This secret revision has no rollback backup.")
+            service.rollback_secret_file(
+                backup_reference,
+                section=str(revision["section"]),
+            )
+        else:
+            service.rollback_nonsecret(revision_id)
+    except ConfigurationError as exc:
+        return await _render_settings(request, error=str(exc))
+    _event(
+        "settings",
+        "settings.rolled_back",
+        status="ROLLED_BACK",
+        outcome="SUCCESS",
+        detail={
+            "section": str(revision["section"]),
+            "changed_fields": list(revision["changed_fields"]),
+        },
+        retention_class="SECURITY",
+    )
+    return redirect(f"/settings?message={quote('Configuration revision rolled back.')}")
+
+
+def _next_session_generation(service: ConfigurationService) -> str:
+    raw = service.value("SNAPIMS_SESSION_GENERATION", "1")
+    try:
+        return str(max(1, int(raw)) + 1)
+    except ValueError:
+        return str(int(time.time()))
+
+
+@app.post("/settings/security/change", response_class=HTMLResponse)
+async def change_security_settings(request: Request) -> Any:
+    form = await request.form()
+    config = SnapIMSConfig.load()
+    service = get_configuration_service()
+    current_password = str(form.get("current_password") or "")
+    enabled = authentication_enabled(config.auth_secret, config.admin_password_hash)
+    client_host = request.client.host if request.client else ""
+    local_bootstrap = (
+        not enabled
+        and client_host in {"127.0.0.1", "::1", "localhost", "testclient"}
+    )
+    if not local_bootstrap and not _reauthenticated(current_password):
+        return await _render_settings(
+            request,
+            error="Administrator re-authentication is required for credential changes.",
+        )
+    username = str(form.get("SNAPIMS_ADMIN_USERNAME") or "").strip()
+    new_password = str(form.get("new_password") or "")
+    confirmation = str(form.get("confirm_password") or "")
+    rotate_signing = str(form.get("rotate_signing_secret") or "") == "true"
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{2,63}", username):
+        return await _render_settings(
+            request,
+            error="Administrator username must be 3–64 safe characters.",
+        )
+    if new_password and len(new_password) < 12:
+        return await _render_settings(
+            request,
+            error="New administrator password must be at least 12 characters.",
+        )
+    if new_password != confirmation:
+        return await _render_settings(
+            request,
+            error="New administrator password confirmation does not match.",
+        )
+    if local_bootstrap and (not new_password or not rotate_signing):
+        return await _render_settings(
+            request,
+            error="Initial security setup requires a password and a new signing secret.",
+        )
+    secret_changes: dict[str, str] = {}
+    changed_fields = ["SNAPIMS_ADMIN_USERNAME", "SNAPIMS_SESSION_GENERATION"]
+    if new_password:
+        secret_changes["SNAPIMS_ADMIN_PASSWORD_HASH"] = hash_password(new_password)
+        changed_fields.append("SNAPIMS_ADMIN_PASSWORD_HASH")
+    if rotate_signing:
+        secret_changes["SNAPIMS_AUTH_SECRET"] = generate_secret()
+        changed_fields.append("SNAPIMS_AUTH_SECRET")
+    try:
+        if secret_changes:
+            service.save_secrets("security", secret_changes)
+        service.save_nonsecret(
+            "security",
+            {
+                "SNAPIMS_ADMIN_USERNAME": username,
+                "SNAPIMS_SESSION_GENERATION": _next_session_generation(service),
+            },
+        )
+    except ConfigurationError as exc:
+        return await _render_settings(request, error=str(exc))
+    _event(
+        "auth",
+        "auth.credentials_changed",
+        status="CHANGED",
+        outcome="SESSIONS_REVOKED",
+        detail={"changed_fields": sorted(changed_fields)},
+        retention_class="SECURITY",
+    )
+    response = redirect(
+        "/login?error="
+        + quote("Credentials changed and all sessions revoked. Sign in again.")
+    )
+    response.delete_cookie(COOKIE)
+    response.delete_cookie(CSRF_COOKIE)
+    return response
+
+
+@app.post("/settings/security/revoke", response_class=HTMLResponse)
+async def revoke_security_sessions(request: Request) -> Any:
+    form = await request.form()
+    if not _reauthenticated(str(form.get("current_password") or "")):
+        return await _render_settings(
+            request,
+            error="Administrator re-authentication is required to revoke sessions.",
+        )
+    service = get_configuration_service()
+    try:
+        service.save_nonsecret(
+            "security",
+            {"SNAPIMS_SESSION_GENERATION": _next_session_generation(service)},
+        )
+    except ConfigurationError as exc:
+        return await _render_settings(request, error=str(exc))
+    _event(
+        "auth",
+        "auth.sessions_revoked",
+        status="REVOKED",
+        outcome="SUCCESS",
+        detail={"changed_fields": ["SNAPIMS_SESSION_GENERATION"]},
+        retention_class="SECURITY",
+    )
+    response = redirect("/login?error=" + quote("All sessions were revoked. Sign in again."))
+    response.delete_cookie(COOKIE)
+    response.delete_cookie(CSRF_COOKIE)
+    return response
 
 
 @app.get("/diagnostics", response_class=HTMLResponse)

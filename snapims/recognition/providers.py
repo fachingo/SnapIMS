@@ -4,15 +4,13 @@ import base64
 import hashlib
 import json
 import mimetypes
-import os
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
-
-from snapims.config import default_project_path
+from snapims.config import SnapIMSConfig
 from snapims.recognition.base import BaseRecognizer, RecognitionResult
 from snapims.runtime import test_providers_enabled
+from snapims.settings import ConfigurationService
 
 DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
 MAX_IMAGES = 3
@@ -38,13 +36,6 @@ SCHEMA: dict[str, Any] = {
     ],
     "additionalProperties": False,
 }
-
-
-def _load_environment() -> None:
-    if os.getenv("SNAPIMS_SKIP_DOTENV"):
-        return
-    project = Path(os.getenv("SNAPIMS_PROJECT_PATH") or default_project_path()).expanduser().resolve()
-    load_dotenv(project / ".env", override=False)
 
 
 class MockRecognizer(BaseRecognizer):
@@ -87,18 +78,25 @@ class OpenAIRecognizer(BaseRecognizer):
         self.model = model
 
     def model_name(self) -> str:
-        _load_environment()
-        return self.model or os.getenv("SNAPIMS_OPENAI_MODEL") or DEFAULT_OPENAI_MODEL
+        service = ConfigurationService.load_runtime()
+        legacy_model = service.value("SNAPIMS_OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+        return self.model or service.value(
+            "SNAPIMS_OPENAI_BASELINE_MODEL", legacy_model
+        )
 
     def available(self) -> tuple[bool, str]:
-        _load_environment()
-        return (True, f"OpenAI available ({self.model_name()})") if os.getenv("OPENAI_API_KEY") else (False, "OPENAI_API_KEY is not configured")
+        configured = bool(SnapIMSConfig.load().openai_api_key)
+        return (
+            (True, f"OpenAI available ({self.model_name()})")
+            if configured
+            else (False, "OPENAI_API_KEY is not configured")
+        )
 
     def _client(self) -> Any:
         if self.client is not None:
             return self.client
         from openai import OpenAI
-        return OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        return OpenAI(api_key=SnapIMSConfig.load().openai_api_key)
 
     def recognize(self, item: dict[str, Any], images: list[Path]) -> RecognitionResult:
         available, reason = self.available()

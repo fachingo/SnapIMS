@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -223,7 +224,7 @@ class ConfigurationService:
             value = str(self.process_environment[key])
             return EffectiveSetting(key, value, "environment", secret, bool(value), True)
         if secret:
-            stored = _safe_json_object(self.secret_file)
+            stored = self._stored_secrets()
             if key in stored:
                 return EffectiveSetting(key, stored[key], "secret store", True, bool(stored[key]), False)
         persisted = self._persisted(key)
@@ -233,6 +234,21 @@ class ConfigurationService:
             value = str(self.legacy[key])
             return EffectiveSetting(key, value, "legacy .env", secret, bool(value), False)
         return EffectiveSetting(key, fallback, "default", secret, bool(fallback), False)
+
+    def _stored_secrets(self) -> dict[str, str]:
+        if not self.secret_file.exists():
+            return {}
+        if self.secret_file.is_symlink() or not self.secret_file.is_file():
+            raise ConfigurationError("SnapIMS secret store is not a regular file.")
+        file_status = self.secret_file.stat()
+        directory_status = self.paths.secrets.stat()
+        if file_status.st_uid != os.geteuid() or directory_status.st_uid != os.geteuid():
+            raise ConfigurationError("SnapIMS secret store must be owned by the service user.")
+        if stat.S_IMODE(file_status.st_mode) != 0o600:
+            raise ConfigurationError("SnapIMS secret store file permissions must be 0600.")
+        if stat.S_IMODE(directory_status.st_mode) != 0o700:
+            raise ConfigurationError("SnapIMS secret store directory permissions must be 0700.")
+        return _safe_json_object(self.secret_file)
 
     def value(self, key: str, default: str = "") -> str:
         return self.effective(key, default).value
@@ -455,6 +471,11 @@ class ConfigurationService:
             raise ConfigurationError("Configuration revision is malformed.")
         backup = db.backup_database(self.paths, f"before-{section}-rollback")
         replacement: dict[str, str] = {}
+        current_values = {
+            str(field): self._persisted(str(field))
+            for field in fields
+            if isinstance(field, str)
+        }
         with db.transaction(self.paths.db_file) as connection:
             for field in fields:
                 if not isinstance(field, str) or field not in DEFINITIONS:
@@ -478,7 +499,7 @@ class ConfigurationService:
         return self._record_revision(
             section=section,
             changed_fields=[str(field) for field in fields],
-            previous={key: self._persisted(key) for key in replacement},
+            previous=current_values,
             replacement=replacement,
             backup_reference=backup.name if backup else "",
             status="ROLLED_BACK",
@@ -487,7 +508,7 @@ class ConfigurationService:
     def save_secrets(self, section: str, changes: Mapping[str, str]) -> str:
         if not changes:
             raise ConfigurationError("No secrets were supplied.")
-        stored = _safe_json_object(self.secret_file)
+        stored = self._stored_secrets()
         changed_fields: list[str] = []
         for key, raw in changes.items():
             definition = DEFINITIONS.get(key)
