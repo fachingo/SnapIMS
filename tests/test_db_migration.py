@@ -298,6 +298,65 @@ def test_current_schema_initialize_is_idempotent(tmp_path: Path) -> None:
     assert first
 
 
+def test_schema_v10_has_durable_operational_event_store(tmp_path: Path) -> None:
+    db_file = tmp_path / "events.sqlite3"
+    db.initialize(db_file)
+    with db.connect(db_file) as connection:
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(operational_events)")
+        }
+        indexes = {
+            str(row[1])
+            for row in connection.execute("PRAGMA index_list(operational_events)")
+        }
+        assert {
+            "event_id",
+            "occurred_at",
+            "severity",
+            "component",
+            "event_type",
+            "operation_id",
+            "parent_operation_id",
+            "retry_of_event_id",
+            "recovery_of_event_id",
+            "batch_id",
+            "item_id",
+            "movie_id",
+            "order_id",
+            "order_line_id",
+            "reservation_id",
+            "pick_task_id",
+            "provider",
+            "model_name",
+            "recognition_tier",
+            "attempt_number",
+            "duration_ms",
+            "image_count",
+            "image_bytes",
+            "input_tokens",
+            "output_tokens",
+            "estimated_cost_cad",
+            "status",
+            "outcome",
+            "error_class",
+            "safe_summary",
+            "detail_json",
+            "process_marker",
+            "retention_class",
+        } <= columns
+        assert {
+            "idx_operational_events_time",
+            "idx_operational_events_component",
+            "idx_operational_events_severity",
+            "idx_operational_events_operation",
+            "idx_operational_events_batch",
+            "idx_operational_events_item",
+            "idx_operational_events_order",
+        } <= indexes
+        assert db.schema_manifest_report(connection)["ok"] is True
+
+
 def test_backup_round_trip(tmp_path: Path) -> None:
     paths = DataPaths.from_root(tmp_path / "workspace").ensure()
     db.initialize(paths.db_file, paths=paths)

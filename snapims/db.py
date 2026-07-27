@@ -12,7 +12,7 @@ from typing import Any
 
 from snapims.config import DataPaths
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 def now() -> str:
@@ -405,6 +405,43 @@ def _base_schema(connection: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL,
             completed_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS operational_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            occurred_at TEXT NOT NULL,
+            severity TEXT NOT NULL
+                CHECK(severity IN ('DEBUG','INFO','WARNING','ERROR','CRITICAL')),
+            component TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            operation_id TEXT NOT NULL DEFAULT '',
+            parent_operation_id TEXT NOT NULL DEFAULT '',
+            retry_of_event_id INTEGER REFERENCES operational_events(event_id) ON DELETE SET NULL,
+            recovery_of_event_id INTEGER REFERENCES operational_events(event_id) ON DELETE SET NULL,
+            batch_id TEXT NOT NULL DEFAULT '',
+            item_id TEXT NOT NULL DEFAULT '',
+            movie_id TEXT NOT NULL DEFAULT '',
+            order_id TEXT NOT NULL DEFAULT '',
+            order_line_id TEXT NOT NULL DEFAULT '',
+            reservation_id TEXT NOT NULL DEFAULT '',
+            pick_task_id TEXT NOT NULL DEFAULT '',
+            provider TEXT NOT NULL DEFAULT '',
+            model_name TEXT NOT NULL DEFAULT '',
+            recognition_tier TEXT NOT NULL DEFAULT '',
+            attempt_number INTEGER NOT NULL DEFAULT 0,
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            image_count INTEGER NOT NULL DEFAULT 0,
+            image_bytes INTEGER NOT NULL DEFAULT 0,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            estimated_cost_cad TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            outcome TEXT NOT NULL DEFAULT '',
+            error_class TEXT NOT NULL DEFAULT '',
+            safe_summary TEXT NOT NULL DEFAULT '',
+            detail_json TEXT NOT NULL DEFAULT '{}',
+            process_marker TEXT NOT NULL DEFAULT '',
+            retention_class TEXT NOT NULL DEFAULT 'STANDARD'
+                CHECK(retention_class IN ('DEBUG','STANDARD','BUSINESS','SECURITY'))
+        );
         CREATE INDEX IF NOT EXISTS idx_items_batch ON items(batch_id, sequence);
         CREATE INDEX IF NOT EXISTS idx_items_review ON items(batch_id, review_status, sequence);
         CREATE INDEX IF NOT EXISTS idx_photos_item ON photos(item_id, photo_order);
@@ -419,6 +456,20 @@ def _base_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_tag_definitions_active ON tag_definitions(active, sort_order, canonical_label);
         CREATE INDEX IF NOT EXISTS idx_item_tags_tag ON item_tags(tag_id, item_id);
         CREATE INDEX IF NOT EXISTS idx_tag_rejections_item ON tag_rejections(item_id, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_operational_events_time
+            ON operational_events(occurred_at DESC, event_id DESC);
+        CREATE INDEX IF NOT EXISTS idx_operational_events_component
+            ON operational_events(component, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_operational_events_severity
+            ON operational_events(severity, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_operational_events_operation
+            ON operational_events(operation_id, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_operational_events_batch
+            ON operational_events(batch_id, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_operational_events_item
+            ON operational_events(item_id, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_operational_events_order
+            ON operational_events(order_id, occurred_at DESC);
         """
     )
 
@@ -485,6 +536,16 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
         "request_id", "operation_type", "batch_id", "status", "result_json",
         "error_message", "created_at", "updated_at", "completed_at",
     },
+    "operational_events": {
+        "event_id", "occurred_at", "severity", "component", "event_type",
+        "operation_id", "parent_operation_id", "retry_of_event_id",
+        "recovery_of_event_id", "batch_id", "item_id", "movie_id", "order_id",
+        "order_line_id", "reservation_id", "pick_task_id", "provider",
+        "model_name", "recognition_tier", "attempt_number", "duration_ms",
+        "image_count", "image_bytes", "input_tokens", "output_tokens",
+        "estimated_cost_cad", "status", "outcome", "error_class",
+        "safe_summary", "detail_json", "process_marker", "retention_class",
+    },
     "item_movie_links": {
         "item_id", "movie_id", "link_status", "link_method",
         "recognition_result_id", "match_score", "linked_at", "updated_at",
@@ -511,6 +572,13 @@ EXPECTED_INDEXES = {
     "idx_tag_definitions_active",
     "idx_item_tags_tag",
     "idx_tag_rejections_item",
+    "idx_operational_events_time",
+    "idx_operational_events_component",
+    "idx_operational_events_severity",
+    "idx_operational_events_operation",
+    "idx_operational_events_batch",
+    "idx_operational_events_item",
+    "idx_operational_events_order",
 }
 
 
@@ -566,6 +634,7 @@ def schema_manifest_report(connection: sqlite3.Connection) -> dict[str, Any]:
         "csv_staging": {("token",)},
         "import_journal": {("import_id",), ("source_fingerprint",), ("batch_id",)},
         "operation_requests": {("request_id",)},
+        "operational_events": {("event_id",)},
         "tag_definitions": {("tag_id",), ("canonical_label",)},
         "tag_aliases": {("alias",)},
         "item_tags": {("item_id", "tag_id")},
@@ -1213,7 +1282,7 @@ def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
                 (
                     SCHEMA_VERSION,
                     timestamp,
-                    "SnapIMS v0.10.0 controlled tag taxonomy and item relationships",
+                    "SnapIMS v0.10.0 durable operational event store",
                 ),
             )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
