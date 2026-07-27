@@ -698,6 +698,7 @@ async def review_page(
                 display_title="",
                 catalog_job=None,
                 catalog_candidates=[],
+                tag_definitions=[],
             ),
         )
     db.set_setting(paths.db_file, "active_batch", batch_id)
@@ -769,6 +770,7 @@ async def review_page(
             display_title=display_title,
             catalog_job=catalog_job,
             catalog_candidates=catalog_candidates,
+            tag_definitions=db.list_tag_definitions(paths.db_file),
         ),
     )
 
@@ -897,6 +899,7 @@ async def approve(
     item_id: str = Form(...),
     title: str = Form(""),
     price: str = Form(""),
+    tag_ids: str = Form(""),
     discount: str = Form("0"),
 ) -> RedirectResponse:
     try:
@@ -907,13 +910,20 @@ async def approve(
             f"/review?batch_id={quote(batch_id)}&item_id={quote(item_id)}&edit=true&errors="
             + quote("Price or discount is invalid")
         )
-    errors = accept_item(
-        get_paths().db_file,
-        item_id,
-        price_cents=price_cents,
-        discount_percent=discount_percent,
-        title_override=title.strip() or None,
-    )
+    try:
+        errors = accept_item(
+            get_paths().db_file,
+            item_id,
+            price_cents=price_cents,
+            discount_percent=discount_percent,
+            title_override=title.strip() or None,
+            tag_ids=[value for value in tag_ids.split(",") if value],
+        )
+    except ValueError as exc:
+        return redirect(
+            f"/review?batch_id={quote(batch_id)}&item_id={quote(item_id)}&errors="
+            + quote(str(exc))
+        )
     if errors:
         message = "|".join(
             "This tape still needs information in the exception editor."
@@ -1015,7 +1025,7 @@ async def save_item(
     review: bool = Form(False),
     vendor: str = Form("Canada VHS"),
     product_type: str = Form("VHS Tape"),
-    tags: str = Form(""),
+    tag_ids: str = Form(""),
     condition_notes: str = Form(""),
     description: str = Form(""),
     pool_mode: str = Form("POOLED"),
@@ -1041,7 +1051,8 @@ async def save_item(
             "review": int(review),
             "vendor": vendor.strip() or "Canada VHS",
             "product_type": product_type.strip() or "VHS Tape",
-            "tags": tags.strip(),
+            "tag_ids": [value for value in tag_ids.split(",") if value],
+            "_tag_source": "OPERATOR_REVIEW",
             "condition_notes": condition_notes.strip(),
             "description": description.strip(),
             "pool_mode": pool_mode,
@@ -1082,7 +1093,7 @@ async def save_item(
                     paths,
                     item_id,
                     str(values["title"]),
-                    int(values["release_year"])
+                    int(str(values["release_year"]))
                     if values["release_year"] is not None
                     else None,
                 )
@@ -1120,6 +1131,7 @@ async def batch_editor(request: Request, batch_id: str | None = None, notice: st
             metrics=db.batch_metrics(paths.db_file, batch_id) if batch_id else {},
             checkpoints=checkpoints,
             notice=notice,
+            tag_definitions=db.list_tag_definitions(paths.db_file),
         ),
     )
 
@@ -1135,6 +1147,10 @@ def normalize_editor_value(field: str, value: Any) -> Any:
         return int(value) if value not in (None, "") else None
     if field in {"rare", "review", "ready"}:
         return int(bool(value))
+    if field == "tag_ids":
+        if not isinstance(value, list):
+            raise ValueError("Tags must be submitted as approved Tag IDs")
+        return [str(tag_id) for tag_id in value]
     if field == "shelf":
         return str(value).strip().upper()
     return str(value or "").strip()
@@ -1165,7 +1181,7 @@ async def api_update_item(item_id: str, request: Request) -> JSONResponse:
         "shelf",
         "quantity",
         "condition",
-        "tags",
+        "tag_ids",
         "rare",
         "review",
         "edition",

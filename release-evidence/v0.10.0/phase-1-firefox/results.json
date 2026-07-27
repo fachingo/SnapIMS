@@ -1,0 +1,16 @@
+{
+  "browser": "Playwright Firefox",
+  "checks": {
+    "alt_1_ignored_while_typing": true,
+    "alt_1_opens_first_visible_action": true,
+    "alt_p_palette": true,
+    "escape_closes_suggestions_first": true,
+    "tag_enter_accepts_approved_id": true,
+    "tag_suggestions_open": true
+  },
+  "console_errors": [],
+  "page_errors": [],
+  "passed": true,
+  "url": "http://127.0.0.1:8891",
+  "workspace": "/tmp/snapims-v010-firefox-37ckhym3"
+}

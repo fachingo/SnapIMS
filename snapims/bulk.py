@@ -62,12 +62,14 @@ def _updates_for(action: str, item: dict[str, Any], value: Any) -> dict[str, Any
     if action == "clear_rare":
         return {"rare": 0}
     if action == "append_tags":
-        incoming = [part.strip() for part in str(value or "").split(",") if part.strip()]
-        existing = [part.strip() for part in str(item.get("tags") or "").split(",") if part.strip()]
-        for part in incoming:
-            if part not in existing:
-                existing.append(part)
-        return {"tags": ", ".join(existing)}
+        incoming = [
+            part.strip() for part in str(value or "").split(",") if part.strip()
+        ]
+        existing = [str(part) for part in item.get("tag_ids") or []]
+        for tag_id in incoming:
+            if tag_id not in existing:
+                existing.append(tag_id)
+        return {"tag_ids": existing, "_tag_source": "OPERATOR_BULK"}
     if action == "prefix_description":
         return {"description": str(value or "") + str(item.get("description") or "")}
     if action == "replace_description":

@@ -138,7 +138,7 @@ def test_v061_legacy_recognition_job_items_is_removed_during_schema8_migration(t
 
     db.initialize(db_file)
     with db.connect(db_file) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
         assert migrated.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='recognition_job_items'"
         ).fetchone()[0] == 0
@@ -151,11 +151,12 @@ def test_keyboard_contract_is_present_in_browser_assets() -> None:
     javascript = Path("snapims/web/static/app.js").read_text(encoding="utf-8")
     template = Path("snapims/web/templates/batch_editor.html").read_text(encoding="utf-8")
     assert "event.code === \"KeyP\"" in javascript
-    assert "fallbackShortcut" in javascript
+    assert "event.altKey" in javascript
+    assert "event.isComposing" in javascript
     assert "moveVertical" in javascript and "moveHorizontal" in javascript
     assert "Digit[1-9]" in javascript
     assert "snapims-quick-actions-v1" in javascript
-    assert "Ctrl+1–9" in template
+    assert "Alt+1–9" in template
     assert "data-reset-quick-order" in template
 
 

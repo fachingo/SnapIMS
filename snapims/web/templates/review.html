@@ -4,12 +4,12 @@
 <div class="review-toolbar">
   <form method="get" action="/review">
     <label>Batch
-      <select name="batch_id" onchange="this.form.submit()">
+      <select name="batch_id" data-auto-submit>
         {% for batch in batches %}<option value="{{ batch.batch_id }}" {% if batch.batch_id==batch_id %}selected{% endif %}>{{ batch.batch_id }}</option>{% endfor %}
       </select>
     </label>
     <label>Queue
-      <select name="queue" onchange="this.form.submit()">
+      <select name="queue" data-auto-submit>
         <option value="UNRESOLVED" {% if queue=='UNRESOLVED' %}selected{% endif %}>Unresolved</option>
         <option value="DONE" {% if queue=='DONE' %}selected{% endif %}>Done</option>
         <option value="FAILED" {% if queue=='FAILED' %}selected{% endif %}>Failed</option>
@@ -96,6 +96,11 @@
       <fieldset class="span-2 editor-section"><legend>Required</legend>
         <label>Title<input autofocus name="title" value="{{ current.title or (catalog_status.canonical_title if catalog_status and catalog_status.canonical_title else '') }}" placeholder="{{ suggestion.suggested_title if suggestion else 'Required' }}"></label>
         <label>Price CAD<input name="price" type="number" min="0" step="0.01" value="{{ '%.2f'|format(current.price_cents/100) if current.price_cents is not none else '' }}" placeholder="{{ '%.2f'|format(suggestion.suggested_price_cents/100) if suggestion and suggestion.suggested_price_cents is not none else '0.00' }}"></label>
+        <div class="tag-picker span-2" data-tag-picker data-selected="{{ current.tag_ids|join(',') }}">
+          <span class="tag-picker-label">Tags</span><input type="hidden" name="tag_ids" data-tag-value value="{{ current.tag_ids|join(',') }}">
+          <div class="tag-pills" data-tag-pills></div><input type="text" data-tag-input autocomplete="off" placeholder="Add approved tag" aria-label="Add approved tag">
+          <div class="tag-suggestions" data-tag-suggestions role="listbox" hidden></div>
+        </div>
         <label>Quantity<input name="quantity" type="number" min="0" value="{{ current.quantity }}"></label>
         <label>Shelf<input name="shelf" value="{{ current.shelf }}"></label>
         <label>Condition<select name="condition">{% for option in conditions %}<option {% if option==current.condition %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
@@ -110,7 +115,7 @@
       </fieldset>
       <details class="span-2 editor-section"><summary>Advanced product fields</summary><div class="editor-grid nested-grid">
         <label>Vendor<input name="vendor" value="{{ current.vendor }}"></label><label>Product type<input name="product_type" value="{{ current.product_type }}"></label>
-        <label class="span-2">Tags<input name="tags" value="{{ current.tags }}"></label><label class="span-2">Description<textarea name="description">{{ current.description }}</textarea></label>
+        <label class="span-2">Description<textarea name="description">{{ current.description }}</textarea></label>
         <label>Inventory mode<select name="pool_mode">{% for option in pool_modes %}<option {% if option==current.pool_mode %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
       </div></details>
       <div class="span-2 action-row"><button class="primary">{{ 'Save changes' if current.review_status=='DONE' else 'Save edits & next' }}</button><a class="button" href="/review?batch_id={{ batch_id }}&queue={{ queue }}&item_id={{ current.item_id }}">Cancel changes</a></div>
@@ -125,9 +130,14 @@
     </div>
     <form id="quick-approve-form" method="post" action="/review/approve" class="quick-approve" data-quick-review>
       <input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}">
-      <div class="quick-fields quick-fields-three">
+      <div class="quick-fields quick-fields-four">
         <label>Title<input id="quick-title" name="title" type="text" autocomplete="off" required value="{{ current.title or (catalog_status.canonical_title if catalog_status and catalog_status.canonical_title else '') or (suggestion.suggested_title if suggestion else '') }}" placeholder="Title required"></label>
         <label>Price CAD<input id="quick-price" name="price" type="text" inputmode="decimal" autocomplete="off" value="{{ '%.2f'|format((current.price_cents if current.price_cents is not none else (suggestion.suggested_price_cents if suggestion and suggestion.suggested_price_cents is not none else 0))/100) }}"></label>
+        <div class="tag-picker" data-tag-picker data-selected="{{ current.tag_ids|join(',') }}">
+          <span class="tag-picker-label">Tags</span><input type="hidden" name="tag_ids" data-tag-value value="{{ current.tag_ids|join(',') }}">
+          <div class="tag-pills" data-tag-pills></div><input type="text" data-tag-input autocomplete="off" placeholder="Add approved tag" aria-label="Add approved tag">
+          <div class="tag-suggestions" data-tag-suggestions role="listbox" hidden></div>
+        </div>
         <label>Discount %<input id="quick-discount" name="discount" type="number" min="0" max="100" step="0.01" value="{{ current.discount_percent if current.discount_percent else (suggestion.suggested_discount_percent if suggestion else 0) }}"></label>
       </div>
       <button id="approve-next-button" class="approve" type="submit" {% if not current.title and not suggestion %}aria-describedby="manual-required"{% endif %}>✓ Approve & Next</button>
@@ -150,4 +160,5 @@
 </details>
 {% else %}<section class="empty"><h2>No items in this queue</h2><p>Choose another queue or continue to the logical next step.</p></section>{% endif %}
 {% endif %}
+<script id="tag-definitions-json" type="application/json">{{ tag_definitions|tojson }}</script>
 {% endblock %}

@@ -23,7 +23,7 @@
       <a href="/diagnostics">Diagnostics</a>
       <form method="post" action="/logout" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Log out</button></form>
     </nav>
-    <button class="command-trigger" type="button" data-command-open title="Command palette (Ctrl+Shift+P; Ctrl+K fallback)">⌘</button>
+    <button class="command-trigger" type="button" data-command-open title="Command palette (Alt+P)">⌘</button>
     {% endif %}
   </header>
   <main class="page">{% block content %}{% endblock %}</main>
@@ -42,7 +42,7 @@
       <button type="button" data-command data-command-action="bulk-price">Set selected prices</button>
       <button type="button" data-command data-command-action="approve-selected">Approve selected</button>
     </div>
-    <small>Ctrl+Shift+P · Ctrl+K fallback · Esc closes</small>
+    <small>Alt+P · Esc closes</small>
   </dialog>
   {% endif %}
 </body>

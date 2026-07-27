@@ -24,3 +24,12 @@
 @media(max-width:760px){.quick-fields-three{grid-template-columns:1fr}.catalog-match code{margin-left:0}.candidate-row{align-items:flex-start;flex-direction:column}}
 .quick-action-tools{display:flex;justify-content:flex-end;margin:-6px 0 8px}.quick-action-tools button{font-size:12px;padding:6px 9px}
 .bulk-bar>button[draggable="true"]{cursor:grab}.bulk-bar>button[draggable="true"]:active{cursor:grabbing}
+.quick-fields-four{grid-template-columns:minmax(0,1.4fr) minmax(0,.8fr) minmax(220px,1.2fr) minmax(0,.65fr)}
+.tag-picker{position:relative;display:grid;align-content:start;gap:6px;margin:11px 0;font-weight:720}
+.tag-picker-label{font-size:14px}.tag-pills{display:flex;gap:5px;flex-wrap:wrap}
+.tag-pill{display:inline-flex;align-items:center;gap:5px;border:1px solid #3d596d;background:#122332;border-radius:999px;padding:4px 7px;font-size:12px}
+.tag-pill.retired{border-color:#6b5a3b;color:#d5b979}.tag-pill button{border:0;background:transparent;padding:0 2px;color:inherit}
+.tag-suggestions{position:absolute;z-index:60;top:100%;left:0;right:0;max-height:220px;overflow:auto;background:#101821;border:1px solid var(--line);border-radius:9px;box-shadow:var(--shadow)}
+.tag-suggestions button{display:grid;width:100%;gap:2px;border:0;border-radius:0;text-align:left}.tag-suggestions button.active{background:#244053}.tag-suggestions small{color:var(--muted)}
+.tag-picker-cell{min-width:220px;margin:0}.tag-picker-cell input{min-width:200px}.tag-picker.dirty{outline:1px solid var(--warning);border-radius:9px}.tag-picker.save-failed{outline:1px solid var(--danger)}
+@media(max-width:900px){.quick-fields-four{grid-template-columns:1fr 1fr}}

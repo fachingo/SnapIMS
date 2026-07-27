@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import sqlite3
@@ -11,7 +12,7 @@ from typing import Any
 
 from snapims.config import DataPaths
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 def now() -> str:
@@ -191,6 +192,7 @@ def _base_schema(connection: sqlite3.Connection) -> None:
             distributor TEXT NOT NULL DEFAULT '',
             release_year INTEGER,
             barcode_candidates_json TEXT NOT NULL DEFAULT '[]',
+            suggested_tag_ids_json TEXT NOT NULL DEFAULT '[]',
             suggested_price_cents INTEGER,
             suggested_discount_percent REAL NOT NULL DEFAULT 0,
             confidence REAL NOT NULL DEFAULT 0,
@@ -203,6 +205,43 @@ def _base_schema(connection: sqlite3.Connection) -> None:
             input_image_bytes INTEGER NOT NULL DEFAULT 0,
             requires_review INTEGER NOT NULL DEFAULT 1,
             accepted_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS tag_definitions (
+            tag_id TEXT PRIMARY KEY,
+            canonical_label TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            category TEXT NOT NULL DEFAULT 'General',
+            active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+            ai_eligible INTEGER NOT NULL DEFAULT 0 CHECK(ai_eligible IN (0,1)),
+            shopify_visible INTEGER NOT NULL DEFAULT 1 CHECK(shopify_visible IN (0,1)),
+            deterministic_only INTEGER NOT NULL DEFAULT 0 CHECK(deterministic_only IN (0,1)),
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            evidence_json TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE IF NOT EXISTS tag_aliases (
+            alias TEXT PRIMARY KEY COLLATE NOCASE,
+            tag_id TEXT NOT NULL REFERENCES tag_definitions(tag_id) ON DELETE RESTRICT,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS item_tags (
+            item_id TEXT NOT NULL REFERENCES items(item_id) ON DELETE CASCADE,
+            tag_id TEXT NOT NULL REFERENCES tag_definitions(tag_id) ON DELETE RESTRICT,
+            source TEXT NOT NULL,
+            assigned_at TEXT NOT NULL,
+            recognition_result_id INTEGER REFERENCES recognition_results(recognition_result_id) ON DELETE SET NULL,
+            acceptance_state TEXT NOT NULL DEFAULT 'ACCEPTED'
+                CHECK(acceptance_state IN ('SUGGESTED','ACCEPTED','REJECTED')),
+            PRIMARY KEY(item_id, tag_id)
+        );
+        CREATE TABLE IF NOT EXISTS tag_rejections (
+            tag_rejection_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id TEXT REFERENCES items(item_id) ON DELETE SET NULL,
+            raw_value TEXT NOT NULL,
+            source TEXT NOT NULL,
+            recognition_result_id INTEGER REFERENCES recognition_results(recognition_result_id) ON DELETE SET NULL,
+            reason TEXT NOT NULL,
+            occurred_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS recognition_jobs (
             batch_id TEXT PRIMARY KEY REFERENCES batches(batch_id) ON DELETE RESTRICT,
@@ -377,6 +416,9 @@ def _base_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_import_journal_status ON import_journal(status, updated_at);
         CREATE INDEX IF NOT EXISTS idx_item_movie_links_movie ON item_movie_links(movie_id, link_status);
         CREATE INDEX IF NOT EXISTS idx_item_movie_link_events_item ON item_movie_link_events(item_id, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_tag_definitions_active ON tag_definitions(active, sort_order, canonical_label);
+        CREATE INDEX IF NOT EXISTS idx_item_tags_tag ON item_tags(tag_id, item_id);
+        CREATE INDEX IF NOT EXISTS idx_tag_rejections_item ON tag_rejections(item_id, occurred_at DESC);
         """
     )
 
@@ -396,6 +438,20 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
         "discount_percent", "review_status", "recognition_status", "record_revision",
         "review_source", "working_source", "created_at", "updated_at",
     },
+    "tag_definitions": {
+        "tag_id", "canonical_label", "category", "active", "ai_eligible",
+        "shopify_visible", "deterministic_only", "sort_order", "created_at",
+        "updated_at", "evidence_json",
+    },
+    "tag_aliases": {"alias", "tag_id", "created_at"},
+    "item_tags": {
+        "item_id", "tag_id", "source", "assigned_at", "recognition_result_id",
+        "acceptance_state",
+    },
+    "tag_rejections": {
+        "tag_rejection_id", "item_id", "raw_value", "source",
+        "recognition_result_id", "reason", "occurred_at",
+    },
     "photos": {
         "photo_id", "batch_id", "item_id", "kind", "stream_index", "sha256",
         "original_copy_path", "processed_path", "preview_path", "recognition_path",
@@ -403,7 +459,7 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
     "recognition_results": {
         "recognition_result_id", "item_id", "provider", "source_kind", "model_name",
         "suggested_title", "suggested_price_cents", "confidence", "accepted_at",
-        "input_image_count", "input_image_bytes",
+        "input_image_count", "input_image_bytes", "suggested_tag_ids_json",
     },
     "recognition_jobs": {
         "batch_id", "provider", "status", "total", "completed", "recognized", "failed",
@@ -452,6 +508,9 @@ EXPECTED_INDEXES = {
     "idx_import_journal_status",
     "idx_item_movie_links_movie",
     "idx_item_movie_link_events_item",
+    "idx_tag_definitions_active",
+    "idx_item_tags_tag",
+    "idx_tag_rejections_item",
 }
 
 
@@ -507,6 +566,9 @@ def schema_manifest_report(connection: sqlite3.Connection) -> dict[str, Any]:
         "csv_staging": {("token",)},
         "import_journal": {("import_id",), ("source_fingerprint",), ("batch_id",)},
         "operation_requests": {("request_id",)},
+        "tag_definitions": {("tag_id",), ("canonical_label",)},
+        "tag_aliases": {("alias",)},
+        "item_tags": {("item_id", "tag_id")},
     }
     for table, expected in required_unique.items():
         if table not in tables:
@@ -522,6 +584,12 @@ def schema_manifest_report(connection: sqlite3.Connection) -> dict[str, Any]:
         ("recognition_results", "item_id", "items", "item_id"),
         ("recognition_jobs", "batch_id", "batches", "batch_id"),
         ("csv_staging", "batch_id", "batches", "batch_id"),
+        ("tag_aliases", "tag_id", "tag_definitions", "tag_id"),
+        ("item_tags", "item_id", "items", "item_id"),
+        ("item_tags", "tag_id", "tag_definitions", "tag_id"),
+        ("item_tags", "recognition_result_id", "recognition_results", "recognition_result_id"),
+        ("tag_rejections", "item_id", "items", "item_id"),
+        ("tag_rejections", "recognition_result_id", "recognition_results", "recognition_result_id"),
     }
     actual_foreign_keys: set[tuple[str, str, str, str]] = set()
     for table in tables:
@@ -625,6 +693,7 @@ def _upgrade_legacy(connection: sqlite3.Connection) -> None:
             "input_image_bytes INTEGER NOT NULL DEFAULT 0",
             "release_year INTEGER",
             "barcode_candidates_json TEXT NOT NULL DEFAULT '[]'",
+            "suggested_tag_ids_json TEXT NOT NULL DEFAULT '[]'",
             "suggested_price_cents INTEGER",
             "suggested_discount_percent REAL NOT NULL DEFAULT 0",
             "confidence REAL NOT NULL DEFAULT 0",
@@ -939,6 +1008,7 @@ def _rebuild_core_tables_if_needed(connection: sqlite3.Connection) -> None:
                     distributor TEXT NOT NULL DEFAULT '',
                     release_year INTEGER,
                     barcode_candidates_json TEXT NOT NULL DEFAULT '[]',
+                    suggested_tag_ids_json TEXT NOT NULL DEFAULT '[]',
                     suggested_price_cents INTEGER,
                     suggested_discount_percent REAL NOT NULL DEFAULT 0,
                     confidence REAL NOT NULL DEFAULT 0,
@@ -963,6 +1033,91 @@ def _restore_database(db_file: Path, backup: Path) -> None:
         Path(f"{db_file}{suffix}").unlink(missing_ok=True)
     db_file.unlink(missing_ok=True)
     shutil.copy2(backup, db_file)
+
+
+def _migrated_tag_id(label: str) -> str:
+    digest = hashlib.sha256(label.casefold().encode("utf-8")).hexdigest()[:16].upper()
+    return f"TAG-{digest}"
+
+
+def _migrate_controlled_tags(connection: sqlite3.Connection) -> None:
+    """Seed deterministic tags and preserve legacy operator-entered labels."""
+    timestamp = now()
+    connection.execute(
+        """INSERT OR IGNORE INTO tag_definitions(
+               tag_id,canonical_label,category,active,ai_eligible,shopify_visible,
+               deterministic_only,sort_order,created_at,updated_at,evidence_json
+           ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            "TAG-TOONIE-TAPES",
+            "Toonie Tapes",
+            "Pricing",
+            1,
+            0,
+            1,
+            1,
+            10,
+            timestamp,
+            timestamp,
+            json.dumps(
+                {
+                    "source": "V010_MIGRATION",
+                    "rule": "Owner/pricing logic only; never creative AI classification",
+                },
+                sort_keys=True,
+            ),
+        ),
+    )
+    for row in connection.execute(
+        "SELECT item_id,tags FROM items WHERE trim(tags)<>'' ORDER BY item_id"
+    ).fetchall():
+        item_id = str(row[0])
+        labels = list(
+            dict.fromkeys(
+                label.strip()
+                for label in str(row[1]).split(",")
+                if label.strip()
+            )
+        )
+        for label in labels:
+            existing = connection.execute(
+                "SELECT tag_id FROM tag_definitions WHERE canonical_label=? COLLATE NOCASE",
+                (label,),
+            ).fetchone()
+            tag_id = str(existing[0]) if existing else _migrated_tag_id(label)
+            if existing is None:
+                connection.execute(
+                    """INSERT OR IGNORE INTO tag_definitions(
+                           tag_id,canonical_label,category,active,ai_eligible,
+                           shopify_visible,deterministic_only,sort_order,created_at,
+                           updated_at,evidence_json
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        tag_id,
+                        label,
+                        "Migrated",
+                        1,
+                        0,
+                        1,
+                        0,
+                        1000,
+                        timestamp,
+                        timestamp,
+                        json.dumps(
+                            {
+                                "source": "LEGACY_OPERATOR_VALUE",
+                                "legacy_item_id": item_id,
+                            },
+                            sort_keys=True,
+                        ),
+                    ),
+                )
+            connection.execute(
+                """INSERT OR IGNORE INTO item_tags(
+                       item_id,tag_id,source,assigned_at,acceptance_state
+                   ) VALUES(?,?,?,?,?)""",
+                (item_id, tag_id, "LEGACY_MIGRATION", timestamp, "ACCEPTED"),
+            )
 
 
 def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
@@ -1010,6 +1165,7 @@ def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
             connection.execute("DROP TABLE IF EXISTS recognition_job_items")
             _rebuild_recognition_jobs_if_needed(connection)
             _base_schema(connection)
+            _migrate_controlled_tags(connection)
             _upgrade_legacy(connection)
             timestamp = now()
             connection.execute(
@@ -1054,7 +1210,11 @@ def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
             connection.execute(
                 "INSERT OR REPLACE INTO schema_migrations(version, applied_at, description) "
                 "VALUES(?, ?, ?)",
-                (SCHEMA_VERSION, timestamp, "SnapIMS v0.7.0 keyboard and local Movie catalog schema"),
+                (
+                    SCHEMA_VERSION,
+                    timestamp,
+                    "SnapIMS v0.10.0 controlled tag taxonomy and item relationships",
+                ),
             )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         with connect(db_file) as connection:
@@ -1143,6 +1303,7 @@ def _item_select_sql(where: str) -> str:
                r.source_kind AS suggestion_source_kind,
                r.model_name AS suggestion_model_name,
                r.uncertainty_reasons_json,
+               r.suggested_tag_ids_json,
                r.pricing_source,
                r.input_tokens,
                r.output_tokens,
@@ -1173,6 +1334,11 @@ def _decode_item_row(row: sqlite3.Row) -> dict[str, Any]:
         result["barcode_candidates"] = json.loads(raw_barcodes) if raw_barcodes else []
     except (TypeError, json.JSONDecodeError):
         result["barcode_candidates"] = []
+    raw_tag_ids = result.get("suggested_tag_ids_json")
+    try:
+        result["suggested_tag_ids"] = json.loads(raw_tag_ids) if raw_tag_ids else []
+    except (TypeError, json.JSONDecodeError):
+        result["suggested_tag_ids"] = []
     result["display_confidence"] = (
         result.get("recognition_confidence")
         if result.get("review_status") == "DONE" and result.get("recognition_confidence") is not None
@@ -1187,6 +1353,70 @@ def _decode_item_row(row: sqlite3.Row) -> dict[str, Any]:
     else:
         result["value_state"] = "MANUAL"
     return result
+
+
+def list_tag_definitions(
+    db_file: Path, *, active_only: bool = False
+) -> list[dict[str, Any]]:
+    initialize(db_file)
+    where = "WHERE active=1" if active_only else ""
+    with connect(db_file) as connection:
+        rows = connection.execute(
+            f"""SELECT * FROM tag_definitions {where}
+                ORDER BY sort_order,canonical_label COLLATE NOCASE"""
+        ).fetchall()
+        aliases = connection.execute(
+            "SELECT alias,tag_id FROM tag_aliases ORDER BY alias COLLATE NOCASE"
+        ).fetchall()
+    by_id = {str(row["tag_id"]): dict(row) for row in rows}
+    for definition in by_id.values():
+        definition["aliases"] = []
+    for alias in aliases:
+        alias_definition = by_id.get(str(alias["tag_id"]))
+        if alias_definition is not None:
+            alias_definition["aliases"].append(str(alias["alias"]))
+    return list(by_id.values())
+
+
+def _attach_item_tags(
+    db_file: Path, items: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    if not items:
+        return items
+    identifiers = [str(item["item_id"]) for item in items]
+    placeholders = ",".join("?" for _ in identifiers)
+    with connect(db_file) as connection:
+        rows = connection.execute(
+            f"""SELECT it.*,td.canonical_label,td.category,td.active,
+                       td.ai_eligible,td.shopify_visible,td.deterministic_only,
+                       td.sort_order
+                FROM item_tags it
+                JOIN tag_definitions td ON td.tag_id=it.tag_id
+                WHERE it.item_id IN ({placeholders})
+                ORDER BY td.sort_order,td.canonical_label COLLATE NOCASE""",
+            identifiers,
+        ).fetchall()
+    by_item: dict[str, list[dict[str, Any]]] = {
+        identifier: [] for identifier in identifiers
+    }
+    for row in rows:
+        by_item[str(row["item_id"])].append(dict(row))
+    for item in items:
+        records = by_item[str(item["item_id"])]
+        accepted = [
+            record for record in records
+            if record["acceptance_state"] == "ACCEPTED"
+        ]
+        item["tag_records"] = records
+        item["suggested_tag_records"] = [
+            record for record in records
+            if record["acceptance_state"] == "SUGGESTED"
+        ]
+        item["tag_ids"] = [record["tag_id"] for record in accepted]
+        item["tags"] = ", ".join(
+            str(record["canonical_label"]) for record in accepted
+        )
+    return items
 
 
 def list_items(db_file: Path, *, batch_id: str | None = None, queue: str = "ALL") -> list[dict[str, Any]]:
@@ -1210,7 +1440,7 @@ def list_items(db_file: Path, *, batch_id: str | None = None, queue: str = "ALL"
     query = _item_select_sql(where) + " ORDER BY i.sequence"
     with connect(db_file) as connection:
         rows = connection.execute(query, values).fetchall()
-    return [_decode_item_row(row) for row in rows]
+    return _attach_item_tags(db_file, [_decode_item_row(row) for row in rows])
 
 
 def get_item(db_file: Path, item_id: str) -> dict[str, Any] | None:
@@ -1220,7 +1450,9 @@ def get_item(db_file: Path, item_id: str) -> dict[str, Any] | None:
             _item_select_sql("WHERE i.item_id=?"),
             (item_id,),
         ).fetchone()
-    return _decode_item_row(row) if row else None
+    if row is None:
+        return None
+    return _attach_item_tags(db_file, [_decode_item_row(row)])[0]
 
 
 def get_item_photos(db_file: Path, item_id: str) -> list[dict[str, Any]]:
@@ -1232,12 +1464,122 @@ def get_item_photos(db_file: Path, item_id: str) -> list[dict[str, Any]]:
 
 EDITABLE_FIELDS = {
     "shelf", "title", "release_year", "edition", "distributor", "price_cents",
-    "discount_percent", "description", "vendor", "product_type", "tags", "barcode",
+    "discount_percent", "description", "vendor", "product_type", "barcode",
     "condition", "condition_notes", "pool_mode", "quantity", "ready", "review",
     "review_status", "postponed_at", "recognition_provider", "recognition_confidence",
     "recognition_status", "recognition_error", "validation_status", "validation_errors",
     "review_source", "working_source",
 }
+
+
+def _resolved_tags_in_connection(
+    connection: sqlite3.Connection,
+    item_id: str,
+    *,
+    tag_ids: list[str] | None = None,
+    labels: str | None = None,
+    source: str,
+) -> list[sqlite3.Row]:
+    requested: list[str] = []
+    if tag_ids is not None:
+        requested = list(dict.fromkeys(str(value).strip() for value in tag_ids if str(value).strip()))
+    elif labels is not None:
+        requested = list(
+            dict.fromkeys(
+                value.strip() for value in labels.split(",") if value.strip()
+            )
+        )
+    resolved: list[sqlite3.Row] = []
+    existing_ids = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT tag_id FROM item_tags WHERE item_id=?", (item_id,)
+        )
+    }
+    for value in requested:
+        if tag_ids is not None:
+            row = connection.execute(
+                "SELECT * FROM tag_definitions WHERE tag_id=?", (value,)
+            ).fetchone()
+        else:
+            row = connection.execute(
+                """SELECT td.* FROM tag_definitions td
+                   LEFT JOIN tag_aliases ta ON ta.tag_id=td.tag_id
+                   WHERE td.canonical_label=? COLLATE NOCASE
+                      OR ta.alias=? COLLATE NOCASE
+                   ORDER BY td.sort_order LIMIT 1""",
+                (value, value),
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"Unknown controlled tag: {value}")
+        tag_id = str(row["tag_id"])
+        if not int(row["active"]) and tag_id not in existing_ids:
+            raise ValueError(f"Retired tag cannot be newly selected: {row['canonical_label']}")
+        if source.startswith("AI_") and (
+            not int(row["ai_eligible"]) or int(row["deterministic_only"])
+        ):
+            raise ValueError(f"Tag is not eligible for AI suggestion: {row['canonical_label']}")
+        if tag_id not in {str(record["tag_id"]) for record in resolved}:
+            resolved.append(row)
+    return resolved
+
+
+def record_ai_tag_suggestions_in_connection(
+    connection: sqlite3.Connection,
+    item_id: str,
+    tag_ids: list[str],
+    *,
+    recognition_result_id: int,
+) -> tuple[list[str], list[str]]:
+    accepted: list[str] = []
+    rejected: list[str] = []
+    timestamp = now()
+    for raw_value in dict.fromkeys(str(value).strip() for value in tag_ids if str(value).strip()):
+        row = connection.execute(
+            "SELECT * FROM tag_definitions WHERE tag_id=?", (raw_value,)
+        ).fetchone()
+        reason = ""
+        if row is None:
+            reason = "UNKNOWN_TAG_ID"
+        elif not int(row["active"]):
+            reason = "RETIRED_TAG"
+        elif not int(row["ai_eligible"]):
+            reason = "AI_INELIGIBLE"
+        elif int(row["deterministic_only"]):
+            reason = "DETERMINISTIC_ONLY"
+        if reason:
+            connection.execute(
+                """INSERT INTO tag_rejections(
+                       item_id,raw_value,source,recognition_result_id,reason,occurred_at
+                   ) VALUES(?,?,?,?,?,?)""",
+                (
+                    item_id,
+                    raw_value,
+                    "AI_RECOGNITION",
+                    recognition_result_id,
+                    reason,
+                    timestamp,
+                ),
+            )
+            rejected.append(raw_value)
+            continue
+        connection.execute(
+            """INSERT INTO item_tags(
+                   item_id,tag_id,source,assigned_at,recognition_result_id,
+                   acceptance_state
+               ) VALUES(?,?,?,?,?,'SUGGESTED')
+               ON CONFLICT(item_id,tag_id) DO UPDATE SET
+                   source=CASE WHEN item_tags.acceptance_state='ACCEPTED'
+                               THEN item_tags.source ELSE excluded.source END,
+                   assigned_at=CASE WHEN item_tags.acceptance_state='ACCEPTED'
+                                    THEN item_tags.assigned_at ELSE excluded.assigned_at END,
+                   recognition_result_id=excluded.recognition_result_id,
+                   acceptance_state=CASE WHEN item_tags.acceptance_state='ACCEPTED'
+                                         THEN 'ACCEPTED' ELSE 'SUGGESTED' END""",
+            (item_id, raw_value, "AI_RECOGNITION", timestamp, recognition_result_id),
+        )
+        accepted.append(raw_value)
+    return accepted, rejected
 
 
 def update_item_in_connection(
@@ -1250,11 +1592,28 @@ def update_item_in_connection(
     expected_revision: int | None = None,
 ) -> dict[str, Any]:
     updates = {key: value for key, value in values.items() if key in EDITABLE_FIELDS}
+    submitted_tag_ids = values.get("tag_ids")
+    submitted_labels = values.get("tags")
+    tag_source = str(values.get("_tag_source") or source)
+    resolved_tags: list[sqlite3.Row] | None = None
     previous = connection.execute("SELECT * FROM items WHERE item_id=?", (item_id,)).fetchone()
     if previous is None:
         raise KeyError(f"Unknown Item ID: {item_id}")
     if expected_revision is not None and int(previous["record_revision"]) != expected_revision:
         raise RuntimeError("This item changed in another session. Reload before saving.")
+    if submitted_tag_ids is not None or submitted_labels is not None:
+        if submitted_tag_ids is not None and not isinstance(submitted_tag_ids, list):
+            raise ValueError("tag_ids must be a list")
+        resolved_tags = _resolved_tags_in_connection(
+            connection,
+            item_id,
+            tag_ids=submitted_tag_ids,
+            labels=str(submitted_labels) if submitted_labels is not None else None,
+            source=tag_source,
+        )
+        updates["tags"] = ", ".join(
+            str(record["canonical_label"]) for record in resolved_tags
+        )
     if not updates:
         return dict(previous)
     if "shelf" in updates and updates["shelf"] != previous["shelf"] and not reason.strip():
@@ -1268,6 +1627,15 @@ def update_item_in_connection(
     )
     if cursor.rowcount != 1:
         raise KeyError(f"Unknown Item ID: {item_id}")
+    if resolved_tags is not None:
+        connection.execute("DELETE FROM item_tags WHERE item_id=?", (item_id,))
+        for record in resolved_tags:
+            connection.execute(
+                """INSERT INTO item_tags(
+                       item_id,tag_id,source,assigned_at,acceptance_state
+                   ) VALUES(?,?,?,?,?)""",
+                (item_id, record["tag_id"], tag_source, timestamp, "ACCEPTED"),
+            )
     new_revision = int(previous["record_revision"]) + 1
     for field_name, new_value in updates.items():
         if field_name == "updated_at":

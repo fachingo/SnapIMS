@@ -68,16 +68,25 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) -> 
     if item is None:
         raise KeyError(f"Unknown Item ID: {item_id}")
     images = recognition_images(db_file, item_id)
+    item["approved_ai_tags"] = [
+        {
+            "tag_id": definition["tag_id"],
+            "label": definition["canonical_label"],
+            "category": definition["category"],
+        }
+        for definition in db.list_tag_definitions(db_file, active_only=True)
+        if definition["ai_eligible"] and not definition["deterministic_only"]
+    ]
     result = recognizer.recognize(item, images)
     with db.transaction(db_file) as connection:
         cursor = connection.execute(
             """INSERT INTO recognition_results(
                    item_id,provider,source_kind,model_name,created_at,suggested_title,edition,
-                   distributor,release_year,barcode_candidates_json,suggested_price_cents,
+                   distributor,release_year,barcode_candidates_json,suggested_tag_ids_json,suggested_price_cents,
                    suggested_discount_percent,confidence,uncertainty_reasons_json,
                    raw_response_reference,pricing_source,input_tokens,output_tokens,
                    input_image_count,input_image_bytes,requires_review
-               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 item_id,
                 result.provider_name,
@@ -89,6 +98,7 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) -> 
                 result.distributor,
                 result.year,
                 json.dumps(result.barcode_candidates),
+                json.dumps(result.suggested_tag_ids),
                 result.suggested_price_cents,
                 result.suggested_discount_percent,
                 result.confidence,
@@ -106,9 +116,15 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) -> 
             "UPDATE items SET recognition_status='COMPLETE',recognition_error='',updated_at=? WHERE item_id=?",
             (db.now(), item_id),
         )
-    if cursor.lastrowid is None:
-        raise RuntimeError("SQLite did not return a recognition result ID")
-    recognition_result_id = cursor.lastrowid
+        if cursor.lastrowid is None:
+            raise RuntimeError("SQLite did not return a recognition result ID")
+        recognition_result_id = cursor.lastrowid
+        db.record_ai_tag_suggestions_in_connection(
+            connection,
+            item_id,
+            list(result.suggested_tag_ids),
+            recognition_result_id=recognition_result_id,
+        )
     # Catalog work is additive. A catalog failure must never erase or roll back
     # the committed visual recognition result. Unique local matches are linked
     # immediately; network misses continue in the restart-safe catalog worker.
@@ -407,11 +423,12 @@ def _accept_values(
     discount_percent: float,
     review_source: str,
     title_override: str | None = None,
+    tag_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     candidates = json.loads(suggestion["barcode_candidates_json"]) if suggestion else []
     provider = suggestion["provider"] if suggestion else item.get("recognition_provider", "")
     confidence = suggestion["confidence"] if suggestion else item.get("recognition_confidence")
-    return {
+    values: dict[str, Any] = {
         "title": str(title_override or item.get("title") or (suggestion["suggested_title"] if suggestion else "")).strip(),
         "release_year": item.get("release_year") or (suggestion["release_year"] if suggestion else None),
         "edition": item.get("edition") or (suggestion["edition"] if suggestion else ""),
@@ -433,6 +450,10 @@ def _accept_values(
         "review_source": review_source,
         "working_source": review_source,
     }
+    if tag_ids is not None:
+        values["tag_ids"] = tag_ids
+        values["_tag_source"] = "OPERATOR_REVIEW"
+    return values
 
 
 def accept_item_in_connection(
@@ -445,6 +466,7 @@ def accept_item_in_connection(
     discount_percent: float,
     review_source: str,
     title_override: str | None = None,
+    tag_ids: list[str] | None = None,
 ) -> None:
     values = _accept_values(
         item,
@@ -453,6 +475,7 @@ def accept_item_in_connection(
         discount_percent=discount_percent,
         review_source=review_source,
         title_override=title_override,
+        tag_ids=tag_ids,
     )
     db.update_item_in_connection(
         connection,
@@ -488,6 +511,7 @@ def accept_item(
     discount_percent: float,
     review_source: str = "AI_ACCEPTED",
     title_override: str | None = None,
+    tag_ids: list[str] | None = None,
 ) -> list[str]:
     item = db.get_item(db_file, item_id)
     if item is None:
@@ -500,6 +524,7 @@ def accept_item(
         discount_percent=discount_percent,
         review_source=review_source,
         title_override=title_override,
+        tag_ids=tag_ids,
     )
     candidate = {**item, **values}
     errors = validate_items_for_candidate(db_file, candidate)
@@ -519,6 +544,7 @@ def accept_item(
             discount_percent=discount_percent,
             review_source=review_source,
             title_override=title_override,
+            tag_ids=tag_ids,
         )
     return []
 

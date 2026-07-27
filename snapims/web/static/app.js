@@ -90,10 +90,9 @@
   qs("[data-command-open]")?.addEventListener("click", openPalette);
   qs("[data-command-close]")?.addEventListener("click", () => palette?.close());
   document.addEventListener("keydown", (event) => {
-    const paletteShortcut = (event.ctrlKey || event.metaKey) && event.shiftKey &&
-      (event.code === "KeyP" || event.key.toLowerCase() === "p");
-    const fallbackShortcut = (event.ctrlKey || event.metaKey) && !event.shiftKey && event.code === "KeyK";
-    if ((paletteShortcut || fallbackShortcut) && !event.repeat) {
+    const paletteShortcut = event.altKey && !event.ctrlKey && !event.metaKey &&
+      !event.shiftKey && (event.code === "KeyP" || event.key.toLowerCase() === "p");
+    if (paletteShortcut && !event.repeat && !event.isComposing) {
       event.preventDefault();
       event.stopPropagation();
       openPalette();
@@ -131,6 +130,131 @@
       if (action === "bulk-price") qs('[data-bulk="set_price"]')?.click();
       if (action === "approve-selected") qs('[data-bulk="approve"]')?.click();
     });
+  });
+  qsa("[data-auto-submit]").forEach((control) => {
+    control.addEventListener("change", () => control.form?.requestSubmit());
+  });
+
+  // Controlled tag picker. Only server-provided immutable Tag IDs are selectable.
+  let tagDefinitions = [];
+  try {
+    tagDefinitions = JSON.parse(qs("#tag-definitions-json")?.textContent || "[]");
+  } catch (_) {}
+  const tagById = new Map(tagDefinitions.map((tag) => [tag.tag_id, tag]));
+  qsa("[data-tag-picker]").forEach((picker) => {
+    const pills = qs("[data-tag-pills]", picker);
+    const input = qs("[data-tag-input]", picker);
+    const suggestions = qs("[data-tag-suggestions]", picker);
+    const hidden = qs("[data-tag-value]", picker);
+    let selected = String(picker.dataset.selected || "").split(",").filter(Boolean);
+    let matches = [];
+    let activeIndex = 0;
+
+    const sync = (notify = false) => {
+      picker.dataset.selected = selected.join(",");
+      picker.tagIds = [...selected];
+      if (hidden) hidden.value = selected.join(",");
+      pills.replaceChildren();
+      selected.forEach((tagId) => {
+        const definition = tagById.get(tagId);
+        if (!definition) return;
+        const pill = document.createElement("span");
+        pill.className = `tag-pill${definition.active ? "" : " retired"}`;
+        pill.textContent = definition.canonical_label;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "×";
+        remove.setAttribute("aria-label", `Remove ${definition.canonical_label}`);
+        remove.addEventListener("click", () => {
+          selected = selected.filter((value) => value !== tagId);
+          sync(true);
+          input.focus();
+        });
+        pill.append(remove);
+        pills.append(pill);
+      });
+      if (notify) picker.dispatchEvent(new CustomEvent("tagschange", {detail: {tagIds: [...selected]}}));
+    };
+    const closeSuggestions = () => {
+      suggestions.hidden = true;
+      suggestions.replaceChildren();
+      matches = [];
+      activeIndex = 0;
+    };
+    const showSuggestions = () => {
+      const query = input.value.trim().toLowerCase();
+      matches = tagDefinitions.filter((tag) => tag.active && !selected.includes(tag.tag_id) &&
+        (!query || [tag.canonical_label, ...(tag.aliases || [])].some((value) => String(value).toLowerCase().includes(query))));
+      suggestions.replaceChildren();
+      matches.forEach((tag, index) => {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.setAttribute("role", "option");
+        option.classList.toggle("active", index === activeIndex);
+        const label = document.createElement("span");
+        label.textContent = tag.canonical_label;
+        const detail = document.createElement("small");
+        detail.textContent = `${tag.category || "General"} · ${tag.tag_id}`;
+        option.append(label, detail);
+        option.addEventListener("mousedown", (event) => event.preventDefault());
+        option.addEventListener("click", () => {
+          selected.push(tag.tag_id);
+          input.value = "";
+          sync(true);
+          showSuggestions();
+          input.focus();
+        });
+        suggestions.append(option);
+      });
+      suggestions.hidden = matches.length === 0;
+    };
+    input.addEventListener("focus", showSuggestions);
+    input.addEventListener("input", () => { activeIndex = 0; showSuggestions(); });
+    input.addEventListener("blur", () => setTimeout(closeSuggestions, 100));
+    input.addEventListener("keydown", (event) => {
+      if (event.isComposing) return;
+      if (event.key === "Escape" && !suggestions.hidden) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeSuggestions();
+        return;
+      }
+      if (event.key === "ArrowDown" && matches.length) {
+        event.preventDefault();
+        event.stopPropagation();
+        activeIndex = Math.min(matches.length - 1, activeIndex + 1);
+        showSuggestions();
+        return;
+      }
+      if (event.key === "ArrowUp" && matches.length) {
+        event.preventDefault();
+        event.stopPropagation();
+        activeIndex = Math.max(0, activeIndex - 1);
+        showSuggestions();
+        return;
+      }
+      if ((event.key === "Enter" || event.key === ",") && matches.length) {
+        event.preventDefault();
+        event.stopPropagation();
+        selected.push(matches[activeIndex].tag_id);
+        input.value = "";
+        sync(true);
+        showSuggestions();
+        return;
+      }
+      if (event.key === "Backspace" && !input.value && selected.length) {
+        event.preventDefault();
+        selected.pop();
+        sync(true);
+        showSuggestions();
+      }
+    });
+    picker.setTagIds = (tagIds) => {
+      selected = [...tagIds].filter((tagId) => tagById.has(tagId));
+      sync(false);
+    };
+    picker.focusTagInput = () => input.focus();
+    sync(false);
   });
 
   // CSV diff controls.
@@ -181,9 +305,11 @@
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 
-  const currentInputValue = (input) => input.type === "checkbox" ? input.checked : input.value;
+  const currentInputValue = (input) => input.matches?.("[data-tag-picker]") ?
+    [...(input.tagIds || [])] : input.type === "checkbox" ? input.checked : input.value;
   const setInputValue = (input, value) => {
-    if (input.type === "checkbox") input.checked = Boolean(value);
+    if (input.matches?.("[data-tag-picker]")) input.setTagIds?.(Array.isArray(value) ? value : []);
+    else if (input.type === "checkbox") input.checked = Boolean(value);
     else if (input.dataset.field === "price_cents" && typeof value === "number") input.value = (value / 100).toFixed(2);
     else input.value = value ?? "";
   };
@@ -308,6 +434,14 @@
       return false;
     }
   };
+  qsa("[data-editor-tags]", grid).forEach((picker) => {
+    qs("[data-tag-input]", picker)?.addEventListener("focus", () => {
+      activeInput = picker;
+      selectionAnchor = selectionAnchor || picker.closest("tr");
+      persistView();
+    });
+    picker.addEventListener("tagschange", () => sendEdit(picker));
+  });
 
   const inputFor = (itemId, field) => qs(`tr[data-item-id="${CSS.escape(itemId)}"] [data-field="${CSS.escape(field)}"]`, grid);
   const applyHistory = async (entry, reverse) => {
@@ -324,8 +458,11 @@
   const focusSameField = (row, field) => {
     const target = qs(`[data-field="${CSS.escape(field)}"]`, row);
     if (!target || target.disabled || target.hidden) return false;
-    target.focus();
-    target.select?.();
+    if (target.matches?.("[data-tag-picker]")) target.focusTagInput?.();
+    else {
+      target.focus();
+      target.select?.();
+    }
     return true;
   };
   const moveVertical = (input, direction) => {
@@ -508,10 +645,10 @@
     actionButtons().forEach((button, index) => {
       button.dataset.actionKey = actionKey(button);
       button.draggable = true;
-      const label = button.dataset.baseLabel || button.textContent.replace(/\s*Ctrl\+\d$/, "").trim();
+      const label = button.dataset.baseLabel || button.textContent.replace(/\s*Alt\+\d$/, "").trim();
       button.dataset.baseLabel = label;
-      button.textContent = index < 9 ? `${label}  Ctrl+${index + 1}` : label;
-      button.title = index < 9 ? `${label} — Ctrl+${index + 1}. Alt+Left/Right reorders.` : `${label} — Alt+Left/Right reorders.`;
+      button.textContent = index < 9 ? `${label}  Alt+${index + 1}` : label;
+      button.title = index < 9 ? `${label} — Alt+${index + 1}. Alt+Left/Right reorders.` : `${label} — Alt+Left/Right reorders.`;
     });
     localStorage.setItem(quickOrderKey, JSON.stringify(actionButtons().map(actionKey)));
   };
@@ -562,6 +699,8 @@
       qs("#bulk-summary").textContent = `${count} selected items will be affected. A rollback checkpoint will be created first.`;
       qs("#bulk-description").textContent = bulkDescriptions[bulkAction] || "Applies this action to the selected visible rows after preview and confirmation.";
       qs("#bulk-value").value = bulkAction === "round_price" ? "0.50" : "";
+      qs("#bulk-value").setAttribute("list", bulkAction === "append_tags" ? "controlled-tag-values" : "");
+      qs("#bulk-value").placeholder = bulkAction === "append_tags" ? "Approved Tag ID" : "";
       bulkDialog.showModal();
       if (needsValue) qs("#bulk-value").focus();
     });
@@ -667,7 +806,8 @@
   document.addEventListener("keydown", async (event) => {
     const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
     const modifier = event.ctrlKey || event.metaKey;
-    if (modifier && !event.shiftKey && !event.altKey && /^Digit[1-9]$/.test(event.code) && !typing) {
+    if (event.altKey && !modifier && !event.shiftKey && /^Digit[1-9]$/.test(event.code) &&
+        !typing && !event.isComposing && !qs("dialog[open]")) {
       const index = Number(event.code.slice(-1)) - 1;
       const button = actionButtons()[index];
       if (button && !button.disabled) { event.preventDefault(); button.click(); }

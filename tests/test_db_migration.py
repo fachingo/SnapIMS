@@ -117,13 +117,29 @@ def test_legacy_v03_upgrade_retains_identity_and_history(tmp_path: Path) -> None
         assert history == "Suggested Legacy"
         assert connection.execute("SELECT COUNT(*) FROM shopify_sync").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM recognition_jobs").fetchone()[0] == 1
+        legacy_tag = connection.execute(
+            "SELECT * FROM tag_definitions WHERE canonical_label='legacy'"
+        ).fetchone()
+        assert legacy_tag is not None
+        assert legacy_tag["ai_eligible"] == 0
+        relation = connection.execute(
+            "SELECT * FROM item_tags WHERE item_id='LEGACY-A1-001'"
+        ).fetchone()
+        assert relation is not None
+        assert relation["tag_id"] == legacy_tag["tag_id"]
+        assert relation["acceptance_state"] == "ACCEPTED"
+        toonie = connection.execute(
+            "SELECT * FROM tag_definitions WHERE tag_id='TAG-TOONIE-TAPES'"
+        ).fetchone()
+        assert toonie["deterministic_only"] == 1
+        assert toonie["ai_eligible"] == 0
 
 
 def test_pre_migration_backup_created(tmp_path: Path) -> None:
     paths = DataPaths.from_root(tmp_path / "workspace").ensure()
     legacy_v03_database(paths.db_file)
     db.initialize(paths.db_file, paths=paths)
-    backups = list(paths.backups.glob("*before-schema-v8*.sqlite3"))
+    backups = list(paths.backups.glob(f"*before-schema-v{db.SCHEMA_VERSION}*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
@@ -181,6 +197,93 @@ def test_transaction_rolls_back(tmp_path: Path) -> None:
             raise RuntimeError("rollback")
     with db.connect(db_file) as connection:
         assert connection.execute("SELECT COUNT(*) FROM settings").fetchone()[0] == 0
+
+
+def test_controlled_tags_reject_unknown_and_new_retired_selection(
+    tmp_path: Path,
+) -> None:
+    paths = DataPaths.from_root(tmp_path / "workspace").ensure()
+    legacy_v03_database(paths.db_file)
+    db.initialize(paths.db_file, paths=paths)
+    item = db.get_item(paths.db_file, "LEGACY-A1-001")
+    assert item is not None
+    legacy_id = item["tag_ids"][0]
+
+    with pytest.raises(ValueError, match="Unknown controlled tag"):
+        db.update_item(
+            paths.db_file,
+            item["item_id"],
+            {"tag_ids": ["TAG-NOT-APPROVED"]},
+            source="BATCH_EDITOR",
+        )
+    assert db.get_item(paths.db_file, item["item_id"])["tag_ids"] == [legacy_id]
+
+    with db.transaction(paths.db_file) as connection:
+        connection.execute(
+            "UPDATE tag_definitions SET active=0 WHERE tag_id=?", (legacy_id,)
+        )
+    db.update_item(
+        paths.db_file,
+        item["item_id"],
+        {"tag_ids": [legacy_id]},
+        source="BATCH_EDITOR",
+    )
+    db.update_item(
+        paths.db_file,
+        item["item_id"],
+        {"tag_ids": []},
+        source="BATCH_EDITOR",
+    )
+    with pytest.raises(ValueError, match="Retired tag"):
+        db.update_item(
+            paths.db_file,
+            item["item_id"],
+            {"tag_ids": [legacy_id]},
+            source="BATCH_EDITOR",
+        )
+
+
+def test_ai_tag_ids_are_allowlisted_and_rejections_are_evidence(
+    tmp_path: Path,
+) -> None:
+    paths = DataPaths.from_root(tmp_path / "workspace").ensure()
+    legacy_v03_database(paths.db_file)
+    db.initialize(paths.db_file, paths=paths)
+    with db.transaction(paths.db_file) as connection:
+        connection.execute(
+            """INSERT INTO tag_definitions(
+                   tag_id,canonical_label,category,active,ai_eligible,
+                   shopify_visible,deterministic_only,sort_order,created_at,
+                   updated_at,evidence_json
+               ) VALUES('TAG-HORROR','Horror','Genre',1,1,1,0,20,?,?,?)""",
+            (db.now(), db.now(), '{"source":"operator"}'),
+        )
+        recognition_id = int(
+            connection.execute(
+                "SELECT recognition_result_id FROM recognition_results LIMIT 1"
+            ).fetchone()[0]
+        )
+        accepted, rejected = db.record_ai_tag_suggestions_in_connection(
+            connection,
+            "LEGACY-A1-001",
+            ["TAG-HORROR", "TAG-TOONIE-TAPES", "TAG-UNKNOWN"],
+            recognition_result_id=recognition_id,
+        )
+    assert accepted == ["TAG-HORROR"]
+    assert rejected == ["TAG-TOONIE-TAPES", "TAG-UNKNOWN"]
+    with db.connect(paths.db_file) as connection:
+        suggestion = connection.execute(
+            "SELECT acceptance_state FROM item_tags WHERE item_id=? AND tag_id=?",
+            ("LEGACY-A1-001", "TAG-HORROR"),
+        ).fetchone()
+        reasons = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT reason FROM tag_rejections WHERE item_id='LEGACY-A1-001'"
+            )
+        }
+    assert suggestion["acceptance_state"] == "SUGGESTED"
+    assert reasons == {"AI_INELIGIBLE", "UNKNOWN_TAG_ID"}
 
 
 def test_current_schema_initialize_is_idempotent(tmp_path: Path) -> None:

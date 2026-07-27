@@ -24,6 +24,7 @@ SCHEMA: dict[str, Any] = {
         "distributor": {"type": "string"},
         "year": {"type": ["integer", "null"]},
         "barcode_candidates": {"type": "array", "items": {"type": "string"}},
+        "suggested_tag_ids": {"type": "array", "items": {"type": "string"}},
         "suggested_price_cents": {"type": ["integer", "null"]},
         "suggested_discount_percent": {"type": "number"},
         "confidence": {"type": "number"},
@@ -31,7 +32,7 @@ SCHEMA: dict[str, Any] = {
         "requires_review": {"type": "boolean"},
     },
     "required": [
-        "title", "edition", "distributor", "year", "barcode_candidates",
+        "title", "edition", "distributor", "year", "barcode_candidates", "suggested_tag_ids",
         "suggested_price_cents", "suggested_discount_percent", "confidence",
         "uncertainty_reasons", "requires_review",
     ],
@@ -110,7 +111,9 @@ class OpenAIRecognizer(BaseRecognizer):
             "text": (
                 "Identify this VHS tape from the cover photographs. Return only catalog metadata. "
                 "Suggest a CAD listing price in cents only as an AI estimate. You do not have live sold-market data. "
-                "Use 999 when uncertain and include the lack of live comparable sales in uncertainty_reasons."
+                "Use 999 when uncertain and include the lack of live comparable sales in uncertainty_reasons. "
+                "For suggested_tag_ids, return only IDs from this approved AI-eligible list: "
+                + json.dumps(item.get("approved_ai_tags") or [])
             ),
         }]
         for path in images[:MAX_IMAGES]:
@@ -132,6 +135,7 @@ class OpenAIRecognizer(BaseRecognizer):
             distributor=str(payload["distributor"]),
             year=payload["year"],
             barcode_candidates=tuple(payload["barcode_candidates"]),
+            suggested_tag_ids=tuple(payload["suggested_tag_ids"]),
             suggested_price_cents=payload["suggested_price_cents"] or 999,
             suggested_discount_percent=float(payload["suggested_discount_percent"]),
             confidence=float(payload["confidence"]),
