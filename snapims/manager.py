@@ -7,6 +7,8 @@ import socket
 import subprocess
 import sys
 import time
+import json
+import urllib.error
 from urllib.parse import urlparse
 import urllib.request
 from pathlib import Path
@@ -22,10 +24,29 @@ class ServiceManager:
     def _pid(self, name: str) -> Path:
         return self.config.pid_dir / f"{name}.pid"
 
+    def _process_matches(self, name: str, pid: int) -> bool:
+        try:
+            raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        except OSError:
+            return False
+        command = raw.replace(b"\0", b" ").decode("utf-8", errors="replace")
+        if name == "app":
+            return "uvicorn" in command and "snapims.web.app:app" in command
+        if name == "tunnel":
+            return (
+                Path(self.config.cloudflared_bin).name in command
+                and " tunnel " in f" {command} "
+                and str(self.config.tunnel_config) in command
+            )
+        return False
+
     def _read_pid(self, name: str) -> int | None:
         try:
             pid = int(self._pid(name).read_text().strip())
             os.kill(pid, 0)
+            if not self._process_matches(name, pid):
+                self._pid(name).unlink(missing_ok=True)
+                return None
             return pid
         except (OSError, ValueError):
             try:
@@ -147,11 +168,13 @@ class ServiceManager:
                 if response.status != 200:
                     return False
                 body = response.read(200_000).lower()
-                content_type = response.headers.get("content-type", "").lower()
                 return (
                     b"guacamole" in body
-                    or b"ng-app=\"index\"" in body
-                    or ("text/html" in content_type and "/guacamole" in self.config.guacamole_url)
+                    and (
+                        b"app.guacamole" in body
+                        or b"ng-app=\"index\"" in body
+                        or b"<title>guacamole" in body
+                    )
                 )
         except OSError:
             return False
@@ -276,14 +299,55 @@ class ServiceManager:
         self._pid(name).unlink(missing_ok=True)
         return True
 
-    def health(self) -> bool:
+    def tunnel_connector_problem(self) -> str:
+        pid = self._read_pid("tunnel")
+        if not pid:
+            return "SnapIMS-managed cloudflared process is not running"
         try:
-            with urllib.request.urlopen(
-                f"http://{self.config.host}:{self.config.port}/health", timeout=2
-            ) as response:
-                return response.status == 200
-        except OSError:
-            return False
+            payload = self.config.tunnel_log.read_bytes()[-250_000:].lower()
+        except OSError as exc:
+            return f"cannot read cloudflared log: {exc.strerror or type(exc).__name__}"
+        markers = (
+            b"registered tunnel connection",
+            b"connection registered",
+            b"initial protocol",
+        )
+        if not any(marker in payload for marker in markers):
+            return "cloudflared process is alive but no connector registration evidence was found"
+        return ""
+
+    def health_details(self) -> dict[str, object]:
+        url = f"http://{self.config.host}:{self.config.port}/health"
+        try:
+            with urllib.request.urlopen(url, timeout=2) as response:
+                payload = json.loads(response.read(200_000).decode("utf-8"))
+                return {
+                    "ok": response.status == 200 and payload.get("status") == "ok",
+                    "status_code": response.status,
+                    "payload": payload,
+                    "problem": "",
+                }
+        except urllib.error.HTTPError as exc:
+            try:
+                payload = json.loads(exc.read(200_000).decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                payload = {}
+            return {
+                "ok": False,
+                "status_code": exc.code,
+                "payload": payload,
+                "problem": f"health endpoint returned HTTP {exc.code}",
+            }
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            return {
+                "ok": False,
+                "status_code": 0,
+                "payload": {},
+                "problem": f"health endpoint unavailable: {type(exc).__name__}",
+            }
+
+    def health(self) -> bool:
+        return bool(self.health_details()["ok"])
 
     def wait_for_health(self, timeout: float = 15) -> bool:
         deadline = time.monotonic() + timeout
@@ -295,12 +359,25 @@ class ServiceManager:
 
     def status(self) -> dict[str, object]:
         guacamole = self.guacamole_status()
+        app_pid = self._read_pid("app")
+        tunnel_pid = self._read_pid("tunnel")
+        connector_problem = self.tunnel_connector_problem() if tunnel_pid else ""
         return {
-            "app": bool(self._read_pid("app")),
+            "app": bool(app_pid),
             "health": self.health(),
-            "tunnel": bool(self._read_pid("tunnel")),
+            "health_detail": self.health_details(),
+            "tunnel": bool(tunnel_pid) and not connector_problem,
+            "tunnel_process": bool(tunnel_pid),
+            "tunnel_connector_problem": connector_problem,
             "tunnel_problem": self.tunnel_problem(),
             "guacamole": guacamole,
+            "ownership": {
+                "app": "snapims",
+                "tunnel": "snapims",
+                "guacd": "systemd",
+                "tomcat": "systemd",
+                "xrdp": "external",
+            },
             "port": self.config.port,
             "version": __version__,
         }

@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from snapims import __version__
+from snapims import cli
 from snapims.auth import generate_secret, hash_password
 from snapims.config import SnapIMSConfig
 from snapims.manager import ServiceManager
@@ -34,6 +35,7 @@ def _isolated_env(data_dir: Path, *, auth: bool = False) -> dict[str, str]:
             "SNAPIMS_SKIP_DOTENV": "1",
             "OPENAI_API_KEY": "",
             "CLOUDFLARE_TUNNEL_CONFIG": str(data_dir / "missing-cloudflared.yml"),
+            "SNAPIMS_MANAGE_GUACAMOLE_SERVICES": "false",
         }
     )
     if not auth:
@@ -84,6 +86,27 @@ def test_fastapi_startup_and_health(data_paths, monkeypatch: pytest.MonkeyPatch)
     assert response.status_code == 200
     assert response.json()["version"] == __version__
     assert response.json()["status"] == "ok"
+    assert response.json()["components"]["inventory_database"]["state"] == "healthy"
+
+
+def test_health_returns_503_when_required_schema_is_degraded(
+    data_paths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SNAPIMS_AUTH_SECRET", "")
+    monkeypatch.setenv("SNAPIMS_ADMIN_PASSWORD_HASH", "")
+    with TestClient(app) as client:
+        monkeypatch.setattr(
+            "snapims.web.app.db.schema_manifest_report",
+            lambda _connection: {
+                "ok": False,
+                "problems": ["Missing table: items"],
+                "schema_version": 8,
+            },
+        )
+        response = client.get("/health")
+    assert response.status_code == 503
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["components"]["inventory_database"]["state"] == "degraded"
 
 
 def test_authentication_login_logout_flow(data_paths, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -278,6 +301,7 @@ def test_cli_core_commands_run(tmp_path: Path) -> None:
         ["version"],
         ["doctor"],
         ["status"],
+        ["update", "--check"],
         ["tunnel", "status"],
         ["auth", "generate-secret"],
     ]
@@ -291,6 +315,76 @@ def test_cli_core_commands_run(tmp_path: Path) -> None:
             check=False,
         )
         assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_doctor_returns_nonzero_when_required_checks_fail(tmp_path: Path) -> None:
+    env = _isolated_env(tmp_path / "data")
+    env["SNAPIMS_MANAGE_GUACAMOLE_SERVICES"] = "true"
+    env["SNAPIMS_GUACAMOLE_CONFIG_DIR"] = str(tmp_path / "missing-guacamole")
+    env["PATH"] = str(tmp_path / "empty-bin")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "snapims.cli",
+            "--data-dir",
+            str(tmp_path / "data"),
+            "doctor",
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "required checks failed" in result.stdout
+
+
+def test_update_requires_explicit_mode() -> None:
+    parser = cli.build_parser()
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["update"])
+    assert exc.value.code == 2
+    assert parser.parse_args(["update", "--check"]).check is True
+    assert parser.parse_args(["update", "--apply"]).apply is True
+
+
+def test_update_apply_refuses_dirty_tree_before_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SNAPIMS_PROJECT_PATH", str(ROOT))
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SNAPIMS_AUTH_SECRET", "")
+    monkeypatch.setenv("SNAPIMS_ADMIN_PASSWORD_HASH", "")
+    config = SnapIMSConfig.load()
+    report = {
+        "branch": "feature/test",
+        "detached": False,
+        "upstream": "origin/feature/test",
+        "dirty": True,
+        "dirty_count": 1,
+        "ahead": 0,
+        "behind": 1,
+        "incoming": ["abc123 incoming"],
+        "current_version": "0.9.0",
+        "target_version": "0.10.0",
+        "current_inventory_schema": 8,
+        "target_inventory_schema": 9,
+        "current_catalog_schema": 1,
+        "target_catalog_schema": 1,
+        "migration_need": True,
+        "backup_need": True,
+        "restart_impact": "test",
+    }
+    monkeypatch.setattr(cli, "update_report", lambda _config: report)
+    monkeypatch.setattr(
+        cli.db,
+        "backup_database",
+        lambda *_args, **_kwargs: pytest.fail("backup must not run"),
+    )
+    with pytest.raises(SystemExit, match="working tree is dirty"):
+        cli._apply_update(config, ServiceManager(config), allow_dirty=False)
 
 
 def test_auth_hash_password_cli_reads_stdin(tmp_path: Path) -> None:
@@ -392,6 +486,69 @@ def test_guacamole_health_accepts_lowercase_guacamole_page(
     monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: Response())
 
     assert ServiceManager(SnapIMSConfig.load()).guacamole_health() is True
+
+
+def test_guacamole_health_rejects_generic_html(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Response:
+        status = 200
+        headers = {"content-type": "text/html"}
+
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _limit: int) -> bytes:
+            return b"<html><title>Generic reverse proxy</title></html>"
+
+    monkeypatch.setenv("SNAPIMS_PROJECT_PATH", str(ROOT))
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SNAPIMS_AUTH_SECRET", "")
+    monkeypatch.setenv("SNAPIMS_ADMIN_PASSWORD_HASH", "")
+    monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: Response())
+
+    assert ServiceManager(SnapIMSConfig.load()).guacamole_health() is False
+
+
+def test_pid_file_cannot_target_unrelated_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SNAPIMS_PROJECT_PATH", str(ROOT))
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SNAPIMS_AUTH_SECRET", "")
+    monkeypatch.setenv("SNAPIMS_ADMIN_PASSWORD_HASH", "")
+    manager = ServiceManager(SnapIMSConfig.load())
+    manager._pid("app").write_text(str(os.getpid()), encoding="utf-8")
+
+    assert manager._read_pid("app") is None
+    assert not manager._pid("app").exists()
+
+
+def test_tunnel_process_without_connector_evidence_is_not_healthy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SNAPIMS_PROJECT_PATH", str(ROOT))
+    monkeypatch.setenv("SNAPIMS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SNAPIMS_AUTH_SECRET", "")
+    monkeypatch.setenv("SNAPIMS_ADMIN_PASSWORD_HASH", "")
+    manager = ServiceManager(SnapIMSConfig.load())
+    manager.config.tunnel_log.parent.mkdir(parents=True, exist_ok=True)
+    manager.config.tunnel_log.write_text("starting cloudflared\n", encoding="utf-8")
+    monkeypatch.setattr(manager, "_read_pid", lambda name: 123 if name == "tunnel" else None)
+    monkeypatch.setattr(manager, "guacamole_status", lambda: {})
+    monkeypatch.setattr(manager, "health_details", lambda: {"ok": True})
+    monkeypatch.setattr(manager, "health", lambda: True)
+
+    status = manager.status()
+
+    assert status["tunnel_process"] is True
+    assert status["tunnel"] is False
+    assert "no connector registration evidence" in str(
+        status["tunnel_connector_problem"]
+    )
 
 
 def test_guacamole_installer_scripts_are_present_and_valid() -> None:

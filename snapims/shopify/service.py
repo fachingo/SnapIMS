@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 import uuid
 from dataclasses import dataclass
@@ -167,16 +169,46 @@ class ShopifyService:
 
             if order.get(step, 0) < order["activate_inventory"]:
                 desired_quantity = int(item["quantity"])
+                idempotency_key = str(
+                    checkpoint.get("idempotency_key")
+                    or uuid.uuid5(
+                        uuid.NAMESPACE_URL, f"snapims:{item_id}:inventory-activate"
+                    )
+                )
+                request_payload = {
+                    "inventory_item_id": inventory_item_id,
+                    "location_id": self.config.location_id,
+                    "quantity": desired_quantity,
+                }
+                request_hash = hashlib.sha256(
+                    json.dumps(
+                        request_payload, separators=(",", ":"), sort_keys=True
+                    ).encode("utf-8")
+                ).hexdigest()
+                self._record_outbound_request(
+                    attempt,
+                    item_id,
+                    step="activate_inventory",
+                    idempotency_key=idempotency_key,
+                    request_hash=request_hash,
+                    request_payload=request_payload,
+                )
                 current_quantity = self.client.inventory_quantity(inventory_item_id)
                 if current_quantity != desired_quantity:
-                    self.client.activate_inventory(inventory_item_id, desired_quantity)
+                    self.client.activate_inventory(
+                        inventory_item_id, desired_quantity, idempotency_key
+                    )
                 step = "activate_inventory"
                 self._checkpoint(
                     item_id,
                     step,
-                    idempotency_key=str(
-                        uuid.uuid5(uuid.NAMESPACE_URL, f"snapims:{item_id}:inventory")
-                    ),
+                    idempotency_key=idempotency_key,
+                )
+                self._record_outbound_outcome(
+                    attempt,
+                    outcome="RECONCILED"
+                    if current_quantity == desired_quantity
+                    else "SUCCEEDED",
                 )
 
             if order.get(step, 0) < order["attach_media"]:
@@ -217,9 +249,17 @@ class ShopifyService:
                 "status": "UPLOADED_AS_DRAFT",
             }
             with db.transaction(self.db_file) as connection:
+                request_record = connection.execute(
+                    "SELECT response_json FROM upload_attempts WHERE attempt_id=?",
+                    (attempt,),
+                ).fetchone()
+                if request_record:
+                    outbound = json.loads(str(request_record[0] or "{}"))
+                    if outbound:
+                        result["outbound_operation"] = outbound
                 connection.execute(
                     "UPDATE upload_attempts SET finished_at=?,status='SUCCESS',step=?,response_json=? WHERE attempt_id=?",
-                    (db.now(), step, __import__("json").dumps(result), attempt),
+                    (db.now(), step, json.dumps(result), attempt),
                 )
                 connection.execute(
                     "UPDATE items SET upload_status='UPLOADED',shopify_product_id=?,shopify_variant_id=?,shopify_inventory_item_id=?,shopify_admin_url=?,last_error='',updated_at=? WHERE item_id=?",
@@ -245,6 +285,47 @@ class ShopifyService:
                     (str(exc), item_id),
                 )
             raise
+
+    def _record_outbound_request(
+        self,
+        attempt: int,
+        item_id: str,
+        *,
+        step: str,
+        idempotency_key: str,
+        request_hash: str,
+        request_payload: dict[str, Any],
+    ) -> None:
+        """Persist the logical request identity before the remote mutation."""
+        detail = {
+            "logical_attempt_id": f"{item_id}:{step}",
+            "idempotency_key": idempotency_key,
+            "request_hash": request_hash,
+            "request": request_payload,
+            "outcome": "REQUESTED",
+        }
+        with db.transaction(self.db_file) as connection:
+            connection.execute(
+                "UPDATE shopify_sync SET idempotency_key=? WHERE item_id=?",
+                (idempotency_key, item_id),
+            )
+            connection.execute(
+                "UPDATE upload_attempts SET step=?,response_json=? WHERE attempt_id=?",
+                (f"{step}_requested", json.dumps(detail, sort_keys=True), attempt),
+            )
+
+    def _record_outbound_outcome(self, attempt: int, *, outcome: str) -> None:
+        with db.transaction(self.db_file) as connection:
+            row = connection.execute(
+                "SELECT response_json FROM upload_attempts WHERE attempt_id=?",
+                (attempt,),
+            ).fetchone()
+            detail = json.loads(str(row[0] or "{}")) if row else {}
+            detail["outcome"] = outcome
+            connection.execute(
+                "UPDATE upload_attempts SET response_json=? WHERE attempt_id=?",
+                (json.dumps(detail, sort_keys=True), attempt),
+            )
 
     def _checkpoint(self, item_id: str, step: str, *, product_id: str = "", variant_id: str = "", inventory_item_id: str = "", idempotency_key: str = "") -> None:
         with db.transaction(self.db_file) as connection:

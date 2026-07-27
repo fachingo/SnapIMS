@@ -57,8 +57,11 @@ class FakeShopifyClient:
         self._call("inventory_quantity")
         return self.inventory
 
-    def activate_inventory(self, inventory_item_id: str, quantity: int) -> None:
+    def activate_inventory(
+        self, inventory_item_id: str, quantity: int, idempotency_key: str
+    ) -> None:
         self._call("activate_inventory")
+        self.last_idempotency_key = idempotency_key
         self.inventory = quantity
 
     def stage_images(self, image_paths: list[Path]) -> list[dict[str, Any]]:
@@ -139,6 +142,12 @@ def test_successful_upload_is_draft_and_checkpointed(tmp_path: Path, data_paths)
     assert fake.calls["create_draft_product"] == 1
     assert fake.calls["activate_inventory"] == 1
     assert fake.calls["attach_media"] == 1
+    with db.connect(data_paths.db_file) as connection:
+        activation = connection.execute(
+            "SELECT response_json FROM upload_attempts WHERE item_id=? ORDER BY attempt_id DESC LIMIT 1",
+            (item["item_id"],),
+        ).fetchone()
+    assert activation is not None
 
 
 @pytest.mark.parametrize(
@@ -204,6 +213,103 @@ def test_inventory_remote_reconciliation_avoids_double_activation(tmp_path: Path
     monkeypatch.setattr(service, "_checkpoint", original)
     service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)
     assert fake.calls["activate_inventory"] == 1
+
+
+def test_inventory_key_is_persisted_before_request_and_reused(
+    tmp_path: Path, data_paths
+) -> None:
+    class UncertainInventoryClient(FakeShopifyClient):
+        uncertain = True
+
+        def activate_inventory(
+            self, inventory_item_id: str, quantity: int, idempotency_key: str
+        ) -> None:
+            self.calls["activate_inventory"] += 1
+            self.last_idempotency_key = idempotency_key
+            self.inventory = quantity
+            if self.uncertain:
+                self.uncertain = False
+                raise TimeoutError("uncertain activation timeout")
+
+    fake = UncertainInventoryClient(media_sequence=[["READY", "READY"]])
+    service, fake, item = service_for(tmp_path, data_paths, client=fake)
+    with pytest.raises(TimeoutError, match="uncertain"):
+        service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)
+    with db.connect(data_paths.db_file) as connection:
+        sync = connection.execute(
+            "SELECT idempotency_key,last_completed_step FROM shopify_sync WHERE item_id=?",
+            (item["item_id"],),
+        ).fetchone()
+        attempt = connection.execute(
+            "SELECT response_json FROM upload_attempts WHERE item_id=? ORDER BY attempt_id DESC LIMIT 1",
+            (item["item_id"],),
+        ).fetchone()
+    assert sync is not None and sync["idempotency_key"]
+    persisted_key = str(sync["idempotency_key"])
+    assert sync["last_completed_step"] == "configure_variant"
+    assert attempt is not None
+    detail = __import__("json").loads(attempt["response_json"])
+    assert detail["idempotency_key"] == persisted_key
+    assert detail["request_hash"]
+
+    service.upload_draft(item["item_id"], confirmed=True, poll_interval=0)
+    assert fake.calls["activate_inventory"] == 1
+    assert fake.last_idempotency_key == persisted_key
+
+
+def test_inventory_activate_mutation_uses_required_idempotent_directive() -> None:
+    from snapims.shopify.client import ShopifyClient
+
+    class CaptureTransport:
+        query = ""
+        variables: dict[str, Any] = {}
+
+        def graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+            self.query = query
+            self.variables = variables
+            return {
+                "data": {
+                    "inventoryActivate": {
+                        "inventoryLevel": {"id": "gid://shopify/InventoryLevel/1"},
+                        "userErrors": [],
+                    }
+                }
+            }
+
+        def upload(self, url, parameters, file_path) -> None:
+            raise AssertionError("not used")
+
+    transport = CaptureTransport()
+    ShopifyClient(valid_config(), transport=transport).activate_inventory(
+        "gid://shopify/InventoryItem/1", 1, "stable-key"
+    )
+    assert "@idempotent(key:$idempotencyKey)" in transport.query
+    assert transport.variables["idempotencyKey"] == "stable-key"
+
+
+def test_exact_sku_query_rejects_ambiguous_multiple_matches() -> None:
+    from snapims.shopify.client import ShopifyAPIError, ShopifyClient
+
+    class AmbiguousTransport:
+        def graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "data": {
+                    "productVariants": {
+                        "nodes": [
+                            {"id": "gid://shopify/ProductVariant/1"},
+                            {"id": "gid://shopify/ProductVariant/2"},
+                        ]
+                    }
+                }
+            }
+
+        def upload(self, url, parameters, file_path) -> None:
+            raise AssertionError("not used")
+
+    with pytest.raises(ShopifyAPIError, match="multiple variants"):
+        ShopifyClient(valid_config(), transport=AmbiguousTransport()).find_variant_by_sku(
+            "VHS-1"
+        )
 
 
 def test_media_remote_reconciliation_avoids_duplicate_attach(tmp_path: Path, data_paths, monkeypatch: pytest.MonkeyPatch) -> None:

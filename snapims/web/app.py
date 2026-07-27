@@ -1775,12 +1775,47 @@ async def favicon() -> StreamingResponse:
 
 
 @app.get("/health")
-async def health() -> dict[str, Any]:
+async def health() -> JSONResponse:
     paths = get_paths()
-    with db.connect(paths.db_file) as connection:
-        manifest = db.schema_manifest_report(connection)
-    return {
-        "status": "ok" if manifest["ok"] else "degraded",
-        "version": __version__,
-        "schema": manifest,
+    database: dict[str, Any] = {
+        "state": "unavailable",
+        "required": True,
+        "integrity": "unavailable",
+        "foreign_key_violations": None,
+        "schema": {"ok": False, "problems": ["Database was not checked"]},
     }
+    try:
+        with db.connect(paths.db_file) as connection:
+            integrity = str(connection.execute("PRAGMA integrity_check").fetchone()[0])
+            foreign = len(connection.execute("PRAGMA foreign_key_check").fetchall())
+            manifest = db.schema_manifest_report(connection)
+        database = {
+            "state": "healthy"
+            if integrity == "ok" and foreign == 0 and manifest["ok"]
+            else "degraded",
+            "required": True,
+            "integrity": integrity,
+            "foreign_key_violations": foreign,
+            "schema": manifest,
+        }
+    except Exception as exc:
+        database["error_class"] = type(exc).__name__
+        database["safe_summary"] = "Inventory database health check failed"
+    catalog_state = "degraded" if getattr(app.state, "catalog_error", "") else "healthy"
+    required_ok = database["state"] == "healthy"
+    payload = {
+        "status": "ok" if required_ok else "unavailable",
+        "version": __version__,
+        "components": {
+            "process": {"state": "alive", "required": True},
+            "inventory_database": database,
+            "catalog": {
+                "state": catalog_state,
+                "required": False,
+                "safe_summary": str(getattr(app.state, "catalog_error", "") or ""),
+            },
+        },
+        # Kept for v0.9 clients while they migrate to components.
+        "schema": database["schema"],
+    }
+    return JSONResponse(payload, status_code=200 if required_ok else 503)

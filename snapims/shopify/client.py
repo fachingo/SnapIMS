@@ -94,6 +94,10 @@ class ShopifyClient:
             {"query": f"sku:{sku}"},
         )
         nodes = payload.get("data", {}).get("productVariants", {}).get("nodes", [])
+        if len(nodes) > 1:
+            raise ShopifyAPIError(
+                f"Shopify returned multiple variants for exact SKU {sku}; manual reconciliation required"
+            )
         return nodes[0] if nodes else None
 
     def create_draft_product(self, item: dict[str, Any]) -> dict[str, str]:
@@ -124,10 +128,17 @@ class ShopifyClient:
             "productVariantsBulkUpdate",
         )
 
-    def activate_inventory(self, inventory_item_id: str, quantity: int) -> None:
+    def activate_inventory(
+        self, inventory_item_id: str, quantity: int, idempotency_key: str
+    ) -> None:
         self._call(
-            """mutation ActivateInventory($inventoryItemId:ID!,$locationId:ID!,$available:Int!){inventoryActivate(inventoryItemId:$inventoryItemId,locationId:$locationId,available:$available){inventoryLevel{id} userErrors{field message}}}""",
-            {"inventoryItemId": inventory_item_id, "locationId": self.config.location_id, "available": quantity},
+            """mutation ActivateInventory($inventoryItemId:ID!,$locationId:ID!,$available:Int!,$idempotencyKey:String!){inventoryActivate(inventoryItemId:$inventoryItemId,locationId:$locationId,available:$available) @idempotent(key:$idempotencyKey){inventoryLevel{id} userErrors{field message}}}""",
+            {
+                "inventoryItemId": inventory_item_id,
+                "locationId": self.config.location_id,
+                "available": quantity,
+                "idempotencyKey": idempotency_key,
+            },
             "inventoryActivate",
         )
 
