@@ -7,6 +7,7 @@ from PIL import Image
 from snapims import db
 from snapims.demo import create_demo_batch
 from snapims.pipeline import sha256_file
+from snapims.observability import query_events
 from snapims.processor import process_batch
 
 
@@ -33,6 +34,19 @@ def test_duplicate_import_is_idempotent(tmp_path: Path, data_paths) -> None:
     assert second.duplicate
     assert second.batch_id == first.batch_id
     assert db.database_summary(data_paths.db_file)["items"] == 2
+    duplicate_events = [
+        event
+        for event in query_events(
+            data_paths.db_file,
+            source="import",
+            batch_id=first.batch_id,
+            last=50,
+        )
+        if event["event_type"] == "import.duplicate"
+    ]
+    assert len(duplicate_events) == 1
+    assert duplicate_events[0]["outcome"] == "EXISTING_BATCH_OPENED"
+    assert duplicate_events[0]["detail"]["existing_batch_id"] == first.batch_id
 
 
 def test_successful_folder_is_remembered(tmp_path: Path, data_paths) -> None:

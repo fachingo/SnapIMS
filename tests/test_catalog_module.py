@@ -33,6 +33,7 @@ from snapims.catalog.wikipedia import (
 from snapims.config import ShopifyConfig
 from snapims.demo import create_demo_batch
 from snapims.inventory import export_inventory_csv
+from snapims.observability import query_events
 from snapims.processor import process_batch
 from snapims.recognition.base import BaseRecognizer, RecognitionResult
 from snapims.recognition.service import accept_item, run_recognition
@@ -293,6 +294,15 @@ def test_ambiguous_candidates_persist_and_operator_can_select(tmp_path: Path, da
     status = get_catalog_status(data_paths, item["item_id"])
     assert status.status == "AMBIGUOUS"
     assert status.candidate_count >= 2
+    events = query_events(
+        data_paths.db_file,
+        source="catalog",
+        item_id=item["item_id"],
+        last=50,
+    )
+    ambiguous = next(event for event in events if event["event_type"] == "catalog.ambiguous")
+    assert ambiguous["detail"]["candidate_count"] >= 2
+    assert ambiguous["safe_summary"]
     with catalog_db.connect(data_paths.catalog_db_file, readonly=True) as connection:
         selected = connection.execute(
             "SELECT candidate_id FROM movie_candidates WHERE job_id=? AND release_year=1996", (job_id,)

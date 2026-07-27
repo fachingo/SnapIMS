@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}Diagnostics · SnapIMS{% endblock %}{% block content %}
-<div class="page-heading"><div><p class="eyebrow">DIAGNOSTICS</p><h1>System health</h1><p>Operational facts without exposing credentials.</p></div><button type="button" data-copy-diagnostics>Copy Diagnostic Summary</button></div>
+<div class="page-heading"><div><p class="eyebrow">DIAGNOSTICS</p><h1>System health</h1><p>Operational facts without exposing credentials.</p></div><div class="actions"><a class="button" href="#live-activity">Live Activity</a><button type="button" data-copy-diagnostics>Copy Diagnostic Summary</button><form method="post" action="/diagnostics/support-bundle"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Export support bundle</button></form></div></div>
 <div class="metric-grid">
   <article><b>{{ integrity }}</b><span>SQLite integrity</span></article><article><b>{{ foreign }}</b><span>Foreign-key violations</span></article>
   <article><b>{{ 'PASS' if manifest.ok else 'FAIL' }}</b><span>Schema manifest</span></article><article><b>{{ schema }}</b><span>Schema version</span></article>
@@ -13,6 +13,38 @@
 <tr><th>CSV stages</th><td>{{ stage_info }}</td></tr><tr><th>Import journal</th><td>{{ import_info }}</td></tr>
 </table></section>
 {% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}{% if message %}<div class="alert error">{{ message }}</div>{% endif %}
+<section class="panel" id="live-activity">
+  <div class="section-head"><div><p class="eyebrow">LIVE ACTIVITY</p><h2>Durable operational events</h2><p class="muted">Observable facts only. The list polls for new events and remains bounded to 100 rows.</p></div><span class="status-pill" data-activity-poll-state>Live</span></div>
+  <div class="metric-grid compact">
+    <article><b>{{ active_operations|length }}</b><span>Active operations</span></article>
+    <article><b>{{ activity_queue_depth.recognition }}</b><span>Recognition queue</span></article>
+    <article><b>{{ activity_queue_depth.catalog }}</b><span>Catalog queue</span></article>
+    <article><b>{{ activity_queue_depth.bulk }}</b><span>Bulk queue</span></article>
+  </div>
+  {% if active_operations %}
+  <h3>Active operations</h3>
+  <div class="activity-active">{% for operation in active_operations %}<article data-started-at="{{ operation.occurred_at }}"><strong>{{ operation.component }} · {{ operation.status }}</strong><code>{{ operation.operation_id }}</code><span>{{ operation.batch_id or operation.item_id or operation.event_type }}</span><span data-operation-elapsed>calculating…</span></article>{% endfor %}</div>
+  {% endif %}
+  <form method="get" action="/diagnostics#live-activity" class="activity-filters">
+    <label>Source<input name="activity_source" value="{{ activity_source }}" placeholder="recognition, catalog, shopify…"></label>
+    <label>Severity<select name="activity_severity"><option value="">All levels</option>{% for level in ['DEBUG','INFO','WARNING','ERROR','CRITICAL'] %}<option value="{{ level }}" {% if activity_severity==level %}selected{% endif %}>{{ level }}</option>{% endfor %}</select></label>
+    <label>Operation ID<input name="activity_operation" value="{{ activity_operation }}" placeholder="Correlation ID"></label>
+    <button>Apply filters</button><a class="button" href="/diagnostics#live-activity">Clear</a>
+  </form>
+  <div class="activity-table-wrap"><table class="activity-table"><thead><tr><th>Time</th><th>Severity / source</th><th>Event and correlation</th><th>Outcome</th><th>Safe detail</th></tr></thead>
+    <tbody data-live-activity data-last-event-id="{{ activity_events[0].event_id if activity_events else 0 }}" data-source="{{ activity_source }}" data-severity="{{ activity_severity }}" data-operation="{{ activity_operation }}">
+    {% for event in activity_events %}
+      <tr data-event-id="{{ event.event_id }}">
+        <td><time>{{ event.occurred_at }}</time>{% if event.duration_ms %}<small>{{ event.duration_ms }} ms</small>{% endif %}</td>
+        <td><strong class="activity-{{ event.severity|lower }}">{{ event.severity }}</strong><small>{{ event.component }}</small></td>
+        <td><strong>{{ event.event_type }}</strong>{% if event.operation_id %}<code>{{ event.operation_id }}</code>{% endif %}{% if event.batch_id or event.item_id or event.order_id %}<small>{{ event.batch_id }} {{ event.item_id }} {{ event.order_id }}</small>{% endif %}{% if event.retry_of_event_id %}<small>retry of #{{ event.retry_of_event_id }}</small>{% endif %}{% if event.recovery_of_event_id %}<small>recovery of #{{ event.recovery_of_event_id }}</small>{% endif %}</td>
+        <td>{{ event.status or '—' }}{% if event.outcome %}<small>{{ event.outcome }}</small>{% endif %}{% if event.attempt_number %}<small>attempt {{ event.attempt_number }}</small>{% endif %}</td>
+        <td>{% if event.safe_summary %}<span>{{ event.safe_summary }}</span>{% endif %}<details><summary>Technical detail</summary><pre>{{ event.detail|tojson(indent=2) }}</pre></details><button type="button" class="icon" data-copy-event data-event-json="{{ event|tojson|forceescape }}">Copy event</button></td>
+      </tr>
+    {% else %}<tr data-empty-activity><td colspan="5">No events match these filters.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
 <section class="panel"><div class="section-head"><div><p class="eyebrow">LOCAL MOVIE CATALOG</p><h2>Catalog health and recovery</h2></div><div class="actions"><form method="post" action="/diagnostics/catalog/backup"><button>Create backup</button></form><form method="post" action="/diagnostics/catalog/rebuild-index"><button>Rebuild search index</button></form><form method="post" action="/diagnostics/catalog/retry-failed"><button>Retry failed jobs</button></form></div></div>
 <div class="metric-grid compact"><article><b>{{ 'PASS' if catalog.available and catalog.integrity=='ok' else 'CHECK' }}</b><span>Catalog integrity</span></article><article><b>{{ catalog.schema_version }}</b><span>Catalog schema</span></article><article><b>{{ catalog.movies or 0 }}</b><span>Movies</span></article><article><b>{{ links.linked_items }}</b><span>Linked items</span></article><article><b>{{ links.stale_links }}</b><span>Stale links</span></article><article><b>{{ catalog.database_size_bytes or 0 }}</b><span>Catalog bytes</span></article></div>
 <p><code>{{ paths.catalog_db_file }}</code>{% if catalog_error %} · {{ catalog_error }}{% endif %}</p>

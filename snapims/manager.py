@@ -15,11 +15,41 @@ from pathlib import Path
 
 from snapims import __version__
 from snapims.config import SnapIMSConfig
+from snapims.observability import try_emit_event
 
 
 class ServiceManager:
     def __init__(self, config: SnapIMSConfig | None = None) -> None:
         self.config = (config or SnapIMSConfig.load()).ensure()
+        self._reported_health_states: dict[str, str] = {}
+
+    def _event(self, component: str, event_type: str, **fields: object) -> int | None:
+        return try_emit_event(
+            self.config.data.db_file,
+            component=component,
+            event_type=event_type,
+            paths=self.config.data,
+            known_secrets=(
+                self.config.auth_secret,
+                self.config.admin_password_hash,
+                self.config.openai_api_key,
+            ),
+            **fields,
+        )
+
+    @staticmethod
+    def _rotate_log(path: Path, *, maximum_bytes: int = 5_000_000, backups: int = 5) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.stat().st_size >= maximum_bytes:
+            oldest = path.with_name(f"{path.name}.{backups}")
+            oldest.unlink(missing_ok=True)
+            for index in range(backups - 1, 0, -1):
+                source = path.with_name(f"{path.name}.{index}")
+                if source.exists():
+                    source.replace(path.with_name(f"{path.name}.{index + 1}"))
+            path.replace(path.with_name(f"{path.name}.1"))
+        path.touch(mode=0o600, exist_ok=True)
+        path.chmod(0o600)
 
     def _pid(self, name: str) -> Path:
         return self.config.pid_dir / f"{name}.pid"
@@ -64,6 +94,7 @@ class ServiceManager:
             return pid
         if not self.config.project_path.is_dir():
             raise RuntimeError(f"SnapIMS project path does not exist: {self.config.project_path}")
+        self._rotate_log(self.config.app_log)
         log = self.config.app_log.open("a", encoding="utf-8")
         process = subprocess.Popen(
             [
@@ -82,6 +113,13 @@ class ServiceManager:
             start_new_session=True,
         )
         self._pid("app").write_text(str(process.pid))
+        self._event(
+            "system",
+            "application.process_started",
+            status="STARTING",
+            outcome="PROCESS_CREATED",
+            detail={"pid": process.pid, "port": self.config.port},
+        )
         return process.pid
 
     def tunnel_problem(self) -> str:
@@ -189,12 +227,27 @@ class ServiceManager:
 
     def start_guacamole(self) -> bool:
         if not self.config.manage_guacamole_services or not self.guacamole_installed():
+            self._event(
+                "guacamole",
+                "guacamole.start_skipped",
+                severity="WARNING",
+                status="UNAVAILABLE",
+                outcome="NOT_MANAGED_OR_NOT_INSTALLED",
+            )
             return False
         ok = True
         ok = self._start_system_service(self.config.guacd_service) and ok
         ok = self._start_system_service(self.config.xrdp_service) and ok
         ok = self._start_system_service(self.config.tomcat_service) and ok
-        return ok and self.wait_for_guacamole()
+        healthy = ok and self.wait_for_guacamole()
+        self._event(
+            "guacamole",
+            "guacamole.recovery_completed" if healthy else "guacamole.recovery_failed",
+            severity="INFO" if healthy else "ERROR",
+            status="RUNNING" if healthy else "UNAVAILABLE",
+            outcome="HEALTHY" if healthy else "SERVICE_OR_ORIGIN_FAILURE",
+        )
+        return healthy
 
     def stop_guacamole(self) -> bool:
         if not self.config.manage_guacamole_services or not self.guacamole_installed():
@@ -262,10 +315,20 @@ class ServiceManager:
         }
 
     def start_tunnel(self) -> int | None:
-        if self.tunnel_problem():
+        problem = self.tunnel_problem()
+        if problem:
+            self._event(
+                "cloudflare",
+                "cloudflare.start_blocked",
+                severity="WARNING",
+                status="UNAVAILABLE",
+                outcome="CONFIGURATION",
+                safe_summary=problem,
+            )
             return None
         if pid := self._read_pid("tunnel"):
             return pid
+        self._rotate_log(self.config.tunnel_log)
         log = self.config.tunnel_log.open("a", encoding="utf-8")
         command = [
             self.config.cloudflared_bin,
@@ -284,6 +347,13 @@ class ServiceManager:
             start_new_session=True,
         )
         self._pid("tunnel").write_text(str(process.pid))
+        self._event(
+            "cloudflare",
+            "cloudflare.connector_started",
+            status="STARTING",
+            outcome="PROCESS_CREATED",
+            detail={"pid": process.pid},
+        )
         return process.pid
 
     def stop(self, name: str) -> bool:
@@ -293,10 +363,23 @@ class ServiceManager:
         os.kill(pid, signal.SIGTERM)
         for _ in range(30):
             if not self._read_pid(name):
+                self._event(
+                    "cloudflare" if name == "tunnel" else "system",
+                    f"{name}.process_stopped",
+                    status="STOPPED",
+                    outcome="GRACEFUL",
+                )
                 return True
             time.sleep(0.1)
         os.kill(pid, signal.SIGKILL)
         self._pid(name).unlink(missing_ok=True)
+        self._event(
+            "cloudflare" if name == "tunnel" else "system",
+            f"{name}.process_stopped",
+            severity="WARNING",
+            status="STOPPED",
+            outcome="FORCED",
+        )
         return True
 
     def tunnel_connector_problem(self) -> str:
@@ -355,6 +438,16 @@ class ServiceManager:
             if self.health():
                 return True
             time.sleep(0.25)
+        details = self.health_details()
+        self._event(
+            "system",
+            "application.health_failed",
+            severity="ERROR",
+            status="UNAVAILABLE",
+            outcome="ORIGIN",
+            safe_summary=str(details.get("problem") or "Application health check timed out"),
+            detail={"status_code": details.get("status_code", 0)},
+        )
         return False
 
     def status(self) -> dict[str, object]:
@@ -362,6 +455,37 @@ class ServiceManager:
         app_pid = self._read_pid("app")
         tunnel_pid = self._read_pid("tunnel")
         connector_problem = self.tunnel_connector_problem() if tunnel_pid else ""
+        connector_state = connector_problem or ("connected" if tunnel_pid else "stopped")
+        if self._reported_health_states.get("cloudflare") != connector_state:
+            self._reported_health_states["cloudflare"] = connector_state
+            if connector_problem:
+                self._event(
+                    "cloudflare",
+                    "cloudflare.connector_failed",
+                    severity="ERROR",
+                    status="UNAVAILABLE",
+                    outcome="CONNECTOR",
+                    safe_summary=connector_problem,
+                )
+            elif tunnel_pid:
+                self._event(
+                    "cloudflare",
+                    "cloudflare.connector_healthy",
+                    status="RUNNING",
+                    outcome="CONNECTED",
+                )
+        guacamole_state = str(guacamole.get("problem") or "healthy")
+        if self._reported_health_states.get("guacamole") != guacamole_state:
+            self._reported_health_states["guacamole"] = guacamole_state
+            if guacamole.get("problem"):
+                self._event(
+                    "guacamole",
+                    "guacamole.health_failed",
+                    severity="ERROR",
+                    status="UNAVAILABLE",
+                    outcome="ORIGIN_OR_SERVICE",
+                    safe_summary=str(guacamole["problem"]),
+                )
         return {
             "app": bool(app_pid),
             "health": self.health(),

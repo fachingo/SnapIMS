@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ from snapims.interpreter import make_batch_id
 from snapims.inventory import export_inventory_csv
 from snapims.manifests import item_id, photo_name, write_manifests
 from snapims.models import BatchRecord, ImportResult, ItemRecord, PhotoRecord, ProcessedPhoto
+from snapims.observability import safe_exception, try_emit_event
 from snapims.pipeline import QRDecoder, parse_batch
 from snapims.protocol import parse_command
 from snapims.qr import decode_snapims_qr
@@ -408,11 +410,60 @@ def process_batch(
     paths = (paths or DataPaths.from_root()).ensure()
     db.initialize(paths.db_file, paths=paths)
     reconcile_import_journals(paths)
-    db.backup_database(paths, "before-import")
+    backup = db.backup_database(paths, "before-import")
+    if backup is not None:
+        try_emit_event(
+            paths.db_file,
+            component="system",
+            event_type="backup.created",
+            status="COMPLETE",
+            outcome="before-import",
+            detail={"filename": backup.name},
+            retention_class="BUSINESS",
+            paths=paths,
+        )
+    started_at = time.monotonic()
     batch = parse_batch(source_folder, batch_name=batch_name, decoder=decoder, recursive=recursive)
+    operation_id = f"import:{batch.source_fingerprint[:16]}"
+    try_emit_event(
+        paths.db_file,
+        component="import",
+        event_type="import.commit_started",
+        operation_id=operation_id,
+        status="RUNNING",
+        image_count=len(batch.source_photos),
+        detail={
+            "item_count": len(batch.items),
+            "product_photo_count": batch.photo_count,
+            "command_count": len(batch.commands),
+            "warning_count": len(batch.warnings),
+            "recursive": recursive,
+        },
+        retention_class="BUSINESS",
+        paths=paths,
+    )
     existing = db.find_batch_by_fingerprint(paths.db_file, batch.source_fingerprint)
     if existing:
         batch_id = str(existing["batch_id"])
+        try_emit_event(
+            paths.db_file,
+            component="import",
+            event_type="import.duplicate",
+            severity="WARNING",
+            operation_id=operation_id,
+            batch_id=batch_id,
+            duration_ms=int((time.monotonic() - started_at) * 1000),
+            status="DUPLICATE",
+            outcome="EXISTING_BATCH_OPENED",
+            safe_summary="Source fingerprint already belongs to an imported batch.",
+            detail={
+                "existing_batch_id": batch_id,
+                "item_count": int(existing["item_count"]),
+                "product_photo_count": int(existing["product_photo_count"]),
+            },
+            retention_class="BUSINESS",
+            paths=paths,
+        )
         return ImportResult(
             batch_id,
             int(existing["item_count"]),
@@ -566,9 +617,44 @@ def process_batch(
         current_status = str(status_row[0]) if status_row else "FAILED"
         if current_status != "COMPLETE":
             _update_import_journal(paths.db_file, import_id, current_status, str(exc))
+        safe = safe_exception(exc)
+        try_emit_event(
+            paths.db_file,
+            component="import",
+            event_type="import.failed",
+            severity="ERROR",
+            operation_id=operation_id,
+            batch_id=batch.batch_id,
+            duration_ms=int((time.monotonic() - started_at) * 1000),
+            status=current_status,
+            outcome="FAILED",
+            error_class=safe["error_class"],
+            safe_summary=safe["safe_summary"],
+            retention_class="BUSINESS",
+            paths=paths,
+        )
         raise
 
     db.remember_folder(paths.db_file, source_folder)
+    try_emit_event(
+        paths.db_file,
+        component="import",
+        event_type="import.completed",
+        operation_id=operation_id,
+        batch_id=batch.batch_id,
+        duration_ms=int((time.monotonic() - started_at) * 1000),
+        image_count=len(batch.source_photos),
+        status="COMPLETE",
+        outcome="IMPORTED",
+        detail={
+            "item_count": len(batch.items),
+            "product_photo_count": batch.photo_count,
+            "command_count": len(batch.commands),
+            "warning_count": len(batch.warnings),
+        },
+        retention_class="BUSINESS",
+        paths=paths,
+    )
     return ImportResult(
         batch.batch_id,
         len(batch.items),

@@ -16,6 +16,7 @@ from snapims.catalog.models import CatalogLookupRequest, CatalogStatus, LocalMat
 from snapims.catalog.normalization import normalize_title, strip_leading_article, title_variants
 from snapims.catalog.wikipedia import WikipediaClient
 from snapims.config import DataPaths
+from snapims.observability import safe_exception, try_emit_event
 
 _ACTIVE: dict[int, threading.Thread] = {}
 _LOCK = threading.Lock()
@@ -476,6 +477,20 @@ def queue_recognition_lookup(paths: DataPaths, recognition_result_id: int, *, st
         inventory_db.mark_item_catalog_unavailable(
             paths.db_file, request.item_id, recognition_result_id, str(exc)
         )
+        safe = safe_exception(exc)
+        try_emit_event(
+            paths.db_file,
+            component="catalog",
+            event_type="catalog.unavailable",
+            severity="ERROR",
+            item_id=request.item_id,
+            provider="local_catalog",
+            status="UNAVAILABLE",
+            outcome="CATALOG_INITIALIZATION_FAILED",
+            error_class=safe["error_class"],
+            safe_summary=safe["safe_summary"],
+            paths=paths,
+        )
         return None
     request = build_lookup_request(paths.db_file, recognition_result_id)
     if not request.proposed_title:
@@ -485,8 +500,32 @@ def queue_recognition_lookup(paths: DataPaths, recognition_result_id: int, *, st
                 "UPDATE catalog_lookup_jobs SET finished_at=?,updated_at=?,last_error=? WHERE job_id=?",
                 (catalog_db.now(), catalog_db.now(), "Recognition did not provide a title", job_id),
             )
+        try_emit_event(
+            paths.db_file,
+            component="catalog",
+            event_type="catalog.not_found",
+            severity="WARNING",
+            operation_id=f"catalog:{job_id}",
+            item_id=request.item_id,
+            provider="local_catalog",
+            status="NOT_FOUND",
+            outcome="NO_TITLE",
+            safe_summary="Recognition did not provide a title for catalog lookup.",
+            paths=paths,
+        )
         return job_id
     job_id = _ensure_job(paths.catalog_db_file, request, "SEARCHING_LOCAL")
+    try_emit_event(
+        paths.db_file,
+        component="catalog",
+        event_type="catalog.local_search_started",
+        operation_id=f"catalog:{job_id}",
+        item_id=request.item_id,
+        provider="local_catalog",
+        status="SEARCHING_LOCAL",
+        detail={"recognition_result_id": recognition_result_id},
+        paths=paths,
+    )
     matches = search_local(paths.catalog_db_file, request.proposed_title, request.proposed_year)
     if matches and matches[0].unique:
         match = matches[0]
@@ -514,12 +553,42 @@ def queue_recognition_lookup(paths: DataPaths, recognition_result_id: int, *, st
             reason=match.reason,
             score=match.match_score,
         )
+        try_emit_event(
+            paths.db_file,
+            component="catalog",
+            event_type="catalog.local_match_linked",
+            operation_id=f"catalog:{job_id}",
+            item_id=request.item_id,
+            movie_id=match.movie_id,
+            provider="local_catalog",
+            status="LOCAL_MATCHED",
+            outcome="LINKED",
+            detail={
+                "candidate_count": len(matches),
+                "match_method": match.method,
+                "match_score": match.match_score,
+            },
+            retention_class="BUSINESS",
+            paths=paths,
+        )
         return job_id
     with catalog_db.transaction(paths.catalog_db_file) as connection:
         connection.execute(
             "UPDATE catalog_lookup_jobs SET status='QUEUED',candidate_count=?,updated_at=? WHERE job_id=?",
             (len(matches), catalog_db.now(), job_id),
         )
+    try_emit_event(
+        paths.db_file,
+        component="catalog",
+        event_type="catalog.candidate_request_queued",
+        operation_id=f"catalog:{job_id}",
+        item_id=request.item_id,
+        provider="wikipedia",
+        status="QUEUED",
+        outcome="LOCAL_AMBIGUOUS" if matches else "LOCAL_MISS",
+        detail={"local_candidate_count": len(matches)},
+        paths=paths,
+    )
     if start_worker:
         start_catalog_job(paths, job_id)
     return job_id
@@ -561,6 +630,17 @@ def _run_job(paths: DataPaths, job_id: int, client: WikipediaClient | None = Non
         if str(row["status"]) in {"LOCAL_MATCHED", "MOVIE_CREATED", "LINKED", "NOT_FOUND", "AMBIGUOUS"}:
             return
         request = CatalogLookupRequest(**json.loads(str(row["request_json"])))
+        try_emit_event(
+            paths.db_file,
+            component="catalog",
+            event_type="catalog.external_search_started",
+            operation_id=f"catalog:{job_id}",
+            item_id=request.item_id,
+            provider="wikipedia",
+            attempt_number=int(row["attempt_count"] or 0) + 1,
+            status="SEARCHING_WIKIPEDIA",
+            paths=paths,
+        )
         attempt_started = catalog_db.now()
         with catalog_db.transaction(paths.catalog_db_file) as connection:
             connection.execute(
@@ -640,6 +720,23 @@ def _run_job(paths: DataPaths, job_id: int, client: WikipediaClient | None = Non
                        WHERE attempt_id=?""",
                     (catalog_db.now(), json.dumps({"candidates": len(candidates), "decision": status}), attempt_id),
                 )
+            try_emit_event(
+                paths.db_file,
+                component="catalog",
+                event_type=(
+                    "catalog.ambiguous" if candidates else "catalog.not_found"
+                ),
+                severity="WARNING",
+                operation_id=f"catalog:{job_id}",
+                item_id=request.item_id,
+                provider="wikipedia",
+                attempt_number=int(row["attempt_count"] or 0) + 1,
+                status=status,
+                outcome=status,
+                safe_summary=reason,
+                detail={"candidate_count": len(candidates)},
+                paths=paths,
+            )
             return
         # Repeat duplicate check and insertion inside the same catalog transaction path.
         movie_id, created = create_or_update_movie(paths.catalog_db_file, selected)
@@ -676,6 +773,22 @@ def _run_job(paths: DataPaths, job_id: int, client: WikipediaClient | None = Non
                            last_error=?,updated_at=? WHERE job_id=?""",
                     (str(exc), catalog_db.now(), job_id),
                 )
+            safe = safe_exception(exc)
+            try_emit_event(
+                paths.db_file,
+                component="catalog",
+                event_type="catalog.link_failed",
+                severity="ERROR",
+                operation_id=f"catalog:{job_id}",
+                item_id=request.item_id,
+                movie_id=movie_id,
+                provider="wikipedia",
+                status="LINK_PENDING",
+                outcome="LINK_FAILED",
+                error_class=safe["error_class"],
+                safe_summary=safe["safe_summary"],
+                paths=paths,
+            )
             return
         with catalog_db.transaction(paths.catalog_db_file) as connection:
             connection.execute(
@@ -692,6 +805,21 @@ def _run_job(paths: DataPaths, job_id: int, client: WikipediaClient | None = Non
                     attempt_id,
                 ),
             )
+        try_emit_event(
+            paths.db_file,
+            component="catalog",
+            event_type="catalog.linked",
+            operation_id=f"catalog:{job_id}",
+            item_id=request.item_id,
+            movie_id=movie_id,
+            provider="wikipedia",
+            attempt_number=int(row["attempt_count"] or 0) + 1,
+            status="LINKED",
+            outcome="MOVIE_CREATED" if created else "MOVIE_REUSED",
+            detail={"candidate_count": len(candidates), "match_score": selected.score},
+            retention_class="BUSINESS",
+            paths=paths,
+        )
     except Exception as exc:
         code = getattr(exc, "code", exc.__class__.__name__)
         with catalog_db.transaction(paths.catalog_db_file) as connection:
@@ -705,6 +833,20 @@ def _run_job(paths: DataPaths, job_id: int, client: WikipediaClient | None = Non
                    WHERE job_id=? AND status='RUNNING'""",
                 (catalog_db.now(), code, str(exc), job_id),
             )
+        safe = safe_exception(exc)
+        try_emit_event(
+            paths.db_file,
+            component="catalog",
+            event_type="catalog.failed",
+            severity="ERROR",
+            operation_id=f"catalog:{job_id}",
+            provider="wikipedia",
+            status="FAILED",
+            outcome=str(code),
+            error_class=safe["error_class"],
+            safe_summary=safe["safe_summary"],
+            paths=paths,
+        )
     finally:
         with _LOCK:
             _ACTIVE.pop(job_id, None)

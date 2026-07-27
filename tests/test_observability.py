@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
 import zipfile
+from io import StringIO
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -12,6 +14,7 @@ from snapims import db
 from snapims import cli
 from snapims.config import DataPaths
 from snapims.observability import (
+    RedactingFilter,
     create_support_bundle,
     emit_event,
     prune_events,
@@ -61,6 +64,26 @@ def test_redact_text_handles_multiline_cookie_and_url_credentials() -> None:
     assert "visible=yes" in result
 
 
+def test_shared_logging_filter_redacts_arguments_and_exception_messages() -> None:
+    secret = "logging-filter-secret"
+    stream = StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.addFilter(RedactingFilter(known_secrets=[secret]))
+    logger = logging.getLogger("snapims.test.redaction")
+    logger.handlers = [handler]
+    logger.propagate = False
+    logger.setLevel(logging.INFO)
+    logger.info("Authorization: Bearer %s", secret)
+    try:
+        raise RuntimeError(f"provider request token={secret}")
+    except RuntimeError:
+        logger.exception("Provider failure")
+    rendered = stream.getvalue()
+    assert secret not in rendered
+    assert "[REDACTED]" in rendered
+    assert "RuntimeError" in rendered
+
+
 def test_events_are_append_safe_queryable_and_durable_across_connections(
     tmp_path: Path,
 ) -> None:
@@ -103,7 +126,10 @@ def test_events_are_append_safe_queryable_and_durable_across_connections(
     assert events[0]["detail"]["authorization"] == "[REDACTED]"
     assert events[0]["process_marker"]
     with db.connect(paths.db_file) as reopened:
-        assert reopened.execute("SELECT COUNT(*) FROM operational_events").fetchone()[0] == 2
+        assert reopened.execute("SELECT COUNT(*) FROM operational_events").fetchone()[0] == 3
+        assert reopened.execute(
+            "SELECT COUNT(*) FROM operational_events WHERE event_type='migration.completed'"
+        ).fetchone()[0] == 1
     jsonl = (paths.logs / "snapims-events.jsonl").read_text(encoding="utf-8")
     assert "do-not-store" not in jsonl
     assert "recognition.failed" in jsonl
@@ -134,7 +160,7 @@ def test_event_retention_is_bounded_by_age_and_count(tmp_path: Path) -> None:
         now_at=datetime.now(UTC) + timedelta(seconds=1),
         maximum_events=100,
     )
-    assert deleted == 160
+    assert deleted == 161
     with db.connect(paths.db_file) as connection:
         assert connection.execute("SELECT COUNT(*) FROM operational_events").fetchone()[0] == 100
         assert connection.execute(

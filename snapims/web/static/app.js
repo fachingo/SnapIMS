@@ -278,6 +278,91 @@
     await navigator.clipboard.writeText(text);
     toast("Diagnostic summary copied.");
   });
+  qsa("[data-copy-event]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(button.dataset.eventJson || "{}");
+      toast("Event copied.");
+    });
+  });
+  const updateElapsed = () => qsa("[data-started-at]").forEach((node) => {
+    const elapsed = Math.max(0, Date.now() - Date.parse(node.dataset.startedAt || ""));
+    const target = qs("[data-operation-elapsed]", node);
+    if (target) target.textContent = `${Math.floor(elapsed / 1000)}s elapsed`;
+  });
+  updateElapsed();
+  if (qsa("[data-started-at]").length) setInterval(updateElapsed, 1000);
+
+  const activity = qs("[data-live-activity]");
+  if (activity) {
+    const makeCell = (value) => {
+      const cell = document.createElement("td");
+      cell.textContent = String(value || "—");
+      return cell;
+    };
+    const makeEventRow = (event) => {
+      const row = document.createElement("tr");
+      row.dataset.eventId = event.event_id;
+      const timeCell = makeCell(event.occurred_at);
+      if (event.duration_ms) {
+        const small = document.createElement("small");
+        small.textContent = `${event.duration_ms} ms`;
+        timeCell.append(small);
+      }
+      const sourceCell = makeCell(`${event.severity} · ${event.component}`);
+      const eventCell = makeCell(event.event_type);
+      if (event.operation_id) {
+        const code = document.createElement("code");
+        code.textContent = event.operation_id;
+        eventCell.append(code);
+      }
+      const outcomeCell = makeCell(
+        [event.status, event.outcome, event.attempt_number ? `attempt ${event.attempt_number}` : ""]
+          .filter(Boolean).join(" · ")
+      );
+      const detailCell = makeCell(event.safe_summary || "");
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = "Technical detail";
+      const pre = document.createElement("pre");
+      pre.textContent = JSON.stringify(event.detail || {}, null, 2);
+      details.append(summary, pre);
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "icon";
+      copy.textContent = "Copy event";
+      copy.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(JSON.stringify(event, null, 2));
+        toast("Event copied.");
+      });
+      detailCell.append(details, copy);
+      row.append(timeCell, sourceCell, eventCell, outcomeCell, detailCell);
+      return row;
+    };
+    const pollState = qs("[data-activity-poll-state]");
+    const pollActivity = async () => {
+      const params = new URLSearchParams({
+        after: activity.dataset.lastEventId || "0",
+        last: "100",
+        source: activity.dataset.source || "",
+        severity: activity.dataset.severity || "",
+        operation: activity.dataset.operation || "",
+      });
+      try {
+        const response = await fetch(`/api/diagnostics/events?${params}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        qs("[data-empty-activity]", activity)?.remove();
+        payload.events.forEach((event) => activity.prepend(makeEventRow(event)));
+        while (activity.children.length > 100) activity.lastElementChild?.remove();
+        activity.dataset.lastEventId = String(payload.last_event_id || activity.dataset.lastEventId);
+        if (pollState) pollState.textContent = "Live";
+      } catch (_) {
+        if (pollState) pollState.textContent = "Retrying";
+      }
+      setTimeout(pollActivity, 2500);
+    };
+    setTimeout(pollActivity, 2500);
+  }
 
   // Batch Editor workstation.
   const editor = qs("[data-batch-editor]");

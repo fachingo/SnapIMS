@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from io import BytesIO
 import time
 from pathlib import Path
+import zipfile
 
 from fastapi.testclient import TestClient
 
 from snapims import db
 from snapims.demo import create_demo_batch
+from snapims.observability import emit_event
 from snapims.web.app import app
 
 
@@ -16,6 +19,43 @@ def test_pages_render(data_paths) -> None:
             response = client.get(path)
             assert response.status_code == 200
             assert "SnapIMS" in response.text
+
+
+def test_live_activity_survives_restart_and_support_bundle_is_redacted(
+    data_paths, monkeypatch
+) -> None:
+    secret = "web-support-secret"
+    monkeypatch.setenv("OPENAI_API_KEY", secret)
+    with TestClient(app) as client:
+        event_id = emit_event(
+            data_paths.db_file,
+            component="recognition",
+            event_type="recognition.fixture",
+            operation_id="OP-LIVE",
+            safe_summary=f"provider token={secret}",
+            detail={"authorization": f"Bearer {secret}"},
+            known_secrets=[secret],
+            paths=data_paths,
+        )
+        page = client.get("/diagnostics")
+        assert page.status_code == 200
+        assert "LIVE ACTIVITY" in page.text
+        assert "recognition.fixture" in page.text
+        assert "OP-LIVE" in page.text
+        api = client.get("/api/diagnostics/events", params={"after": event_id - 1})
+        assert api.status_code == 200
+        assert api.json()["events"][-1]["event_id"] == event_id
+        bundle = client.post("/diagnostics/support-bundle")
+        assert bundle.status_code == 200
+        assert bundle.headers["content-type"] == "application/zip"
+        with zipfile.ZipFile(BytesIO(bundle.content)) as archive:
+            rendered = b"\n".join(archive.read(name) for name in archive.namelist())
+        assert secret.encode() not in rendered
+    with TestClient(app) as restarted:
+        page = restarted.get("/diagnostics", params={"activity_operation": "OP-LIVE"})
+        assert page.status_code == 200
+        assert "recognition.fixture" in page.text
+        assert "OP-LIVE" in page.text
 
 
 def test_preview_has_non_durable_identity_and_import_has_one_id(tmp_path: Path, data_paths) -> None:

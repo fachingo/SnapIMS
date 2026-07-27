@@ -62,6 +62,25 @@ _jsonl_loggers: dict[Path, logging.Logger] = {}
 _jsonl_lock = threading.Lock()
 
 
+class RedactingFilter(logging.Filter):
+    def __init__(self, *, known_secrets: Iterable[str] = ()) -> None:
+        super().__init__()
+        self.known_secrets = tuple(known_secrets)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = redact_text(record.getMessage(), known_secrets=self.known_secrets)
+        record.args = ()
+        if record.exc_info and record.exc_info[1]:
+            safe = safe_exception(record.exc_info[1], known_secrets=self.known_secrets)
+            record.msg = (
+                f"{record.msg} error_class={safe['error_class']} "
+                f"safe_summary={safe['safe_summary']}"
+            )
+            record.exc_text = None
+            record.exc_info = None
+        return True
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
@@ -151,6 +170,7 @@ def _event_json_logger(path: Path) -> logging.Logger:
             backupCount=5,
             encoding="utf-8",
         )
+        resolved.chmod(0o600)
         handler.setFormatter(logging.Formatter("%(message)s"))
         logger.addHandler(handler)
         _jsonl_loggers[resolved] = logger
@@ -291,6 +311,31 @@ def emit_event(
     return event_id
 
 
+def try_emit_event(
+    db_file: Path,
+    *,
+    component: str,
+    event_type: str,
+    **fields: Any,
+) -> int | None:
+    """Record an event without allowing observability failure to break the operation."""
+    try:
+        return emit_event(
+            db_file,
+            component=component,
+            event_type=event_type,
+            **fields,
+        )
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Operational event recording unavailable component=%s event_type=%s error_class=%s",
+            component,
+            event_type,
+            type(exc).__name__,
+        )
+        return None
+
+
 def query_events(
     db_file: Path,
     *,
@@ -412,6 +457,7 @@ def create_support_bundle(
     connection = db.connect(paths.db_file)
     try:
         schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        schema_manifest = db.schema_manifest_report(connection)
         stored_settings = {
             str(row["key"]): str(row["value"])
             for row in connection.execute("SELECT key,value FROM settings ORDER BY key")
@@ -434,6 +480,7 @@ def create_support_bundle(
             "snapims_version": __version__,
             "commit": _git_commit(project_path),
             "schema_version": schema_version,
+            "schema_manifest": schema_manifest,
             "contents": [
                 "manifest.json",
                 "settings.json",

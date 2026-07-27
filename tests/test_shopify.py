@@ -8,6 +8,7 @@ import pytest
 
 from snapims import db
 from snapims.config import ShopifyConfig
+from snapims.observability import query_events
 from snapims.shopify.service import ShopifyService
 from tests.helpers import ready_item
 
@@ -170,6 +171,21 @@ def test_retry_after_stage_failure_does_not_recreate_completed_product(tmp_path:
     expected_create_calls = 2 if stage == "create_draft_product" else 1
     assert fake.calls["create_draft_product"] == expected_create_calls
     assert db.get_item(data_paths.db_file, item["item_id"])["upload_status"] == "UPLOADED"
+    events = query_events(
+        data_paths.db_file,
+        source="shopify",
+        item_id=item["item_id"],
+        last=100,
+    )
+    failure = next(event for event in events if event["event_type"] == "shopify.stage_failed")
+    assert failure["detail"]["stage"] == stage
+    attempts = [
+        event["attempt_number"]
+        for event in events
+        if event["event_type"] == "shopify.upload_started"
+    ]
+    assert attempts == [1, 2]
+    assert events[-1]["event_type"] == "shopify.upload_completed"
 
 
 def test_reconcile_product_created_before_local_checkpoint(tmp_path: Path, data_paths, monkeypatch: pytest.MonkeyPatch) -> None:

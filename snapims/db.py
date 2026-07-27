@@ -60,6 +60,20 @@ def backup_database(paths: DataPaths, reason: str) -> Path | None:
     finally:
         target.close()
         source.close()
+    try:
+        with transaction(paths.db_file) as connection:
+            if "operational_events" in _table_names(connection):
+                _insert_internal_event(
+                    connection,
+                    component="system",
+                    event_type="backup.created",
+                    status="COMPLETE",
+                    outcome=safe or "backup",
+                    detail={"filename": destination.name},
+                    retention_class="BUSINESS",
+                )
+    except sqlite3.Error:
+        pass
     return destination
 
 
@@ -71,6 +85,35 @@ def _add_column(connection: sqlite3.Connection, table: str, definition: str) -> 
     name = definition.split()[0]
     if name not in _columns(connection, table):
         connection.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+
+
+def _insert_internal_event(
+    connection: sqlite3.Connection,
+    *,
+    component: str,
+    event_type: str,
+    status: str,
+    outcome: str,
+    detail: dict[str, Any],
+    severity: str = "INFO",
+    retention_class: str = "STANDARD",
+) -> None:
+    connection.execute(
+        """INSERT INTO operational_events(
+               occurred_at,severity,component,event_type,status,outcome,
+               detail_json,retention_class
+           ) VALUES(?,?,?,?,?,?,?,?)""",
+        (
+            now(),
+            severity,
+            component,
+            event_type,
+            status,
+            outcome,
+            json.dumps(detail, sort_keys=True, separators=(",", ":")),
+            retention_class,
+        ),
+    )
 
 
 def _base_schema(connection: sqlite3.Connection) -> None:
@@ -1284,6 +1327,19 @@ def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
                     timestamp,
                     "SnapIMS v0.10.0 durable operational event store",
                 ),
+            )
+            _insert_internal_event(
+                connection,
+                component="system",
+                event_type="migration.completed",
+                status="COMPLETE",
+                outcome=f"SCHEMA_{SCHEMA_VERSION}",
+                detail={
+                    "from_schema_version": current,
+                    "to_schema_version": SCHEMA_VERSION,
+                    "backup_filename": backup.name if backup is not None else "",
+                },
+                retention_class="BUSINESS",
             )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         with connect(db_file) as connection:

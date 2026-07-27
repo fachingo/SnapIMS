@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import hashlib
 import json
 import hmac
 import logging
@@ -35,6 +36,15 @@ from snapims.catalog.service import (
 )
 from snapims.bulk import apply_bulk_operation
 from snapims.money import parse_discount_percent, parse_price_cents
+from snapims.observability import (
+    RedactingFilter,
+    create_support_bundle,
+    query_events,
+    redact,
+    redact_text,
+    safe_exception,
+    try_emit_event,
+)
 from snapims.folder_picker import FolderPickerUnavailable, choose_folder
 from snapims.inventory import (
     CONDITIONS,
@@ -78,6 +88,37 @@ STATE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _LOGIN_FAILURES: dict[str, tuple[int, float, float]] = {}
 _LOGIN_LOCK = threading.Lock()
 _LOGIN_MAX_RECORDS = 10_000
+
+
+def _configured_secrets() -> tuple[str, ...]:
+    config = SnapIMSConfig.load()
+    shopify = ShopifyConfig.from_env()
+    return tuple(
+        value
+        for value in (
+            config.auth_secret,
+            config.admin_password_hash,
+            config.openai_api_key,
+            shopify.access_token,
+        )
+        if value
+    )
+
+
+def _identity_marker(identity: str) -> str:
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+
+
+def _event(component: str, event_type: str, **fields: Any) -> int | None:
+    paths = DataPaths.from_root().ensure()
+    return try_emit_event(
+        paths.db_file,
+        component=component,
+        event_type=event_type,
+        paths=paths,
+        known_secrets=_configured_secrets(),
+        **fields,
+    )
 
 
 def _client_identity(request: Request, username: str = "") -> str:
@@ -177,16 +218,46 @@ def _security_headers(response: Any, path: str) -> None:
 async def lifespan(app: FastAPI):
     paths = get_paths()
     paths.logs.mkdir(parents=True, exist_ok=True)
-    if not any(isinstance(handler, RotatingFileHandler) for handler in LOGGER.handlers):
-        handler = RotatingFileHandler(paths.logs / "snapims.log", maxBytes=5_000_000, backupCount=5)
-        logging.getLogger("snapims").addHandler(handler)
-        logging.getLogger("snapims").setLevel(logging.INFO)
+    snapims_logger = logging.getLogger("snapims")
+    target_log = (paths.logs / "snapims.log").resolve()
+    for existing_handler in list(snapims_logger.handlers):
+        if (
+            isinstance(existing_handler, RotatingFileHandler)
+            and Path(existing_handler.baseFilename).resolve() != target_log
+        ):
+            snapims_logger.removeHandler(existing_handler)
+            existing_handler.close()
+    if not any(
+        isinstance(existing_handler, RotatingFileHandler)
+        and Path(existing_handler.baseFilename).resolve() == target_log
+        for existing_handler in snapims_logger.handlers
+    ):
+        handler = RotatingFileHandler(target_log, maxBytes=5_000_000, backupCount=5)
+        target_log.chmod(0o600)
+        handler.addFilter(RedactingFilter(known_secrets=_configured_secrets()))
+        snapims_logger.addHandler(handler)
+        snapims_logger.setLevel(logging.INFO)
     LOGGER.info("SnapIMS %s starting", __version__)
     db.initialize(paths.db_file, paths=paths)
-    reconcile_import_journals(paths)
-    db.mark_interrupted_jobs_paused(paths.db_file)
-    db.cleanup_csv_staging(paths.db_file)
-    db.prune_batch_checkpoints(paths.db_file)
+    import_recovery = reconcile_import_journals(paths)
+    paused_jobs = db.mark_interrupted_jobs_paused(paths.db_file)
+    expired_csv = db.cleanup_csv_staging(paths.db_file)
+    pruned_checkpoints = db.prune_batch_checkpoints(paths.db_file)
+    _event(
+        "app",
+        "application.started",
+        status="RUNNING",
+        outcome="STARTED",
+        detail={
+            "version": __version__,
+            "schema_version": db.SCHEMA_VERSION,
+            "import_recovery": import_recovery,
+            "paused_recognition_jobs": paused_jobs,
+            "expired_csv_stages": expired_csv,
+            "pruned_checkpoints": pruned_checkpoints,
+        },
+        retention_class="BUSINESS",
+    )
     app.state.catalog_error = ""
     try:
         catalog_db.initialize(paths.catalog_db_file, paths=paths)
@@ -196,8 +267,27 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         app.state.catalog_error = str(exc)
         LOGGER.exception("Movie catalog startup failed; inventory remains available")
-    yield
-    LOGGER.info("SnapIMS shutting down")
+        safe = safe_exception(exc, known_secrets=_configured_secrets())
+        _event(
+            "catalog",
+            "catalog.startup_failed",
+            severity="ERROR",
+            status="DEGRADED",
+            outcome="CATALOG_UNAVAILABLE",
+            error_class=safe["error_class"],
+            safe_summary=safe["safe_summary"],
+        )
+    try:
+        yield
+    finally:
+        _event(
+            "app",
+            "application.stopped",
+            status="STOPPED",
+            outcome="SHUTDOWN",
+            retention_class="BUSINESS",
+        )
+        LOGGER.info("SnapIMS shutting down")
 
 
 app = FastAPI(title="SnapIMS", version=__version__, lifespan=lifespan)
@@ -256,6 +346,15 @@ async def authentication(request: Request, call_next):
             generation=config.session_generation,
             password_hash=config.admin_password_hash,
         )
+        if claims is None:
+            _event(
+                "auth",
+                "auth.session_revoked",
+                severity="WARNING",
+                status="REVOKED",
+                outcome="INVALID_OR_EXPIRED_SESSION",
+                retention_class="SECURITY",
+            )
     anonymous_csrf = request.cookies.get(CSRF_COOKIE, "")
     request.state.csrf_token = (
         str(claims.get("csrf", "")) if claims else anonymous_csrf or _new_csrf()
@@ -265,7 +364,16 @@ async def authentication(request: Request, call_next):
             LOGGER.warning(
                 "Security request rejected reason=origin path=%s client=%s",
                 request.url.path,
-                _client_identity(request),
+                _identity_marker(_client_identity(request)),
+            )
+            _event(
+                "auth",
+                "auth.request_rejected",
+                severity="WARNING",
+                status="REJECTED",
+                outcome="ORIGIN",
+                detail={"path": request.url.path, "method": request.method},
+                retention_class="SECURITY",
             )
             origin_response = JSONResponse({"detail": "Forbidden"}, status_code=403)
             _security_headers(origin_response, request.url.path)
@@ -276,7 +384,16 @@ async def authentication(request: Request, call_next):
             LOGGER.warning(
                 "Security request rejected reason=csrf path=%s client=%s",
                 request.url.path,
-                _client_identity(request),
+                _identity_marker(_client_identity(request)),
+            )
+            _event(
+                "auth",
+                "auth.request_rejected",
+                severity="WARNING",
+                status="REJECTED",
+                outcome="CSRF",
+                detail={"path": request.url.path, "method": request.method},
+                retention_class="SECURITY",
             )
             csrf_response = JSONResponse({"detail": "Forbidden"}, status_code=403)
             _security_headers(csrf_response, request.url.path)
@@ -342,13 +459,37 @@ async def login(request: Request, username: str = Form(""), password: str = Form
     identity = _client_identity(request, username)
     retry_after = _login_retry_after(identity)
     if retry_after:
-        LOGGER.warning("Authentication failed outcome=throttled identity=%s", identity)
+        LOGGER.warning(
+            "Authentication failed outcome=throttled identity=%s",
+            _identity_marker(identity),
+        )
+        _event(
+            "auth",
+            "auth.login_failed",
+            severity="WARNING",
+            status="THROTTLED",
+            outcome="RATE_LIMITED",
+            safe_summary="Login attempt was throttled.",
+            detail={
+                "identity_marker": _identity_marker(identity),
+                "retry_after_seconds": retry_after,
+            },
+            retention_class="SECURITY",
+        )
         response = RedirectResponse("/login?error=Invalid%20credentials", status_code=303)
         response.headers["Retry-After"] = str(retry_after)
         return response
     if username == config.admin_username and verify_password(password, config.admin_password_hash):
         _clear_login_failures(identity)
-        LOGGER.info("Authentication succeeded identity=%s", identity)
+        LOGGER.info("Authentication succeeded identity=%s", _identity_marker(identity))
+        _event(
+            "auth",
+            "auth.login_succeeded",
+            status="AUTHENTICATED",
+            outcome="SUCCESS",
+            detail={"identity_marker": _identity_marker(identity)},
+            retention_class="SECURITY",
+        )
         response = RedirectResponse("/", status_code=303)
         forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
         response.set_cookie(
@@ -369,15 +510,37 @@ async def login(request: Request, username: str = Form(""), password: str = Form
     delay = _record_login_failure(identity)
     LOGGER.warning(
         "Authentication failed outcome=invalid identity=%s backoff_seconds=%s",
-        identity,
+        _identity_marker(identity),
         delay,
+    )
+    _event(
+        "auth",
+        "auth.login_failed",
+        severity="WARNING",
+        status="REJECTED",
+        outcome="INVALID_CREDENTIALS",
+        safe_summary="Login credentials were rejected.",
+        detail={
+            "identity_marker": _identity_marker(identity),
+            "backoff_seconds": delay,
+        },
+        retention_class="SECURITY",
     )
     return RedirectResponse("/login?error=Invalid%20credentials", status_code=303)
 
 
 @app.post("/logout")
 async def logout(request: Request) -> RedirectResponse:
-    LOGGER.info("Authentication logout identity=%s", _client_identity(request))
+    identity = _client_identity(request)
+    LOGGER.info("Authentication logout identity=%s", _identity_marker(identity))
+    _event(
+        "auth",
+        "auth.logout",
+        status="LOGGED_OUT",
+        outcome="SUCCESS",
+        detail={"identity_marker": _identity_marker(identity)},
+        retention_class="SECURITY",
+    )
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(COOKIE)
     response.delete_cookie(CSRF_COOKIE)
@@ -601,6 +764,14 @@ async def import_preview(
 ) -> HTMLResponse:
     selected, error = validate_folder(source_folder)
     if error:
+        _event(
+            "import",
+            "import.preview_failed",
+            severity="WARNING",
+            status="REJECTED",
+            outcome="INVALID_FOLDER",
+            safe_summary=error,
+        )
         return import_context(
             request, selected=source_folder or "", batch_name=batch_name, message=error
         )
@@ -616,8 +787,34 @@ async def import_preview(
             "recursive": recursive,
             "duplicate_batch_id": duplicate["batch_id"] if duplicate else "",
         }
+        _event(
+            "import",
+            "import.preview_completed",
+            operation_id=f"import:{batch.source_fingerprint[:16]}",
+            batch_id=str(duplicate["batch_id"]) if duplicate else "",
+            status="DUPLICATE" if duplicate else "READY",
+            outcome="EXISTING_BATCH" if duplicate else "NEW_IMPORT",
+            image_count=len(batch.source_photos),
+            detail={
+                "item_count": len(batch.items),
+                "product_photo_count": batch.photo_count,
+                "command_count": len(batch.commands),
+                "warning_count": len(batch.warnings),
+                "recursive": recursive,
+            },
+        )
         return import_context(request, selected=selected, batch_name=batch_name, preview=preview)
     except Exception as exc:
+        safe = safe_exception(exc, known_secrets=_configured_secrets())
+        _event(
+            "import",
+            "import.preview_failed",
+            severity="ERROR",
+            status="FAILED",
+            outcome="PARSE_FAILED",
+            error_class=safe["error_class"],
+            safe_summary=safe["safe_summary"],
+        )
         return import_context(request, selected=selected, batch_name=batch_name, message=str(exc))
 
 
@@ -1253,6 +1450,7 @@ async def api_item_photos(item_id: str) -> dict[str, Any]:
 @app.post("/api/batches/{batch_id}/bulk")
 async def api_bulk_edit(batch_id: str, request: Request) -> JSONResponse:
     payload = await request.json()
+    request_id = str(payload.get("request_id") or uuid4().hex)
     try:
         result = apply_bulk_operation(
             get_paths().db_file,
@@ -1261,10 +1459,40 @@ async def api_bulk_edit(batch_id: str, request: Request) -> JSONResponse:
             action=str(payload.get("action") or ""),
             value=payload.get("value"),
             reason=str(payload.get("reason") or "Bulk edit"),
-            request_id=str(payload.get("request_id") or uuid4().hex),
+            request_id=request_id,
         )
     except Exception as exc:
+        safe = safe_exception(exc, known_secrets=_configured_secrets())
+        _event(
+            "inventory",
+            "inventory.bulk_failed",
+            severity="ERROR",
+            operation_id=request_id,
+            batch_id=batch_id,
+            status="FAILED",
+            outcome=str(payload.get("action") or "UNKNOWN"),
+            error_class=safe["error_class"],
+            safe_summary=safe["safe_summary"],
+            retention_class="BUSINESS",
+        )
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
+    _event(
+        "inventory",
+        "inventory.bulk_completed",
+        operation_id=result.request_id,
+        batch_id=batch_id,
+        status="COMPLETE",
+        outcome=str(payload.get("action") or "UNKNOWN"),
+        detail={
+            "requested": result.requested,
+            "validated": result.validated,
+            "changed": result.changed,
+            "unchanged": result.unchanged,
+            "failed": result.failed,
+            "checkpoint_id": result.checkpoint_id,
+        },
+        retention_class="BUSINESS",
+    )
     return JSONResponse(
         {
             "ok": True,
@@ -1445,6 +1673,22 @@ async def upload_csv_preview(
             blocking_errors=errors,
             upload_bytes=len(raw),
         )
+        _event(
+            "inventory",
+            "csv.staged",
+            operation_id=f"csv:{token}",
+            batch_id=batch_id,
+            status="STAGED",
+            outcome="BLOCKED" if errors else "READY",
+            detail={
+                "token_marker": token[:8],
+                "row_count": len(payload),
+                "upload_bytes": len(raw),
+                "blocking_error_count": len(errors),
+                "summary": summary,
+            },
+            retention_class="BUSINESS",
+        )
         return TEMPLATES.TemplateResponse(
             request,
             "csv_diff.html",
@@ -1459,6 +1703,18 @@ async def upload_csv_preview(
             ),
         )
     except (UnicodeDecodeError, CSVImportError, OSError) as exc:
+        safe = safe_exception(exc, known_secrets=_configured_secrets())
+        _event(
+            "inventory",
+            "csv.stage_failed",
+            severity="ERROR",
+            batch_id=batch_id,
+            status="FAILED",
+            outcome="VALIDATION_FAILED",
+            error_class=safe["error_class"],
+            safe_summary=safe["safe_summary"],
+            retention_class="BUSINESS",
+        )
         return await publish_page(
             request, batch_id=batch_id, message=f"CSV upload failed: {exc}"
         )
@@ -1497,9 +1753,32 @@ async def apply_csv(token: str = Form(...), confirmation: bool = Form(False)) ->
     except Exception as exc:
         stage = db.get_csv_staging(get_paths().db_file, token)
         batch_id = str(stage["batch_id"]) if stage else ""
+        safe = safe_exception(exc, known_secrets=_configured_secrets())
+        _event(
+            "inventory",
+            "csv.apply_failed",
+            severity="ERROR",
+            operation_id=f"csv:{token}",
+            batch_id=batch_id,
+            status="FAILED",
+            outcome="NOT_APPLIED",
+            error_class=safe["error_class"],
+            safe_summary=safe["safe_summary"],
+            retention_class="BUSINESS",
+        )
         return redirect(
             f"/publish?batch_id={quote(batch_id)}&message=" + quote(f"CSV was not applied: {exc}")
         )
+    _event(
+        "inventory",
+        "csv.applied",
+        operation_id=f"csv:{token}",
+        batch_id=batch_id,
+        status="APPLIED",
+        outcome="COMPLETE",
+        detail={"changed_items": changed, "checkpoint_id": checkpoint_id},
+        retention_class="BUSINESS",
+    )
     return redirect(
         f"/publish?batch_id={quote(batch_id)}&notice="
         + quote(f"CSV applied to {changed} items. Rollback checkpoint {checkpoint_id} created.")
@@ -1509,6 +1788,15 @@ async def apply_csv(token: str = Form(...), confirmation: bool = Form(False)) ->
 @app.post("/publish/csv/cancel")
 async def cancel_csv(token: str = Form(...), batch_id: str = Form(...)) -> RedirectResponse:
     db.delete_csv_staging(get_paths().db_file, token)
+    _event(
+        "inventory",
+        "csv.cancelled",
+        operation_id=f"csv:{token}",
+        batch_id=batch_id,
+        status="CANCELLED",
+        outcome="NO_CHANGES",
+        retention_class="BUSINESS",
+    )
     return redirect(
         f"/publish?batch_id={quote(batch_id)}&notice={quote('CSV upload cancelled. No working values changed.')}"
     )
@@ -1587,13 +1875,37 @@ async def settings_page(request: Request, message: str = "") -> HTMLResponse:
 async def save_settings(incoming_folder: str = Form(...)) -> RedirectResponse:
     resolved, error = validate_folder(incoming_folder)
     if error:
+        _event(
+            "system",
+            "settings.save_failed",
+            severity="WARNING",
+            status="REJECTED",
+            outcome="INVALID_FOLDER",
+            safe_summary=error,
+            retention_class="SECURITY",
+        )
         return redirect(f"/settings?message={quote(error)}")
     db.set_setting(get_paths().db_file, "incoming_folder", resolved)
+    _event(
+        "system",
+        "settings.saved",
+        status="SAVED",
+        outcome="SUCCESS",
+        detail={"changed_fields": ["incoming_folder"]},
+        retention_class="SECURITY",
+    )
     return redirect(f"/settings?message={quote('Settings saved.')}")
 
 
 @app.get("/diagnostics", response_class=HTMLResponse)
-async def diagnostics(request: Request, notice: str = "", message: str = "") -> HTMLResponse:
+async def diagnostics(
+    request: Request,
+    notice: str = "",
+    message: str = "",
+    activity_source: str = "",
+    activity_severity: str = "",
+    activity_operation: str = "",
+) -> HTMLResponse:
     paths = get_paths()
     with db.connect(paths.db_file) as connection:
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
@@ -1627,6 +1939,34 @@ async def diagnostics(request: Request, notice: str = "", message: str = "") -> 
                 "FROM operation_requests ORDER BY created_at DESC LIMIT 10"
             )
         ]
+        active_operations = [
+            dict(row)
+            for row in connection.execute(
+                """SELECT event_id,occurred_at,component,event_type,operation_id,batch_id,
+                          item_id,status,safe_summary
+                   FROM operational_events
+                   WHERE operation_id!=''
+                     AND event_id IN (
+                         SELECT MAX(event_id) FROM operational_events
+                         WHERE operation_id!='' GROUP BY operation_id
+                     )
+                     AND status IN (
+                         'RUNNING','QUEUED','IDENTIFYING','RETRYING',
+                         'SEARCHING_LOCAL','SEARCHING_WIKIPEDIA','LINK_PENDING'
+                     )
+                   ORDER BY event_id DESC LIMIT 25"""
+            )
+        ]
+        recognition_queue_depth = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM items WHERE recognition_status IN ('PENDING','BLOCKED')"
+            ).fetchone()[0]
+        )
+        bulk_queue_depth = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM operation_requests WHERE status IN ('REQUESTED','RUNNING')"
+            ).fetchone()[0]
+        )
     providers = {name: provider.available() for name, provider in recognizer_registry().items()}
     storage = db.storage_summary(paths.db_file)
     checkpoint_info = db.checkpoint_summary(paths.db_file)
@@ -1658,8 +1998,27 @@ async def diagnostics(request: Request, notice: str = "", message: str = "") -> 
                 )
             ]
     except Exception as exc:
-        catalog_error = catalog_error or str(exc)
+        catalog_error = catalog_error or redact_text(
+            str(exc), known_secrets=_configured_secrets()
+        )
     links = db.movie_link_summary(paths.db_file)
+    activity_events = list(
+        reversed(
+            query_events(
+                paths.db_file,
+                last=100,
+                severity=activity_severity,
+                source=activity_source,
+                operation_id=activity_operation,
+            )
+        )
+    )
+    catalog_queue_depth = sum(
+        1
+        for job in catalog_jobs
+        if str(job.get("status") or "")
+        in {"QUEUED", "PAUSED", "SEARCHING_WIKIPEDIA", "CANDIDATES_FOUND", "LINK_PENDING"}
+    )
     diagnostic_summary = {
         "version": __version__,
         "database": str(paths.db_file),
@@ -1693,24 +2052,117 @@ async def diagnostics(request: Request, notice: str = "", message: str = "") -> 
             providers=providers,
             test_provider_mode=test_providers_enabled(),
             test_contaminated_items=db.test_contamination_count(paths.db_file),
-            jobs=jobs,
-            csv_stages=csv_stages,
-            imports=imports,
-            operations=operations,
+            jobs=redact(jobs, known_secrets=_configured_secrets()),
+            csv_stages=redact(csv_stages, known_secrets=_configured_secrets()),
+            imports=redact(imports, known_secrets=_configured_secrets()),
+            operations=redact(operations, known_secrets=_configured_secrets()),
+            active_operations=redact(
+                active_operations, known_secrets=_configured_secrets()
+            ),
+            activity_events=activity_events,
+            activity_source=activity_source,
+            activity_severity=activity_severity,
+            activity_operation=activity_operation,
+            activity_queue_depth={
+                "recognition": recognition_queue_depth,
+                "catalog": catalog_queue_depth,
+                "bulk": bulk_queue_depth,
+            },
             media_totals=db.media_totals(paths.db_file),
             storage=storage,
             checkpoint_info=checkpoint_info,
             stage_info=stage_info,
             import_info=import_info,
             last_backup=str(backups[0]) if backups else "No backup recorded",
-            diagnostic_summary=json.dumps(diagnostic_summary, indent=2),
+            diagnostic_summary=json.dumps(
+                redact(diagnostic_summary, known_secrets=_configured_secrets()),
+                indent=2,
+            ),
             catalog=catalog,
-            catalog_error=catalog_error,
-            catalog_jobs=catalog_jobs,
+            catalog_error=redact_text(
+                catalog_error, known_secrets=_configured_secrets()
+            ),
+            catalog_jobs=redact(catalog_jobs, known_secrets=_configured_secrets()),
             links=links,
             notice=notice,
             message=message,
         ),
+    )
+
+
+@app.get("/api/diagnostics/events")
+async def diagnostics_events(
+    after: int = 0,
+    last: int = Query(100, ge=1, le=500),
+    source: str = "",
+    severity: str = "",
+    operation: str = "",
+    batch: str = "",
+    item: str = "",
+    order: str = "",
+) -> dict[str, Any]:
+    events = query_events(
+        get_paths().db_file,
+        after_event_id=after,
+        last=last,
+        source=source,
+        severity=severity,
+        operation_id=operation,
+        batch_id=batch,
+        item_id=item,
+        order_id=order,
+    )
+    return {
+        "events": events,
+        "last_event_id": max((int(event["event_id"]) for event in events), default=after),
+        "bounded": True,
+        "maximum": 500,
+    }
+
+
+@app.post("/diagnostics/support-bundle")
+async def diagnostics_support_bundle() -> StreamingResponse:
+    paths = get_paths()
+    with db.connect(paths.db_file) as connection:
+        integrity = str(connection.execute("PRAGMA integrity_check").fetchone()[0])
+        foreign = len(connection.execute("PRAGMA foreign_key_check").fetchall())
+        manifest = db.schema_manifest_report(connection)
+    config = SnapIMSConfig.load()
+    bundle = create_support_bundle(
+        paths,
+        project_path=config.project_path,
+        health={
+            "inventory_database": {
+                "integrity": integrity,
+                "foreign_key_violations": foreign,
+                "schema_manifest": manifest,
+            },
+            "catalog_error_class": (
+                "CatalogUnavailable" if getattr(app.state, "catalog_error", "") else ""
+            ),
+        },
+        configured_settings={
+            "public_url": config.public_url,
+            "allowed_hosts": config.allowed_hosts,
+            "authentication_enabled": authentication_enabled(
+                config.auth_secret, config.admin_password_hash
+            ),
+            "manage_guacamole_services": config.manage_guacamole_services,
+        },
+        known_secrets=_configured_secrets(),
+    )
+    _event(
+        "system",
+        "support_bundle.created",
+        status="COMPLETE",
+        outcome="EXPORTED",
+        detail={"filename": bundle.name},
+        retention_class="SECURITY",
+    )
+    return safe_file_response(
+        bundle,
+        media_type="application/zip",
+        filename=bundle.name,
     )
 
 
@@ -1828,7 +2280,10 @@ async def health() -> JSONResponse:
             "catalog": {
                 "state": catalog_state,
                 "required": False,
-                "safe_summary": str(getattr(app.state, "catalog_error", "") or ""),
+                "safe_summary": redact_text(
+                    str(getattr(app.state, "catalog_error", "") or ""),
+                    known_secrets=_configured_secrets(),
+                ),
             },
         },
         # Kept for v0.9 clients while they migrate to components.

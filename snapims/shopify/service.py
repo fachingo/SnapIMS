@@ -13,6 +13,7 @@ from snapims.catalog.service import catalog_output_for_item
 from snapims.config import DataPaths, ShopifyConfig
 from snapims.inventory import validation_errors
 from snapims.money import final_price_cents
+from snapims.observability import safe_exception, try_emit_event
 from snapims.runtime import is_test_provider, test_providers_enabled
 from snapims.shopify.client import ShopifyClient
 
@@ -33,10 +34,32 @@ class ShopifyService:
         self.db_file = db_file
         self.config = config
         self.client = client or ShopifyClient(config)
+        self.paths = DataPaths.from_root(self.db_file.parent.parent).ensure()
+
+    def _event(self, item_id: str, event_type: str, **fields: Any) -> int | None:
+        return try_emit_event(
+            self.db_file,
+            component="shopify",
+            event_type=event_type,
+            operation_id=f"shopify:{item_id}",
+            item_id=item_id,
+            provider="shopify",
+            paths=self.paths,
+            known_secrets=(self.config.access_token,),
+            **fields,
+        )
 
     def dry_run(self, item_id: str, *, remote_check: bool = False) -> ShopifyDryRun:
         item = db.get_item(self.db_file, item_id)
         if item is None:
+            self._event(
+                item_id,
+                "shopify.simulation_blocked",
+                severity="WARNING",
+                status="BLOCKED",
+                outcome="UNKNOWN_ITEM",
+                safe_summary="Shopify simulation was blocked for an unknown Item ID.",
+            )
             return ShopifyDryRun(item_id, False, "BLOCK", ("Unknown Item ID",), (), 0, {})
         photos = db.get_item_photos(self.db_file, item_id)
         config_problems = self.config.problems()
@@ -67,9 +90,8 @@ class ShopifyService:
             if existing and not item["shopify_product_id"]:
                 errors.append(f"SKU already exists in Shopify on {existing['product']['title']}")
         final_price = final_price_cents(int(item["price_cents"] or 0), item["discount_percent"] or 0)
-        paths = DataPaths.from_root(self.db_file.parent.parent).ensure()
         try:
-            movie = catalog_output_for_item(paths, item_id)
+            movie = catalog_output_for_item(self.paths, item_id)
         except Exception:
             movie = {
                 "movie_id": "", "canonical_title": "", "original_title": "",
@@ -91,7 +113,30 @@ class ShopifyService:
             "catalog_match_status": movie["catalog_match_status"],
         }
         warnings = tuple(f"Simulation only: {problem}" for problem in config_problems) if not remote_check else ()
-        return ShopifyDryRun(item_id, not errors and action in {"CREATE_DRAFT", "SIMULATE_CREATE_DRAFT"}, action if not errors else "BLOCK", tuple(dict.fromkeys(errors)), warnings, len(photos), payload)
+        report = ShopifyDryRun(
+            item_id,
+            not errors and action in {"CREATE_DRAFT", "SIMULATE_CREATE_DRAFT"},
+            action if not errors else "BLOCK",
+            tuple(dict.fromkeys(errors)),
+            warnings,
+            len(photos),
+            payload,
+        )
+        self._event(
+            item_id,
+            "shopify.simulation_completed",
+            severity="INFO" if report.ready else "WARNING",
+            image_count=len(photos),
+            status="READY" if report.ready else "BLOCKED",
+            outcome=report.action,
+            detail={
+                "remote_check": remote_check,
+                "error_count": len(report.errors),
+                "warning_count": len(report.warnings),
+                "image_count": len(photos),
+            },
+        )
+        return report
 
     def upload_draft(
         self,
@@ -109,8 +154,16 @@ class ShopifyService:
         if not report.ready:
             raise ValueError("Shopify dry-run blocked upload: " + "; ".join(report.errors))
 
-        paths = DataPaths.from_root(self.db_file.parent.parent).ensure()
-        db.backup_database(paths, "before-shopify-upload")
+        backup = db.backup_database(self.paths, "before-shopify-upload")
+        if backup is not None:
+            self._event(
+                item_id,
+                "shopify.backup_created",
+                status="COMPLETE",
+                outcome="before-shopify-upload",
+                detail={"filename": backup.name},
+                retention_class="BUSINESS",
+            )
         item = db.get_item(self.db_file, item_id)
         assert item is not None
         photos = db.get_item_photos(self.db_file, item_id)
@@ -132,6 +185,17 @@ class ShopifyService:
                 raise RuntimeError("SQLite did not return an upload attempt ID")
             attempt = cursor.lastrowid
 
+        upload_started = time.monotonic()
+        active_stage = "reconcile"
+        self._event(
+            item_id,
+            "shopify.upload_started",
+            attempt_number=int(checkpoint.get("retry_count") or 0) + 1,
+            image_count=len(image_paths),
+            status="RUNNING",
+            detail={"last_completed_step": step},
+            retention_class="BUSINESS",
+        )
         try:
             product_id = str(checkpoint.get("product_id") or item["shopify_product_id"] or "")
             variant_id = str(checkpoint.get("variant_id") or item["shopify_variant_id"] or "")
@@ -140,6 +204,7 @@ class ShopifyService:
             )
 
             if not product_id:
+                active_stage = "find_variant_by_sku"
                 existing = self.client.find_variant_by_sku(item["sku"])
                 if existing:
                     product = existing.get("product") or {}
@@ -151,6 +216,7 @@ class ShopifyService:
                     variant_id = str(existing["id"])
                     inventory_item_id = str((existing.get("inventoryItem") or {})["id"])
                 else:
+                    active_stage = "create_draft_product"
                     created = self.client.create_draft_product(item)
                     product_id = created["product_id"]
                     variant_id = created["variant_id"]
@@ -165,11 +231,13 @@ class ShopifyService:
                 )
 
             if order.get(step, 0) < order["configure_variant"]:
+                active_stage = "configure_variant"
                 self.client.configure_variant(item, product_id, variant_id)
                 step = "configure_variant"
                 self._checkpoint(item_id, step)
 
             if order.get(step, 0) < order["activate_inventory"]:
+                active_stage = "activate_inventory"
                 desired_quantity = int(item["quantity"])
                 idempotency_key = str(
                     checkpoint.get("idempotency_key")
@@ -214,17 +282,22 @@ class ShopifyService:
                 )
 
             if order.get(step, 0) < order["attach_media"]:
+                active_stage = "media_status_reconcile"
                 statuses = self.client.media_status(product_id)
                 remote_media_exists = len(statuses) >= len(image_paths) and not any(
                     status in {"FAILED", "ERROR"} for status in statuses
                 )
                 if not remote_media_exists:
+                    active_stage = "stage_images"
                     targets = self.client.stage_images(image_paths)
+                    active_stage = "upload_staged_images"
                     urls = self.client.upload_staged_images(image_paths, targets)
+                    active_stage = "attach_media"
                     self.client.attach_media(product_id, urls, item["title"])
                 step = "attach_media"
                 self._checkpoint(item_id, step)
 
+            active_stage = "media_processing"
             deadline = time.monotonic() + media_timeout
             while time.monotonic() < deadline:
                 statuses = self.client.media_status(product_id)
@@ -271,8 +344,20 @@ class ShopifyService:
                     "UPDATE shopify_sync SET status='UPLOADED',product_id=?,variant_id=?,inventory_item_id=?,admin_url=?,media_count=?,last_synced_at=?,last_error='',last_completed_step='complete' WHERE item_id=?",
                     (product_id, variant_id, inventory_item_id, admin_url, len(image_paths), db.now(), item_id),
                 )
+            self._event(
+                item_id,
+                "shopify.upload_completed",
+                attempt_number=int(checkpoint.get("retry_count") or 0) + 1,
+                duration_ms=int((time.monotonic() - upload_started) * 1000),
+                image_count=len(image_paths),
+                status="UPLOADED",
+                outcome="DRAFT_CREATED",
+                detail={"last_completed_step": "complete"},
+                retention_class="BUSINESS",
+            )
             return result
         except Exception as exc:
+            safe = safe_exception(exc, known_secrets=(self.config.access_token,))
             with db.transaction(self.db_file) as connection:
                 connection.execute(
                     "UPDATE upload_attempts SET finished_at=?,status='FAILED',step=?,error=? WHERE attempt_id=?",
@@ -286,6 +371,20 @@ class ShopifyService:
                     "UPDATE shopify_sync SET status='FAILED',last_error=?,retry_count=retry_count+1 WHERE item_id=?",
                     (str(exc), item_id),
                 )
+            self._event(
+                item_id,
+                "shopify.stage_failed",
+                severity="ERROR",
+                attempt_number=int(checkpoint.get("retry_count") or 0) + 1,
+                duration_ms=int((time.monotonic() - upload_started) * 1000),
+                image_count=len(image_paths),
+                status="FAILED",
+                outcome=active_stage,
+                error_class=safe["error_class"],
+                safe_summary=safe["safe_summary"],
+                detail={"stage": active_stage, "last_completed_step": step},
+                retention_class="BUSINESS",
+            )
             raise
 
     def _record_outbound_request(
@@ -339,3 +438,11 @@ class ShopifyService:
                 """UPDATE shopify_sync SET status=?,product_id=CASE WHEN ?='' THEN product_id ELSE ? END,variant_id=CASE WHEN ?='' THEN variant_id ELSE ? END,inventory_item_id=CASE WHEN ?='' THEN inventory_item_id ELSE ? END,idempotency_key=CASE WHEN ?='' THEN idempotency_key ELSE ? END,last_completed_step=? WHERE item_id=?""",
                 (step.upper(), product_id, product_id, variant_id, variant_id, inventory_item_id, inventory_item_id, idempotency_key, idempotency_key, step, item_id),
             )
+        self._event(
+            item_id,
+            "shopify.stage_completed",
+            status=step.upper(),
+            outcome="SUCCEEDED",
+            detail={"stage": step},
+            retention_class="BUSINESS",
+        )

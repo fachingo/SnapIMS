@@ -7,6 +7,7 @@ import pytest
 from snapims import db
 from snapims.demo import create_demo_batch
 from snapims.processor import process_batch
+from snapims.observability import query_events
 from snapims.recognition.base import BaseRecognizer, RecognitionResult
 from snapims.recognition.service import (
     accept_item,
@@ -92,6 +93,24 @@ def test_background_job_persists_progress_and_completes(tmp_path: Path, data_pat
     assert job["completed"] == 5
     assert job["recognized"] == 5
     assert job["failed"] == 0
+    events = query_events(
+        data_paths.db_file,
+        source="recognition",
+        batch_id=result.batch_id,
+        last=100,
+    )
+    event_types = [event["event_type"] for event in events]
+    assert "recognition.queued" in event_types
+    assert "recognition.batch_started" in event_types
+    assert event_types.count("recognition.started") == 5
+    assert event_types.count("recognition.completed") == 5
+    assert "recognition.batch_completed" in event_types
+    operation_ids = {
+        event["operation_id"]
+        for event in events
+        if event["event_type"].startswith("recognition.")
+    }
+    assert operation_ids == {f"recognition:{result.batch_id}"}
 
 
 def test_duplicate_start_is_rejected_while_worker_active(tmp_path: Path, data_paths) -> None:

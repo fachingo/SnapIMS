@@ -9,6 +9,7 @@ from typing import Any
 
 from snapims import db
 from snapims.config import DataPaths
+from snapims.observability import safe_exception, try_emit_event
 from snapims.recognition.base import BaseRecognizer, RecognitionResult
 from snapims.recognition.providers import recognizer_registry
 from snapims.runtime import is_test_provider, require_provider_allowed
@@ -68,6 +69,27 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) -> 
     if item is None:
         raise KeyError(f"Unknown Item ID: {item_id}")
     images = recognition_images(db_file, item_id)
+    image_bytes = sum(path.stat().st_size for path in images if path.is_file())
+    model_name = getattr(recognizer, "model_name", lambda: "")()
+    operation_id = f"recognition:{item['batch_id']}"
+    attempt_number = len(db.recognition_history(db_file, item_id)) + 1
+    paths = DataPaths.from_root(db_file.parent.parent).ensure()
+    started_at = time.monotonic()
+    try_emit_event(
+        db_file,
+        component="recognition",
+        event_type="recognition.started",
+        operation_id=operation_id,
+        batch_id=str(item["batch_id"]),
+        item_id=item_id,
+        provider=recognizer.name,
+        model_name=model_name,
+        attempt_number=attempt_number,
+        image_count=len(images),
+        image_bytes=image_bytes,
+        status="RUNNING",
+        paths=paths,
+    )
     item["approved_ai_tags"] = [
         {
             "tag_id": definition["tag_id"],
@@ -91,7 +113,7 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) -> 
                 item_id,
                 result.provider_name,
                 "TEST" if is_test_provider(result.provider_name) else "LIVE",
-                getattr(recognizer, "model_name", lambda: "")(),
+                model_name,
                 db.now(),
                 result.suggested_title,
                 result.edition,
@@ -108,7 +130,7 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) -> 
                 result.input_tokens,
                 result.output_tokens,
                 len(images),
-                sum(path.stat().st_size for path in images if path.is_file()),
+                image_bytes,
                 int(result.requires_review),
             ),
         )
@@ -131,7 +153,6 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) -> 
     try:
         from snapims.catalog.service import queue_recognition_lookup
 
-        paths = DataPaths.from_root(db_file.parent.parent).ensure()
         queue_recognition_lookup(
             paths,
             recognition_result_id,
@@ -142,6 +163,30 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) -> 
             db.mark_item_catalog_unavailable(db_file, item_id, recognition_result_id, str(exc))
         except Exception:
             pass
+    try_emit_event(
+        db_file,
+        component="recognition",
+        event_type="recognition.completed",
+        operation_id=operation_id,
+        batch_id=str(item["batch_id"]),
+        item_id=item_id,
+        provider=result.provider_name,
+        model_name=model_name,
+        attempt_number=attempt_number,
+        duration_ms=int((time.monotonic() - started_at) * 1000),
+        image_count=len(images),
+        image_bytes=image_bytes,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        status="COMPLETE",
+        outcome="REVIEW_REQUIRED" if result.requires_review else "COMPLETE",
+        detail={
+            "recognition_result_id": recognition_result_id,
+            "confidence": result.confidence,
+            "uncertainty_reason_count": len(result.uncertainty_reasons),
+        },
+        paths=paths,
+    )
     return recognition_result_id, result
 
 
@@ -181,6 +226,21 @@ def _recognition_worker(db_file: Path, batch_id: str, provider_name: str, delay:
         error_at=None,
         model_name=getattr(provider, "model_name", lambda: "")(),
     )
+    paths = DataPaths.from_root(db_file.parent.parent).ensure()
+    operation_id = f"recognition:{batch_id}"
+    worker_started = time.monotonic()
+    try_emit_event(
+        db_file,
+        component="recognition",
+        event_type="recognition.batch_started",
+        operation_id=operation_id,
+        batch_id=batch_id,
+        provider=provider_name,
+        model_name=getattr(provider, "model_name", lambda: "")(),
+        status="IDENTIFYING",
+        detail={"total": len(items), "already_completed": recognized, "failed": failed},
+        paths=paths,
+    )
     try:
         for item in items:
             if item["item_id"] in completed_ids or item["recognition_status"] == "FAILED":
@@ -196,6 +256,7 @@ def _recognition_worker(db_file: Path, batch_id: str, provider_name: str, delay:
             except Exception as exc:
                 failed += 1
                 code, message = classify_recognition_error(exc)
+                safe = safe_exception(exc)
                 db.update_item(
                     db_file,
                     item["item_id"],
@@ -208,6 +269,26 @@ def _recognition_worker(db_file: Path, batch_id: str, provider_name: str, delay:
                     error_code=code,
                     error_message=message,
                     error_at=db.now(),
+                )
+                try_emit_event(
+                    db_file,
+                    component="recognition",
+                    event_type="recognition.failed",
+                    severity="ERROR",
+                    operation_id=operation_id,
+                    batch_id=batch_id,
+                    item_id=str(item["item_id"]),
+                    provider=provider_name,
+                    model_name=getattr(provider, "model_name", lambda: "")(),
+                    attempt_number=len(
+                        db.recognition_history(db_file, str(item["item_id"]))
+                    )
+                    + 1,
+                    status="FAILED",
+                    outcome=code,
+                    error_class=safe["error_class"],
+                    safe_summary=message,
+                    paths=paths,
                 )
             else:
                 recognized += 1
@@ -239,6 +320,21 @@ def _recognition_worker(db_file: Path, batch_id: str, provider_name: str, delay:
             failed=failed,
             current_item_id="",
             finished_at=db.now(),
+        )
+        try_emit_event(
+            db_file,
+            component="recognition",
+            event_type="recognition.batch_completed",
+            severity="WARNING" if failed else "INFO",
+            operation_id=operation_id,
+            batch_id=batch_id,
+            provider=provider_name,
+            model_name=getattr(provider, "model_name", lambda: "")(),
+            duration_ms=int((time.monotonic() - worker_started) * 1000),
+            status=status,
+            outcome=status,
+            detail={"total": len(items), "recognized": recognized, "failed": failed},
+            paths=paths,
         )
     finally:
         with _LOCK:
@@ -297,6 +393,21 @@ def start_batch_recognition(
                     timestamp,
                 ),
             )
+        try_emit_event(
+            db_file,
+            component="recognition",
+            event_type="recognition.blocked",
+            severity="ERROR",
+            operation_id=f"recognition:{batch_id}",
+            batch_id=batch_id,
+            provider=provider_name,
+            model_name=getattr(provider, "model_name", lambda: "")(),
+            status="BLOCKED",
+            outcome=code,
+            error_class=code,
+            safe_summary=message,
+            paths=DataPaths.from_root(db_file.parent.parent).ensure(),
+        )
         return False
 
     retryable = {"FAILED"} if retry_failed else {"FAILED", "BLOCKED", "SKIPPED"}
@@ -317,6 +428,17 @@ def start_batch_recognition(
     with _LOCK:
         existing = _ACTIVE.get(batch_id)
         if existing and existing.is_alive():
+            try_emit_event(
+                db_file,
+                component="recognition",
+                event_type="recognition.duplicate_queue_ignored",
+                severity="WARNING",
+                operation_id=f"recognition:{batch_id}",
+                batch_id=batch_id,
+                provider=provider_name,
+                status="ALREADY_RUNNING",
+                paths=DataPaths.from_root(db_file.parent.parent).ensure(),
+            )
             return False
         items, recognized, failed = _job_counts(db_file, batch_id)
         prior = db.get_recognition_job(db_file, batch_id) or {}
@@ -344,6 +466,18 @@ def start_batch_recognition(
         )
         _ACTIVE[batch_id] = thread
         thread.start()
+    try_emit_event(
+        db_file,
+        component="recognition",
+        event_type="recognition.retried" if retry_failed else "recognition.queued",
+        operation_id=f"recognition:{batch_id}",
+        batch_id=batch_id,
+        provider=provider_name,
+        model_name=getattr(provider, "model_name", lambda: "")(),
+        status="QUEUED",
+        detail={"total": len(items), "retry_candidates": len(candidates)},
+        paths=DataPaths.from_root(db_file.parent.parent).ensure(),
+    )
     return True
 
 
@@ -361,6 +495,18 @@ def retry_failed_item(db_file: Path, item_id: str, provider_name: str = "openai"
         item_id,
         {"recognition_status": "PENDING", "recognition_error": ""},
         source="SYSTEM_RECOVERY",
+    )
+    item_before = db.get_item(db_file, item_id)
+    try_emit_event(
+        db_file,
+        component="recognition",
+        event_type="recognition.retried",
+        operation_id=f"recognition:{item_before['batch_id']}" if item_before else "",
+        batch_id=str(item_before["batch_id"]) if item_before else "",
+        item_id=item_id,
+        provider=provider_name,
+        status="RETRYING",
+        paths=DataPaths.from_root(db_file.parent.parent).ensure(),
     )
     run_recognition(db_file, item_id, provider)
     item = db.get_item(db_file, item_id)

@@ -1,0 +1,18 @@
+{
+  "browser": "Playwright Firefox",
+  "checks": {
+    "bounded_polling_receives_event": true,
+    "copy_event": true,
+    "durable_after_restart": true,
+    "live_activity_visible": true,
+    "queue_metrics_visible": true,
+    "safe_detail_redacted": true,
+    "source_filter": true,
+    "support_bundle_redacted": true
+  },
+  "console_errors": [],
+  "page_errors": [],
+  "passed": true,
+  "url": "http://127.0.0.1:43705",
+  "workspace": "/tmp/snapims-v010-phase2-firefox-0ll1p0by"
+}
