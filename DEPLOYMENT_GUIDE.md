@@ -46,7 +46,7 @@ Do not replace the existing `ims.canadavhs.ca` route. Add a second ingress:
 ingress:
   - hostname: ims.canadavhs.ca
     service: http://127.0.0.1:8767
-  - hostname: desktop.ims.canadavhs.ca
+  - hostname: remote.canadavhs.ca
     service: http://127.0.0.1:8080
   - service: http_status:404
 ```
@@ -57,7 +57,12 @@ Use:
 scripts/configure_cloudflare_guacamole.sh
 ```
 
-If DNS routing cannot be completed locally, add `desktop.ims.canadavhs.ca` in the Cloudflare dashboard as a Public Hostname on the same tunnel, with service `http://127.0.0.1:8080`.
+If DNS routing cannot be completed locally, add `remote.canadavhs.ca` in the
+Cloudflare dashboard as a Public Hostname on the same tunnel, with service
+`http://127.0.0.1:8080`.
+
+`desktop.ims.canadavhs.ca` is not a current route. Keep it as backlog unless it
+is deliberately configured, DNS-resolved, and browser-verified.
 
 ## Environment
 
@@ -65,7 +70,7 @@ Relevant `.env` settings:
 
 ```bash
 SNAPIMS_GUACAMOLE_URL=http://127.0.0.1:8080/guacamole
-SNAPIMS_GUACAMOLE_PUBLIC_URL=https://desktop.ims.canadavhs.ca/guacamole
+SNAPIMS_GUACAMOLE_PUBLIC_URL=https://remote.canadavhs.ca/guacamole
 SNAPIMS_GUACD_SERVICE=guacd
 SNAPIMS_TOMCAT_SERVICE=snapims-guacamole-tomcat
 SNAPIMS_XRDP_SERVICE=xrdp

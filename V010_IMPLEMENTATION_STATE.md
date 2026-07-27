@@ -5,10 +5,11 @@
 - Project: SnapIMS
 - Branch: `feature/v0.10.0-final-preproduction`
 - HEAD: `77c09bc` (verified Phase 3 secure Settings native-Firefox milestone)
-- Upstream: none (branch not yet pushed)
+- Upstream: `origin/feature/v0.10.0-final-preproduction`
 - Started: 2026-07-26T18:59:00-06:00
-- Last updated: 2026-07-27T13:02:11-06:00
-- Current application version: source/package metadata `0.9.0`; installed editable distribution metadata `0.7.0`
+- Last updated: 2026-07-27T13:30:46-06:00
+- Current application version: source/package metadata, active editable
+  distribution, global launcher, CLI, and running status all `0.9.0`
 - Inventory schema: 11
 - Catalog schema: 1
 
@@ -90,6 +91,10 @@
 - [x] Verified submitted connection-test secrets are discarded unless explicitly saved and never appear in HTML, URLs, diagnostics events, support bundles, or error responses.
 - [x] Passed native Firefox Phase 3 acceptance with ten checks and zero console/page errors, including secure save, restart retention, bundle redaction, and session revocation.
 - [x] Applied schema 11 to production with an automatic backup, preserved all 4 batches and 32 items, and passed restart, cold boot, status, doctor, endpoint, integrity, FK, and manifest checks.
+- [x] Pushed `feature/v0.10.0-final-preproduction` without merge and verified requested commit `77c09bc` in the origin branch history under later Phase 3 closure `9b1c4b7`.
+- [x] Replaced stale editable 0.7.0 metadata with editable 0.9.0 and verified package, distribution, launcher, CLI, status, doctor, focused tests, pip consistency, and cold start.
+- [x] Adopted `https://remote.canadavhs.ca/guacamole/` as the official Guacamole URL in runtime defaults and operator-facing material; retained unresolved `desktop.ims` only as explicit backlog.
+- [x] Recorded extensible Phase 4 capture-source values and the Phase 6 shared-catalog provenance/contribution privacy boundary.
 
 ## Migrations
 
@@ -137,14 +142,15 @@
 | Phase 3 full regression/static/build gate | PASS | `release-evidence/v0.10.0/phase-3-settings/VERIFICATION.md` | One expected skip; 40 mypy-clean modules; isolated sdist/wheel pass |
 | Phase 3 secure store/provenance/provider/HTTP acceptance | PASS | `release-evidence/v0.10.0/phase-3-settings/VERIFICATION.md` | Atomic permissions, rollback, tested models, unsaved-secret no-echo, session revocation |
 | Phase 3 production migration/cold boot | PASS | `release-evidence/v0.10.0/phase-3-settings/PRODUCTION_ACCEPTANCE.md` | Schema 11; 4 batches/32 items; all required checks pass |
+| Pre-Phase-4 remote/version/hostname checkpoint | PASS | `release-evidence/v0.10.0/pre-phase-4-checkpoint/VERIFICATION.md` | Origin verified; all active metadata 0.9.0; 34 focused tests; pip check; cold boot; official hostname reconciled |
 
 ## Browser verification
 
 | Workflow | Browser | Result | Evidence |
 |---|---|---|---|
 | Public SnapIMS authentication landing | read-only HTTP probe | PASS | `release-evidence/v0.10.0/baseline/ENDPOINT_VERIFICATION.md` |
-| Official Guacamole hostname | DNS/HTTP probe | FAIL | `desktop.ims.canadavhs.ca` did not resolve |
-| Compatibility Guacamole hostname | read-only HTTP probe | PASS | Guacamole login markers found at `remote.canadavhs.ca` |
+| Official Guacamole hostname | owner decision and HTTPS probe | ACCESS-PROTECTED | `remote.canadavhs.ca/guacamole/` resolves and returned HTTP 403 to an unauthenticated probe; prior baseline probe found Guacamole login markers |
+| Unresolved backlog hostname | DNS probe | FAIL | `desktop.ims.canadavhs.ca` does not resolve and is not a current operator endpoint |
 | Phase 1 shortcuts and Controlled Tags | Playwright Firefox against real uvicorn | PASS | `release-evidence/v0.10.0/phase-1-firefox/` |
 | Phase 2 Live Activity, filters, redaction, bundle, restart durability | Playwright Firefox against real uvicorn | PASS | `release-evidence/v0.10.0/phase-2-firefox/` |
 | Phase 3 secure Settings, provenance, candidate test, redaction, restart, revocation | Playwright Firefox against real uvicorn | PASS | `release-evidence/v0.10.0/phase-3-firefox/` |
@@ -164,9 +170,9 @@
 |---|---|---|---|---|
 | V010-P0-001 | High | `python -m mypy snapims --ignore-missing-imports` | RESOLVED | All 37 source files pass |
 | V010-P0-002 | High | `python -m build --no-isolation` | RESOLVED | Installed declared setuptools/wheel; build and isolated wheel smoke pass |
-| V010-P0-003 | High | Resolve `desktop.ims.canadavhs.ca` | DNS resolution fails | Treat `remote.canadavhs.ca` as compatibility evidence; owner/infrastructure decision before docs claim official hostname |
+| V010-P0-003 | High | Resolve `desktop.ims.canadavhs.ca` | CLOSED AS BACKLOG | Owner designated `remote.canadavhs.ca/guacamole/` as official; do not claim `desktop.ims` without deliberate DNS and browser acceptance |
 | V010-P0-004 | High | Backup root-only Guacamole secret file | RESOLVED | Owner completed copy; checksum/mode verified and external manifest updated |
-| V010-P0-005 | Medium | Compare installed metadata to source | installed metadata 0.7.0; source 0.9.0 | Reinstall verified package after build repair |
+| V010-P0-005 | Medium | Compare installed metadata to source | RESOLVED | Replaced stale editable 0.7.0 finder/dist-info with editable 0.9.0; CLI, package, metadata, launcher, status, doctor, tests, pip check, and cold start pass |
 | V010-P0-006 | Low | `sha256sum -c SHA256SUMS` in work-order package | All present files match; two reference PDFs and `install_into_repo.sh` are absent | Markdown references are complete and authoritative; do not claim the package has all 26 manifest files |
 
 ## Owner decisions
@@ -175,7 +181,22 @@
 |---|---|---|---|
 | Tool/command approvals | Owner approved all remaining commands | 2026-07-26 | No further tool-level confirmation is needed, but approval cannot supply the host's interactive sudo password |
 | Root-only Guacamole backup | Completed | 2026-07-26 | Phase 0 restore point is complete |
-| Official vs compatibility Guacamole hostname | Pending | — | Current evidence supports only `remote.canadavhs.ca` |
+| Official Guacamole hostname | `https://remote.canadavhs.ca/guacamole/` | 2026-07-27 | Operator-facing defaults and claims use `remote`; `desktop.ims` remains unresolved backlog |
+| Phase 4 capture provenance | Extensible capture-source values | 2026-07-27 | Recognition/image schemas must support desktop, Android-future, manual, and test origins without implementing Android |
+| Community catalog contribution | Explicit opt-in policy boundary only | 2026-07-27 | Phase 6 adds field provenance and eligibility; no central upload without a separate owner-approved server/privacy/terms work order |
+
+## Remote verification
+
+- Branch push completed without merge:
+  `origin/feature/v0.10.0-final-preproduction`.
+- Remote head verified by `git ls-remote` at
+  `9b1c4b78a4ff6832f75681d7c2cb83ec747642e3`.
+- Requested commit
+  `77c09bc17b30e24d8fcdbec3046a772d8118fe3a` is an ancestor of that later
+  Phase 3 closure commit and is therefore visible in the remote branch
+  history.
+- Evidence:
+  `release-evidence/v0.10.0/pre-phase-4-checkpoint/VERIFICATION.md`.
 
 ## Files/areas currently being edited
 

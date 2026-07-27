@@ -37,9 +37,13 @@ Default local URLs:
 - Guacamole: `http://127.0.0.1:8080/guacamole/`
 - Remote desktop: the configured Guacamole public URL printed by `snapims up`
 
-Do not assume `desktop.ims.canadavhs.ca` is live: it did not resolve during the
-v0.10.0 baseline. The compatibility hostname is evidence only until the owner
-selects the authoritative public Guacamole hostname.
+The owner-designated official remote desktop URL is:
+
+- `https://remote.canadavhs.ca/guacamole/`
+
+`desktop.ims.canadavhs.ca` remains an unresolved infrastructure backlog name.
+Do not present it as working unless it is deliberately configured,
+DNS-resolved, and browser-verified.
 
 ## Keyboard and Tags
 

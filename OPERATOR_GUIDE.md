@@ -20,7 +20,7 @@ Local URLs:
 
 Remote URL after Cloudflare setup:
 
-- `https://desktop.ims.canadavhs.ca/guacamole/`
+- `https://remote.canadavhs.ca/guacamole/`
 
 ## Guacamole Login
 
@@ -74,4 +74,9 @@ snapims status
 snapims doctor
 ```
 
-If `desktop.ims.canadavhs.ca` does not load, check `~/.cloudflared/config.yml` and the Cloudflare dashboard Public Hostname for `desktop.ims.canadavhs.ca -> http://127.0.0.1:8080`.
+If `remote.canadavhs.ca` does not load, check `~/.cloudflared/config.yml`,
+Cloudflare Access, and the dashboard Public Hostname for
+`remote.canadavhs.ca -> http://127.0.0.1:8080`.
+
+Do not direct operators to `desktop.ims.canadavhs.ca`; it remains unresolved
+infrastructure backlog unless separately configured and verified.

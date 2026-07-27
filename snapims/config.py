@@ -154,7 +154,10 @@ class SnapIMSConfig:
             guacamole_url=value(
                 "SNAPIMS_GUACAMOLE_URL", "http://127.0.0.1:8080/guacamole"
             ).rstrip("/"),
-            guacamole_public_url=value("SNAPIMS_GUACAMOLE_PUBLIC_URL", "").rstrip("/"),
+            guacamole_public_url=value(
+                "SNAPIMS_GUACAMOLE_PUBLIC_URL",
+                "https://remote.canadavhs.ca/guacamole",
+            ).rstrip("/"),
             guacd_host=value("SNAPIMS_GUACD_HOST", "127.0.0.1"),
             guacd_port=int(value("SNAPIMS_GUACD_PORT", "4822")),
             guacd_service=value("SNAPIMS_GUACD_SERVICE", "guacd"),

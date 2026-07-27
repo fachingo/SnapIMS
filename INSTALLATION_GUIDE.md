@@ -52,9 +52,13 @@ scripts/configure_cloudflare_guacamole.sh
 Defaults:
 
 - `ims.canadavhs.ca` -> `http://127.0.0.1:8767`
-- `desktop.ims.canadavhs.ca` -> `http://127.0.0.1:8080`
+- `remote.canadavhs.ca` -> `http://127.0.0.1:8080`
 
 The script updates `~/.cloudflared/config.yml`, preserves the SnapIMS hostname when present, and runs `cloudflared tunnel route dns` unless `SNAPIMS_SKIP_CLOUDFLARE_DNS=1`.
+
+The official public URL is
+`https://remote.canadavhs.ca/guacamole/`. The unresolved
+`desktop.ims.canadavhs.ca` name is not a current operator endpoint.
 
 ## Validate
 

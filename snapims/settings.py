@@ -83,6 +83,11 @@ DEFINITIONS = {
         SettingDefinition("SNAPIMS_WIKIPEDIA_MAX_RETRIES", "movie", "2"),
         SettingDefinition("SNAPIMS_MOVIE_DUMP_LOCATION", "movie"),
         SettingDefinition("SNAPIMS_MOVIE_DUMP_POLICY", "movie", "manual"),
+        SettingDefinition(
+            "SNAPIMS_GUACAMOLE_PUBLIC_URL",
+            "infrastructure",
+            "https://remote.canadavhs.ca/guacamole",
+        ),
         SettingDefinition("SNAPIMS_ADMIN_USERNAME", "security", "admin"),
         SettingDefinition("SNAPIMS_ADMIN_PASSWORD_HASH", "security", secret=True),
         SettingDefinition("SNAPIMS_AUTH_SECRET", "security", secret=True),

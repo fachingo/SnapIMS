@@ -9,7 +9,10 @@ Release type: **minor**.
 - Added `scripts/install_guacamole.sh`, an idempotent Linux installer for guacd, Guacamole protocol modules, xrdp, Java, Tomcat 9, `guacamole.war`, `/etc/guacamole`, and systemd services.
 - Added authenticated Guacamole administrator setup with generated credentials stored in `/etc/guacamole/snapims-admin.env`.
 - Added Guacamole connections for Linux Mint desktop over RDP and SSH terminal access, with clipboard support and file transfer where supported.
-- Added `scripts/configure_cloudflare_guacamole.sh` to preserve `ims.canadavhs.ca` and add `desktop.ims.canadavhs.ca`.
+- Added `scripts/configure_cloudflare_guacamole.sh` to preserve
+  `ims.canadavhs.ca` and add a separate Guacamole hostname. The current
+  owner-designated hostname is `remote.canadavhs.ca`; the originally proposed
+  `desktop.ims.canadavhs.ca` remains unresolved backlog.
 
 ## Service Manager
 
