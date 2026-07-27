@@ -45,7 +45,7 @@ def parse_batch(
     ordered = load_sorted_photos(source_folder, recursive=recursive)
     scanned = scan_commands(ordered, decoder=decoder)
     fingerprint = source_fingerprint(scanned)
-    return interpret_stream(
+    batch = interpret_stream(
         scanned,
         source_folder=source_folder,
         batch_name=batch_name,
@@ -53,3 +53,9 @@ def parse_batch(
         batch_id=batch_id,
         source_fingerprint=fingerprint,
     )
+    batch.capture_source = (
+        "DESKTOP_IMPORT_QR"
+        if batch.commands
+        else "DESKTOP_IMPORT_MANUAL"
+    )
+    return batch

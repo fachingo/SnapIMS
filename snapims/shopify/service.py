@@ -67,6 +67,10 @@ class ShopifyService:
         errors.extend(validation_errors(item, photos))
         if not item["ready"] or item["review_status"] != "DONE":
             errors.append("Item is not completed and READY")
+        if not bool(item.get("publish_eligible", 1)) or bool(item.get("is_test_copy")):
+            errors.append(
+                "Isolated test-copy inventory is quarantined and can never become Shopify-ready."
+            )
         test_provenance = (
             str(item.get("suggestion_source_kind") or "").upper() == "TEST"
             or is_test_provider(item.get("recognition_provider"))

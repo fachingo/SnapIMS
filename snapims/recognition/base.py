@@ -18,6 +18,9 @@ class RecognitionResult:
     suggested_discount_percent: float = 0
     confidence: float = 0.0
     uncertainty_reasons: tuple[str, ...] = ()
+    title_evidence: tuple[str, ...] = ()
+    field_evidence: dict[str, Any] | None = None
+    contradiction_flags: tuple[str, ...] = ()
     provider_name: str = "unknown"
     raw_response_reference: str = ""
     pricing_source: str = "AI_ESTIMATE_NO_LIVE_MARKET_DATA"

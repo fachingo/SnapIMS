@@ -31,6 +31,7 @@ class BatchRecord:
     source_folder: Path
     created_at: datetime
     source_fingerprint: str = ""
+    capture_source: str = "DESKTOP_IMPORT_QR"
     started: bool = False
     ended: bool = False
     items: list[ItemRecord] = field(default_factory=list)

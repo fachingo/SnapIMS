@@ -169,9 +169,9 @@ def test_only_probed_models_can_be_assigned_to_recognition_roles(tmp_path: Path)
     assert service.value("SNAPIMS_OPENAI_BASELINE_MODEL") == "gpt-example"
 
 
-def test_schema_11_manifest_contains_configuration_contract(data_paths: DataPaths) -> None:
+def test_current_manifest_contains_configuration_contract(data_paths: DataPaths) -> None:
     db.initialize(data_paths.db_file, paths=data_paths)
     with db.connect(data_paths.db_file) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 11
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
         report = db.schema_manifest_report(connection)
     assert report["ok"], report

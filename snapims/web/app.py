@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime
 import hashlib
 import json
 import hmac
@@ -59,11 +60,19 @@ from snapims.inventory import (
     validation_errors,
 )
 from snapims.pipeline import parse_batch
-from snapims.processor import process_batch, reconcile_import_journals
+from snapims.processor import (
+    create_isolated_test_copy,
+    process_batch,
+    reconcile_import_journals,
+)
 from snapims.recognition.providers import recognizer_registry
 from snapims.recognition.service import (
     accept_item,
+    mark_interrupted_requests_paused,
+    pause_batch_recognition,
     postpone_item,
+    queue_item_recognition,
+    resume_recognition_request,
     retry_failed_item,
     skip_batch_recognition,
     start_batch_recognition,
@@ -256,6 +265,7 @@ async def lifespan(app: FastAPI):
     db.initialize(paths.db_file, paths=paths)
     import_recovery = reconcile_import_journals(paths)
     paused_jobs = db.mark_interrupted_jobs_paused(paths.db_file)
+    paused_requests = mark_interrupted_requests_paused(paths.db_file)
     expired_csv = db.cleanup_csv_staging(paths.db_file)
     pruned_checkpoints = db.prune_batch_checkpoints(paths.db_file)
     _event(
@@ -268,6 +278,7 @@ async def lifespan(app: FastAPI):
             "schema_version": db.SCHEMA_VERSION,
             "import_recovery": import_recovery,
             "paused_recognition_jobs": paused_jobs,
+            "paused_recognition_requests": paused_requests,
             "expired_csv_stages": expired_csv,
             "pruned_checkpoints": pruned_checkpoints,
         },
@@ -854,6 +865,7 @@ async def import_commit(
     source_folder: str | None = Form(None),
     batch_name: str = Form(""),
     recursive: bool = Form(False),
+    duplicate_action: str = Form("open_existing"),
 ) -> HTMLResponse:
     selected, error = validate_folder(source_folder)
     if error:
@@ -861,15 +873,69 @@ async def import_commit(
             request, selected=source_folder or "", batch_name=batch_name, message=error
         )
     try:
+        preview_batch = parse_batch(
+            Path(selected), batch_name=batch_name or None, recursive=recursive
+        )
+        existing = db.find_batch_by_fingerprint(
+            get_paths().db_file, preview_batch.source_fingerprint
+        )
+        if existing and duplicate_action not in {
+            "open_existing",
+            "rerun_unfinished",
+            "rerun_all",
+            "test_copy",
+            "cancel",
+        }:
+            raise ValueError("Unsupported duplicate import action")
+        if existing and duplicate_action == "cancel":
+            return import_context(
+                request,
+                selected=selected,
+                batch_name=batch_name,
+                notice="Duplicate import cancelled. No inventory or attempts changed.",
+            )
+        if existing and duplicate_action == "test_copy":
+            result = create_isolated_test_copy(
+                get_paths(), str(existing["batch_id"])
+            )
+            db.set_setting(get_paths().db_file, "active_batch", result.batch_id)
+            return import_context(
+                request,
+                selected=selected,
+                batch_name=batch_name,
+                imported=result,
+                notice=(
+                    "Isolated test copy created with separate IDs, TEST provenance, "
+                    "and permanent sale/Shopify/reservation quarantine."
+                ),
+            )
         result = process_batch(
             Path(selected), paths=get_paths(), batch_name=batch_name or None, recursive=recursive
         )
         db.set_setting(get_paths().db_file, "active_batch", result.batch_id)
-        notice = (
-            "Existing imported batch opened; no duplicate was created."
-            if result.duplicate
-            else "Batch preserved and imported."
-        )
+        if existing and duplicate_action in {"rerun_unfinished", "rerun_all"}:
+            provider = get_configuration_service().value(
+                "SNAPIMS_RECOGNITION_PROVIDER", "openai"
+            )
+            started = start_batch_recognition(
+                get_paths().db_file,
+                result.batch_id,
+                provider,
+                rerun_all=duplicate_action == "rerun_all",
+            )
+            scope = "all Items" if duplicate_action == "rerun_all" else "unfinished Items"
+            notice = (
+                f"Existing batch opened; recognition queued for {scope}. "
+                "Approved values remain unchanged until explicit acceptance."
+                if started
+                else f"Existing batch opened; recognition for {scope} was already active or blocked."
+            )
+        else:
+            notice = (
+                "Existing imported batch opened; no duplicate was created."
+                if result.duplicate
+                else "Batch preserved and imported."
+            )
         return import_context(
             request,
             selected=selected,
@@ -879,6 +945,399 @@ async def import_commit(
         )
     except Exception as exc:
         return import_context(request, selected=selected, batch_name=batch_name, message=str(exc))
+
+
+@app.get("/recognition", response_class=HTMLResponse)
+async def recognition_workspace(
+    request: Request,
+    batch_id: str | None = None,
+    state: str = "",
+    low_confidence: bool = False,
+    contradictions: bool = False,
+    notice: str = "",
+) -> HTMLResponse:
+    paths = get_paths()
+    batches = db.list_batches(paths.db_file)
+    selected = selected_batch(paths, batch_id)
+    configuration = get_configuration_service()
+    threshold = float(configuration.value("SNAPIMS_RECOGNITION_CONFIDENCE", "0.85"))
+    clauses = ["1=1"]
+    parameters: list[Any] = []
+    if selected:
+        clauses.append("i.batch_id=?")
+        parameters.append(selected)
+    if state:
+        clauses.append("COALESCE(s.state,'UNREVIEWED')=?")
+        parameters.append(state)
+    if low_confidence:
+        clauses.append("r.confidence<?")
+        parameters.append(threshold)
+    if contradictions:
+        clauses.append("r.contradiction_flags_json<>'[]'")
+    where = " AND ".join(clauses)
+    with db.connect(paths.db_file) as connection:
+        attempts = [
+            dict(row)
+            for row in connection.execute(
+                f"""SELECT r.*,i.batch_id,COALESCE(s.state,'UNREVIEWED') AS attempt_state,
+                           s.accepted_at AS state_accepted_at,s.accepted_by,
+                           CASE WHEN current.recognition_result_id=r.recognition_result_id
+                                THEN 1 ELSE 0 END AS is_current
+                    FROM recognition_results r
+                    JOIN items i ON i.item_id=r.item_id
+                    LEFT JOIN recognition_attempt_states s
+                      ON s.recognition_result_id=r.recognition_result_id
+                    LEFT JOIN item_recognition_selection current
+                      ON current.item_id=r.item_id
+                    WHERE {where}
+                    ORDER BY r.created_at DESC LIMIT 250""",
+                parameters,
+            ).fetchall()
+        ]
+        jobs = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM recognition_jobs ORDER BY updated_at DESC LIMIT 50"
+            ).fetchall()
+        ]
+        requests = [
+            dict(row)
+            for row in connection.execute(
+                """SELECT * FROM recognition_requests
+                   ORDER BY created_at DESC LIMIT 100"""
+            ).fetchall()
+        ]
+        benchmark_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM recognition_benchmark_cases WHERE active=1"
+            ).fetchone()[0]
+        )
+        benchmark_rows = [
+            dict(row)
+            for row in connection.execute(
+                """SELECT cases.*,i.title AS working_title,links.link_status
+                   FROM recognition_benchmark_cases cases
+                   JOIN items i ON i.item_id=cases.item_id
+                   LEFT JOIN item_movie_links links ON links.item_id=cases.item_id
+                   WHERE cases.active=1 ORDER BY cases.labelled_at"""
+            ).fetchall()
+        ]
+    items = db.list_items(paths.db_file, batch_id=selected) if selected else []
+    totals = {
+        "attempts": len(attempts),
+        "cost_cad": sum(float(row["estimated_cost_cad"] or 0) for row in attempts),
+        "input_tokens": sum(int(row["input_tokens"] or 0) for row in attempts),
+        "output_tokens": sum(int(row["output_tokens"] or 0) for row in attempts),
+        "low_confidence": sum(float(row["confidence"] or 0) < threshold for row in attempts),
+        "contradictions": sum(str(row["contradiction_flags_json"]) != "[]" for row in attempts),
+    }
+    ladder = [
+        ("baseline", configuration.value("SNAPIMS_OPENAI_BASELINE_MODEL", "")),
+        ("escalation", configuration.value("SNAPIMS_OPENAI_ESCALATION_MODEL", "")),
+        ("frontier", configuration.value("SNAPIMS_OPENAI_FRONTIER_MODEL", "")),
+        ("manual", "Operator"),
+    ]
+    evaluated_cases: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = []
+    for benchmark in benchmark_rows:
+        attempt = db.latest_recognition(paths.db_file, str(benchmark["item_id"]))
+        truth = json.loads(str(benchmark["truth_json"]))
+        if attempt:
+            evaluated_cases.append((benchmark, truth, attempt))
+    exact = sum(
+        str(attempt["suggested_title"]).strip().casefold()
+        == str(truth.get("canonical_title") or "").strip().casefold()
+        for _, truth, attempt in evaluated_cases
+    )
+    false_confidence = sum(
+        float(attempt["confidence"] or 0) >= threshold
+        and str(attempt["suggested_title"]).strip().casefold()
+        != str(truth.get("canonical_title") or "").strip().casefold()
+        for _, truth, attempt in evaluated_cases
+    )
+    review_seconds: list[float] = []
+    for _, _, attempt in evaluated_cases:
+        if attempt.get("accepted_at"):
+            review_seconds.append(
+                max(
+                    0,
+                    (
+                        datetime.fromisoformat(str(attempt["accepted_at"]))
+                        - datetime.fromisoformat(str(attempt["created_at"]))
+                    ).total_seconds(),
+                )
+            )
+    benchmark_metrics = {
+        "labelled": len(benchmark_rows),
+        "evaluated": len(evaluated_cases),
+        "exact_title_accuracy": exact / len(evaluated_cases) if evaluated_cases else None,
+        "false_confidence": false_confidence,
+        "operator_corrections": sum(
+            bool(str(case.get("working_title") or "").strip())
+            and str(case["working_title"]).strip().casefold()
+            != str(attempt["suggested_title"]).strip().casefold()
+            for case, _, attempt in evaluated_cases
+        ),
+        "escalation_rate": (
+            sum(str(attempt["tier"]) in {"escalation", "frontier"} for _, _, attempt in evaluated_cases)
+            / len(evaluated_cases)
+            if evaluated_cases
+            else None
+        ),
+        "manual_rate": (
+            sum(str(attempt["suggested_title"]).casefold() == "unknown" for _, _, attempt in evaluated_cases)
+            / len(evaluated_cases)
+            if evaluated_cases
+            else None
+        ),
+        "average_latency_ms": (
+            sum(int(attempt["latency_ms"] or 0) for _, _, attempt in evaluated_cases)
+            / len(evaluated_cases)
+            if evaluated_cases
+            else None
+        ),
+        "tokens": sum(
+            int(attempt["input_tokens"] or 0) + int(attempt["output_tokens"] or 0)
+            for _, _, attempt in evaluated_cases
+        ),
+        "image_bytes": sum(int(attempt["input_image_bytes"] or 0) for _, _, attempt in evaluated_cases),
+        "cost_cad": sum(float(attempt["estimated_cost_cad"] or 0) for _, _, attempt in evaluated_cases),
+        "catalog_agreement": sum(
+            str(case.get("link_status") or "") == "LINKED"
+            for case, _, _ in evaluated_cases
+        ),
+        "average_operator_seconds": (
+            sum(review_seconds) / len(review_seconds) if review_seconds else None
+        ),
+    }
+    return TEMPLATES.TemplateResponse(
+        request,
+        "recognition.html",
+        context(
+            request,
+            batches=batches,
+            batch_id=selected,
+            items=items,
+            attempts=attempts,
+            jobs=jobs,
+            requests=requests,
+            totals=totals,
+            ladder=ladder,
+            providers=recognizer_registry(),
+            compatible_models=configuration.compatible_models(),
+            threshold=threshold,
+            request_id=uuid4().hex,
+            benchmark_count=benchmark_count,
+            benchmark_metrics=benchmark_metrics,
+            notice=notice,
+            filter_state=state,
+            filter_low=low_confidence,
+            filter_contradictions=contradictions,
+        ),
+    )
+
+
+@app.post("/recognition/run-item")
+async def recognition_run_item(
+    item_id: str = Form(...),
+    batch_id: str = Form(...),
+    request_id: str = Form(...),
+    provider: str = Form("openai"),
+    model_name: str = Form(""),
+    tier: str = Form("baseline"),
+    image_profile: str = Form("standard"),
+) -> RedirectResponse:
+    try:
+        started = queue_item_recognition(
+            get_paths().db_file,
+            item_id,
+            request_id=request_id,
+            idempotency_key=request_id,
+            provider_name=provider,
+            model_name=model_name,
+            tier=tier,
+            trigger="OPERATOR_REQUEST",
+            forced_by=SnapIMSConfig.load().admin_username,
+            image_profile=image_profile,
+        )
+        notice = (
+            "Recognition request queued. Approved working fields remain unchanged."
+            if started
+            else "This recognition request is already queued or completed."
+        )
+    except Exception as exc:
+        notice = f"Recognition request was not queued: {exc}"
+    return redirect(
+        f"/review?batch_id={quote(batch_id)}&item_id={quote(item_id)}&queue=ALL"
+        f"&notice={quote(notice)}"
+    )
+
+
+@app.post("/recognition/run-batch")
+async def recognition_run_batch(
+    batch_id: str = Form(...),
+    scope: str = Form("unfinished"),
+    provider: str = Form("openai"),
+    model_name: str = Form(""),
+    tier: str = Form("baseline"),
+    image_profile: str = Form("standard"),
+) -> RedirectResponse:
+    try:
+        if scope not in {"unfinished", "all"}:
+            raise ValueError("Unsupported batch recognition scope")
+        started = start_batch_recognition(
+            get_paths().db_file,
+            batch_id,
+            provider,
+            rerun_all=scope == "all",
+            model_name=model_name,
+            tier=tier,
+            image_profile=image_profile,
+        )
+        notice = "Batch recognition queued." if started else "Batch recognition is already active."
+    except Exception as exc:
+        notice = f"Batch recognition was not queued: {exc}"
+    return redirect(f"/recognition?batch_id={quote(batch_id)}&notice={quote(notice)}")
+
+
+@app.post("/recognition/pause")
+async def recognition_pause(batch_id: str = Form(...)) -> RedirectResponse:
+    paused = pause_batch_recognition(get_paths().db_file, batch_id)
+    notice = "Pause requested after the current attempt." if paused else "No active batch worker was found."
+    return redirect(f"/recognition?batch_id={quote(batch_id)}&notice={quote(notice)}")
+
+
+@app.post("/recognition/resume-request")
+async def recognition_resume_request(
+    request_id: str = Form(...), batch_id: str = Form("")
+) -> RedirectResponse:
+    resumed = resume_recognition_request(get_paths().db_file, request_id)
+    notice = "Durable request resumed." if resumed else "Request is not resumable or is already active."
+    return redirect(f"/recognition?batch_id={quote(batch_id)}&notice={quote(notice)}")
+
+
+@app.post("/recognition/select")
+async def recognition_select(
+    batch_id: str = Form(...),
+    item_id: str = Form(...),
+    recognition_result_id: int = Form(...),
+) -> RedirectResponse:
+    try:
+        db.select_recognition_attempt(
+            get_paths().db_file,
+            item_id,
+            recognition_result_id,
+            actor=SnapIMSConfig.load().admin_username,
+        )
+        notice = "Attempt selected. Working fields were not changed."
+    except Exception as exc:
+        notice = f"Attempt could not be selected: {exc}"
+    return redirect(
+        f"/review?batch_id={quote(batch_id)}&queue=ALL&item_id={quote(item_id)}"
+        f"&notice={quote(notice)}"
+    )
+
+
+@app.post("/recognition/clear")
+async def recognition_clear(
+    batch_id: str = Form(...), item_id: str = Form(...)
+) -> RedirectResponse:
+    cleared = db.clear_recognition_selection(
+        get_paths().db_file,
+        item_id,
+        actor=SnapIMSConfig.load().admin_username,
+    )
+    notice = "Current suggestion cleared; attempt history was preserved." if cleared else "No current suggestion was set."
+    return redirect(
+        f"/review?batch_id={quote(batch_id)}&queue=ALL&item_id={quote(item_id)}"
+        f"&notice={quote(notice)}"
+    )
+
+
+@app.post("/recognition/accept")
+async def recognition_accept(
+    batch_id: str = Form(...),
+    item_id: str = Form(...),
+    recognition_result_id: int = Form(...),
+) -> RedirectResponse:
+    try:
+        actor = SnapIMSConfig.load().admin_username
+        db.select_recognition_attempt(
+            get_paths().db_file, item_id, recognition_result_id, actor=actor
+        )
+        errors = accept_item(
+            get_paths().db_file,
+            item_id,
+            price_cents=None,
+            discount_percent=0,
+            review_source=f"RECOGNITION_ATTEMPT:{actor}",
+            replace_approved=True,
+        )
+        notice = (
+            "Selected attempt explicitly accepted into working fields."
+            if not errors
+            else "Selected attempt needs manual completion: " + "; ".join(errors)
+        )
+    except Exception as exc:
+        notice = f"Attempt was not accepted: {exc}"
+    return redirect(
+        f"/review?batch_id={quote(batch_id)}&queue=ALL&item_id={quote(item_id)}"
+        f"&notice={quote(notice)}"
+    )
+
+
+@app.post("/recognition/benchmark-label")
+async def recognition_benchmark_label(
+    batch_id: str = Form(...),
+    item_id: str = Form(...),
+    dataset_class: str = Form(...),
+    canonical_title: str = Form(...),
+    release_year: str = Form(""),
+) -> RedirectResponse:
+    allowed_classes = {
+        "clear_mainstream",
+        "sequels_remakes",
+        "damaged_low_contrast",
+        "slogan_heavy",
+        "music_concert",
+        "tv_anime",
+        "unusual_edition",
+        "unsupported_media",
+    }
+    try:
+        if dataset_class not in allowed_classes:
+            raise ValueError("Unsupported benchmark class")
+        title = canonical_title.strip()
+        if not title:
+            raise ValueError("Owner-labelled canonical title is required")
+        year = int(release_year) if release_year.strip() else None
+        benchmark_case_id = hashlib.sha256(
+            f"{item_id}\0{dataset_class}".encode("utf-8")
+        ).hexdigest()[:24]
+        with db.transaction(get_paths().db_file) as connection:
+            connection.execute(
+                """INSERT INTO recognition_benchmark_cases(
+                       benchmark_case_id,item_id,dataset_class,truth_json,
+                       labelled_by,labelled_at,active
+                   ) VALUES(?,?,?,?,?,?,1)
+                   ON CONFLICT(benchmark_case_id) DO UPDATE SET
+                       truth_json=excluded.truth_json,labelled_by=excluded.labelled_by,
+                       labelled_at=excluded.labelled_at,active=1""",
+                (
+                    benchmark_case_id,
+                    item_id,
+                    dataset_class,
+                    json.dumps(
+                        {"canonical_title": title, "release_year": year},
+                        sort_keys=True,
+                    ),
+                    SnapIMSConfig.load().admin_username,
+                    db.now(),
+                ),
+            )
+        notice = "Owner-labelled benchmark truth saved."
+    except Exception as exc:
+        notice = f"Benchmark truth was not saved: {exc}"
+    return redirect(f"/recognition?batch_id={quote(batch_id)}&notice={quote(notice)}")
 
 
 @app.get("/review", response_class=HTMLResponse)
@@ -926,6 +1385,8 @@ async def review_page(
                 catalog_job=None,
                 catalog_candidates=[],
                 tag_definitions=[],
+                compatible_models=[],
+                recognition_request_id=uuid4().hex,
             ),
         )
     db.set_setting(paths.db_file, "active_batch", batch_id)
@@ -933,7 +1394,12 @@ async def review_page(
     all_items = db.list_items(paths.db_file, batch_id=batch_id)
     photos = db.get_item_photos(paths.db_file, current["item_id"]) if current else []
     photo_index = max(1, min(photo, len(photos) or 1))
-    suggestion = db.latest_recognition(paths.db_file, current["item_id"]) if current else None
+    suggestion = (
+        db.selected_recognition(paths.db_file, current["item_id"])
+        or db.latest_recognition(paths.db_file, current["item_id"])
+        if current
+        else None
+    )
     history = db.recognition_history(paths.db_file, current["item_id"]) if current else []
     changes = db.item_history(paths.db_file, current["item_id"]) if current else []
     job = db.get_recognition_job(paths.db_file, batch_id)
@@ -998,6 +1464,8 @@ async def review_page(
             catalog_job=catalog_job,
             catalog_candidates=catalog_candidates,
             tag_definitions=db.list_tag_definitions(paths.db_file),
+            compatible_models=get_configuration_service().compatible_models(),
+            recognition_request_id=uuid4().hex,
         ),
     )
 

@@ -4,13 +4,13 @@
 
 - Project: SnapIMS
 - Branch: `feature/v0.10.0-final-preproduction`
-- HEAD: `77c09bc` (verified Phase 3 secure Settings native-Firefox milestone)
+- HEAD: `73243f5` (verified pre-Phase-4 remote/version/hostname checkpoint)
 - Upstream: `origin/feature/v0.10.0-final-preproduction`
 - Started: 2026-07-26T18:59:00-06:00
-- Last updated: 2026-07-27T13:30:46-06:00
+- Last updated: 2026-07-27T14:19:08-06:00
 - Current application version: source/package metadata, active editable
   distribution, global launcher, CLI, and running status all `0.9.0`
-- Inventory schema: 11
+- Inventory schema: 12 in Phase 4 code and disposable migration; production remains 11 pending the Phase 4 production gate
 - Catalog schema: 1
 
 ## Preservation
@@ -28,10 +28,10 @@
 
 - Phase: 4 — Recognition Routing, Escalation, and Cost Control
 - Phase file: `docs/codex-work-orders/v0.10.0/06_PHASE_4_RECOGNITION_ROUTING.md`
-- Status: READY TO START
-- Latest verified commit: `77c09bc` (`Verify secure Settings workflows in Firefox`)
+- Status: IMPLEMENTATION COMPLETE; NATIVE FIREFOX AND PRODUCTION ACCEPTANCE PENDING
+- Latest verified commit: `73243f5` (`Reconcile pre-Phase-4 checkpoint`)
 - NEXT_PHASE: `06_PHASE_4_RECOGNITION_ROUTING.md`
-- NEXT_ACTION: Implement Phase 4 recognition routing in dependency order using the tested-model registry, secure configuration service, and Phase 2 operational events.
+- NEXT_ACTION: Commit the verified implementation milestone, then run native Firefox, restart/interruption, and production schema-12 acceptance before closing Phase 4.
 
 ## Completed criteria
 
@@ -95,6 +95,15 @@
 - [x] Replaced stale editable 0.7.0 metadata with editable 0.9.0 and verified package, distribution, launcher, CLI, status, doctor, focused tests, pip consistency, and cold start.
 - [x] Adopted `https://remote.canadavhs.ca/guacamole/` as the official Guacamole URL in runtime defaults and operator-facing material; retained unresolved `desktop.ims` only as explicit backlog.
 - [x] Recorded extensible Phase 4 capture-source values and the Phase 6 shared-catalog provenance/contribution privacy boundary.
+- [x] Added schema 12 append-only recognition attempts with UUID, Item/provider/model/tier/trigger/actor, prompt/schema/image profiles, selected image IDs/hashes/capture provenance, evidence, uncertainty, contradiction, token, configured-CAD-cost, latency, prior-attempt, request, and route metadata.
+- [x] Separated mutable selection/acceptance state from immutable attempt evidence and added append-only selection/acceptance/supersession/failure events.
+- [x] Added durable idempotent per-Item recognition requests, restart pause/recovery, safe resume, Retry-After evidence, and duplicate-click suppression.
+- [x] Added configurable baseline/escalation/frontier/manual routing with strict tested-model selection, confidence/UNKNOWN/schema/image/catalog/ambiguity/unsupported/operator triggers, bounded image profiles, hash deduplication, and no automatic working-field replacement.
+- [x] Added an operator Recognition workspace with jobs, queue scopes, pause/resume, model ladder, filters, attempt comparison/selection/explicit acceptance, usage/cost/latency, and owner-labelled benchmark reporting.
+- [x] Kept normal Approve & Next independent of expensive recognition; later attempts on approved Items remain suggestions until explicit replacement.
+- [x] Added capture provenance for desktop QR/manual and future Android/manual/test sources without implementing an Android client.
+- [x] Added duplicate actions Open Existing, Rerun Unfinished, Rerun All, Isolated Test Copy, and Cancel.
+- [x] Added isolated test-copy Batch/Item identity, source linkage, TEST provenance, shared immutable media evidence, visible quarantine, and database/service enforcement that prevents sale-ready, reservation-eligible, or Shopify-ready state.
 
 ## Migrations
 
@@ -105,6 +114,7 @@
 | Inventory schema 8 → 9 (Controlled Tags) | inventory | `/home/isaiah/SnapIMS-data/backups/inventory-20260726-221200-351595-before-schema-v9.sqlite3` | PASS on production-data copy; 4 batches and 32 items preserved | PASS | integrity OK; FK 0; manifest OK; 4 batches and 32 items preserved |
 | Inventory schema 9 → 10 (Operational Events) | inventory | `/home/isaiah/SnapIMS-data/backups/inventory-20260726-231208-344081-before-schema-v10.sqlite3` | PASS in unit migration and Firefox workspaces | PASS | integrity OK; FK 0; manifest OK; 4 batches and 32 items preserved; migration event present |
 | Inventory schema 10 → 11 (Secure Settings) | inventory | `/home/isaiah/SnapIMS-data/backups/inventory-20260727-130108-376761-before-schema-v11.sqlite3` | PASS in migration tests and Firefox workspaces | PASS | integrity OK; FK 0; manifest OK; 4 batches and 32 items preserved |
+| Inventory schema 11 → 12 (Recognition Routing) | inventory | Automatic `before-schema-v12` backup verified on disposable production-data copy | PASS; `/tmp/snapims-phase4-migration-fi152R` | PENDING PHASE 4 PRODUCTION GATE | integrity OK; FK 0; manifest OK; 4 batches, 32 items, 13 prior attempts and 173 photo rows preserved |
 
 ## Tests
 
@@ -143,6 +153,9 @@
 | Phase 3 secure store/provenance/provider/HTTP acceptance | PASS | `release-evidence/v0.10.0/phase-3-settings/VERIFICATION.md` | Atomic permissions, rollback, tested models, unsaved-secret no-echo, session revocation |
 | Phase 3 production migration/cold boot | PASS | `release-evidence/v0.10.0/phase-3-settings/PRODUCTION_ACCEPTANCE.md` | Schema 11; 4 batches/32 items; all required checks pass |
 | Pre-Phase-4 remote/version/hostname checkpoint | PASS | `release-evidence/v0.10.0/pre-phase-4-checkpoint/VERIFICATION.md` | Origin verified; all active metadata 0.9.0; 34 focused tests; pip check; cold boot; official hostname reconciled |
+| Phase 4 full regression | PASS | `release-evidence/v0.10.0/phase-4-recognition/VERIFICATION.md` | 233 collected; one expected skip; exit 0 |
+| Phase 4 focused acceptance | PASS | `tests/test_v010_phase4_recognition.py` | Immutable evidence, idempotent rerun, older-attempt selection, UNKNOWN, cost, capture provenance, test-copy quarantine, restart pause, workspace, and duplicate choices |
+| Phase 4 static/build gate | PASS | `release-evidence/v0.10.0/phase-4-recognition/VERIFICATION.md` | Ruff; mypy 40 modules; JS syntax; diff check; sdist/wheel 0.9.0; pip check |
 
 ## Browser verification
 
@@ -200,8 +213,9 @@
 
 ## Files/areas currently being edited
 
-- None. Phase 3 is closed at a clean verified checkpoint.
-- Phase 4 recognition routing is the next unstarted area.
+- Phase 4 recognition schema, routing service, import overrides, operator workspace,
+  Review controls, quarantine enforcement, and acceptance tests.
+- No live OpenAI or Shopify writes were performed.
 
 ## Resume checklist
 

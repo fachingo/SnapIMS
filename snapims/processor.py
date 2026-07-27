@@ -91,6 +91,7 @@ def _journal_manifest(batch: BatchRecord, artifacts: list[ProcessedPhoto]) -> di
             "source_folder": str(batch.source_folder),
             "created_at": batch.created_at.isoformat(),
             "source_fingerprint": batch.source_fingerprint,
+            "capture_source": batch.capture_source,
             "started": batch.started,
             "ended": batch.ended,
             "warnings": batch.warnings,
@@ -153,6 +154,7 @@ def _from_journal_manifest(payload: dict[str, Any]) -> tuple[BatchRecord, list[P
         source_folder=Path(batch_payload["source_folder"]),
         created_at=datetime.fromisoformat(str(batch_payload["created_at"])),
         source_fingerprint=str(batch_payload["source_fingerprint"]),
+        capture_source=str(batch_payload.get("capture_source") or "DESKTOP_IMPORT_QR"),
         started=bool(batch_payload["started"]),
         ended=bool(batch_payload["ended"]),
         items=items,
@@ -336,9 +338,17 @@ def _insert_batch(
     timestamp = db.now()
     with db.transaction(db_file) as connection:
         connection.execute(
-            """INSERT INTO batches(batch_id,source_fingerprint,source_folder,created_at,imported_at,started,ended,status,item_count,product_photo_count,command_count,warning_count,warnings_json)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (batch.batch_id, batch.source_fingerprint, str(batch.source_folder), batch.created_at.isoformat(), timestamp, int(batch.started), int(batch.ended), batch_status, len(batch.items), batch.photo_count, len(batch.commands), len(batch.warnings), json.dumps(batch.warnings)),
+            """INSERT INTO batches(
+                   batch_id,source_fingerprint,source_folder,created_at,imported_at,
+                   started,ended,status,item_count,product_photo_count,command_count,
+                   warning_count,warnings_json,capture_source
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                batch.batch_id, batch.source_fingerprint, str(batch.source_folder),
+                batch.created_at.isoformat(), timestamp, int(batch.started), int(batch.ended),
+                batch_status, len(batch.items), batch.photo_count, len(batch.commands),
+                len(batch.warnings), json.dumps(batch.warnings), batch.capture_source,
+            ),
         )
         for item in batch.items:
             identifier = item_id(batch.batch_id, item.shelf, item.sequence)
@@ -360,8 +370,9 @@ def _insert_batch(
                        batch_id,item_id,kind,stream_index,photo_order,original_name,captured_at,
                        timestamp_source,sha256,qr_payload,source_path,original_copy_path,
                        proposed_name,processed_path,thumbnail_path,preview_path,recognition_path,
-                       original_bytes,preview_bytes,recognition_bytes,ai_eligible,image_role
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       original_bytes,preview_bytes,recognition_bytes,ai_eligible,image_role,
+                       capture_source,capture_metadata_json
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     batch.batch_id, artifact.item_id, artifact.kind, artifact.source.stream_index,
                     artifact.photo_order, artifact.source.original_name,
@@ -377,6 +388,15 @@ def _insert_batch(
                     artifact.recognition_path.stat().st_size if artifact.recognition_path and artifact.recognition_path.is_file() else 0,
                     int(artifact.kind == "product" and artifact.recognition_path is not None and not is_nearly_blank(artifact.recognition_path)),
                     ({1: "front", 2: "spine", 3: "back", 4: "cassette"}.get(artifact.photo_order or 0, "support") if artifact.kind == "product" else artifact.kind),
+                    batch.capture_source,
+                    json.dumps(
+                        {
+                            "source_folder": str(batch.source_folder),
+                            "source_stream_index": artifact.source.stream_index,
+                            "timestamp_source": artifact.source.timestamp_source,
+                        },
+                        sort_keys=True,
+                    ),
                 ),
             )
             if cursor.lastrowid is None:
@@ -395,6 +415,175 @@ def _insert_batch(
             "VALUES(?, '','READY',?,?,?)",
             (batch.batch_id, len(batch.items), timestamp, timestamp),
         )
+
+
+def create_isolated_test_copy(paths: DataPaths, source_batch_id: str) -> ImportResult:
+    """Clone database identity for model comparison while reusing immutable media."""
+    db.initialize(paths.db_file, paths=paths)
+    source = db.get_batch(paths.db_file, source_batch_id)
+    if source is None:
+        raise KeyError(f"Unknown source Batch: {source_batch_id}")
+    timestamp = db.now()
+    suffix = f"{datetime.now().astimezone():%Y%m%d%H%M%S}-{uuid4().hex[:6].upper()}"
+    batch_id = f"{source_batch_id}-TEST-{suffix}"
+    fingerprint = f"{source['source_fingerprint']}#test:{uuid4().hex}"
+    item_map: dict[str, str] = {}
+    photo_map: dict[int, int] = {}
+    with db.transaction(paths.db_file) as connection:
+        connection.execute(
+            """INSERT INTO batches(
+                   batch_id,source_fingerprint,source_folder,created_at,imported_at,
+                   started,ended,status,item_count,product_photo_count,command_count,
+                   warning_count,warnings_json,capture_source,source_batch_id,is_test_copy,
+                   publish_eligible,reservation_eligible,quarantine_reason
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'TEST',?,1,0,0,?)""",
+            (
+                batch_id,
+                fingerprint,
+                source["source_folder"],
+                source["created_at"],
+                timestamp,
+                source["started"],
+                source["ended"],
+                "TEST_QUARANTINE",
+                source["item_count"],
+                source["product_photo_count"],
+                source["command_count"],
+                source["warning_count"],
+                source["warnings_json"],
+                source_batch_id,
+                "ISOLATED_RECOGNITION_TEST_COPY",
+            ),
+        )
+        source_items = connection.execute(
+            "SELECT * FROM items WHERE batch_id=? ORDER BY sequence", (source_batch_id,)
+        ).fetchall()
+        for item in source_items:
+            new_item_id = f"{batch_id}-{item['shelf']}-{int(item['sequence']):03d}"
+            item_map[str(item["item_id"])] = new_item_id
+            connection.execute(
+                """INSERT INTO items(
+                       item_id,sku,batch_id,sequence,shelf,rare,review,pool_mode,
+                       quantity,condition,condition_notes,recognition_status,
+                       review_status,ready,validation_status,validation_errors,
+                       review_source,working_source,created_at,updated_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,'PENDING','UNFINISHED',0,
+                            'BLOCKED',?,'TEST_COPY','TEST_COPY',?,?)""",
+                (
+                    new_item_id,
+                    new_item_id,
+                    batch_id,
+                    item["sequence"],
+                    item["shelf"],
+                    item["rare"],
+                    item["review"],
+                    item["pool_mode"],
+                    item["quantity"],
+                    item["condition"],
+                    item["condition_notes"],
+                    json.dumps(
+                        ["Isolated test copy is permanently quarantined from sale and Shopify."]
+                    ),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            connection.execute("INSERT INTO shopify_sync(item_id) VALUES(?)", (new_item_id,))
+            connection.execute(
+                """INSERT INTO inventory_events(
+                       item_id,batch_id,occurred_at,event_type,to_location,
+                       quantity_delta,source,notes
+                   ) VALUES(?,?,?,'TEST_COPY_CREATED',?,0,'TEST',?)""",
+                (
+                    new_item_id,
+                    batch_id,
+                    timestamp,
+                    item["shelf"],
+                    f"Quarantined test identity linked to {item['item_id']}",
+                ),
+            )
+        photo_columns = [
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(photos)")
+            if str(row[1]) != "photo_id"
+        ]
+        placeholders = ",".join("?" for _ in photo_columns)
+        for photo in connection.execute(
+            "SELECT * FROM photos WHERE batch_id=? ORDER BY stream_index",
+            (source_batch_id,),
+        ).fetchall():
+            payload = dict(photo)
+            payload["batch_id"] = batch_id
+            payload["item_id"] = item_map.get(str(photo["item_id"])) if photo["item_id"] else None
+            payload["capture_source"] = "TEST"
+            payload["capture_metadata_json"] = json.dumps(
+                {
+                    "source_batch_id": source_batch_id,
+                    "source_photo_id": int(photo["photo_id"]),
+                    "shared_immutable_media": True,
+                },
+                sort_keys=True,
+            )
+            cursor = connection.execute(
+                f"INSERT INTO photos({','.join(photo_columns)}) VALUES({placeholders})",
+                [payload[column] for column in photo_columns],
+            )
+            photo_map[int(photo["photo_id"])] = int(cursor.lastrowid or 0)
+        for command in connection.execute(
+            "SELECT * FROM command_events WHERE batch_id=? ORDER BY stream_index",
+            (source_batch_id,),
+        ).fetchall():
+            connection.execute(
+                """INSERT INTO command_events(
+                       batch_id,stream_index,occurred_at,payload,command_kind,
+                       command_value,source_photo_id,warning
+                   ) VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    batch_id,
+                    command["stream_index"],
+                    command["occurred_at"],
+                    command["payload"],
+                    command["command_kind"],
+                    command["command_value"],
+                    photo_map.get(int(command["source_photo_id"]))
+                    if command["source_photo_id"] is not None
+                    else None,
+                    command["warning"],
+                ),
+            )
+        connection.execute(
+            """INSERT INTO recognition_jobs(
+                   batch_id,provider,status,total,started_at,updated_at
+               ) VALUES(?,'','READY',?,?,?)""",
+            (batch_id, len(source_items), timestamp, timestamp),
+        )
+    try_emit_event(
+        paths.db_file,
+        component="import",
+        event_type="import.test_copy_created",
+        operation_id=f"test-copy:{batch_id}",
+        batch_id=batch_id,
+        status="QUARANTINED",
+        outcome="ISOLATED_TEST_COPY",
+        detail={
+            "source_batch_id": source_batch_id,
+            "shared_immutable_media": True,
+            "publish_eligible": False,
+            "reservation_eligible": False,
+        },
+        retention_class="BUSINESS",
+        paths=paths,
+    )
+    return ImportResult(
+        batch_id,
+        int(source["item_count"]),
+        int(source["product_photo_count"]),
+        int(source["command_count"]),
+        paths.processed / source_batch_id,
+        paths.processed / source_batch_id / "inventory_work.csv",
+        tuple(json.loads(source["warnings_json"])),
+        False,
+    )
 
 
 def process_batch(

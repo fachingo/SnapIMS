@@ -12,7 +12,19 @@ from typing import Any
 
 from snapims.config import DataPaths
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
+
+CAPTURE_SOURCES = frozenset(
+    {
+        "DESKTOP_IMPORT_QR",
+        "DESKTOP_IMPORT_MANUAL",
+        "ANDROID_BUTTON",
+        "ANDROID_QR",
+        "ANDROID_OFFLINE_SYNC",
+        "MANUAL",
+        "TEST",
+    }
+)
 
 
 def now() -> str:
@@ -137,7 +149,13 @@ def _base_schema(connection: sqlite3.Connection) -> None:
             product_photo_count INTEGER NOT NULL,
             command_count INTEGER NOT NULL,
             warning_count INTEGER NOT NULL,
-            warnings_json TEXT NOT NULL DEFAULT '[]'
+            warnings_json TEXT NOT NULL DEFAULT '[]',
+            capture_source TEXT NOT NULL DEFAULT 'DESKTOP_IMPORT_QR',
+            source_batch_id TEXT REFERENCES batches(batch_id) ON DELETE RESTRICT,
+            is_test_copy INTEGER NOT NULL DEFAULT 0 CHECK(is_test_copy IN (0,1)),
+            publish_eligible INTEGER NOT NULL DEFAULT 1 CHECK(publish_eligible IN (0,1)),
+            reservation_eligible INTEGER NOT NULL DEFAULT 1 CHECK(reservation_eligible IN (0,1)),
+            quarantine_reason TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS items (
             item_id TEXT PRIMARY KEY,
@@ -209,6 +227,8 @@ def _base_schema(connection: sqlite3.Connection) -> None:
             recognition_bytes INTEGER NOT NULL DEFAULT 0,
             ai_eligible INTEGER NOT NULL DEFAULT 1,
             image_role TEXT NOT NULL DEFAULT 'unknown',
+            capture_source TEXT NOT NULL DEFAULT 'DESKTOP_IMPORT_QR',
+            capture_metadata_json TEXT NOT NULL DEFAULT '{}',
             UNIQUE(batch_id, stream_index)
         );
         CREATE TABLE IF NOT EXISTS command_events (
@@ -247,7 +267,83 @@ def _base_schema(connection: sqlite3.Connection) -> None:
             input_image_count INTEGER NOT NULL DEFAULT 0,
             input_image_bytes INTEGER NOT NULL DEFAULT 0,
             requires_review INTEGER NOT NULL DEFAULT 1,
-            accepted_at TEXT
+            accepted_at TEXT,
+            attempt_uuid TEXT NOT NULL DEFAULT '',
+            tier TEXT NOT NULL DEFAULT 'baseline',
+            trigger TEXT NOT NULL DEFAULT 'INITIAL',
+            forced_by TEXT NOT NULL DEFAULT 'system',
+            prompt_version TEXT NOT NULL DEFAULT 'v1',
+            response_schema_version TEXT NOT NULL DEFAULT 'v1',
+            image_profile TEXT NOT NULL DEFAULT 'standard',
+            selected_images_json TEXT NOT NULL DEFAULT '[]',
+            title_evidence_json TEXT NOT NULL DEFAULT '[]',
+            field_evidence_json TEXT NOT NULL DEFAULT '{}',
+            contradiction_flags_json TEXT NOT NULL DEFAULT '[]',
+            configured_price_version TEXT NOT NULL DEFAULT '',
+            estimated_cost_cad REAL NOT NULL DEFAULT 0,
+            latency_ms INTEGER NOT NULL DEFAULT 0,
+            prior_result_id INTEGER REFERENCES recognition_results(recognition_result_id) ON DELETE RESTRICT,
+            request_id TEXT,
+            route_reason TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS recognition_attempt_states (
+            recognition_result_id INTEGER PRIMARY KEY
+                REFERENCES recognition_results(recognition_result_id) ON DELETE RESTRICT,
+            state TEXT NOT NULL DEFAULT 'UNREVIEWED'
+                CHECK(state IN ('UNREVIEWED','SELECTED','ACCEPTED','REJECTED','SUPERSEDED','FAILED')),
+            selected_at TEXT,
+            selected_by TEXT NOT NULL DEFAULT '',
+            accepted_at TEXT,
+            accepted_by TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS recognition_attempt_events (
+            attempt_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recognition_result_id INTEGER NOT NULL
+                REFERENCES recognition_results(recognition_result_id) ON DELETE RESTRICT,
+            event_type TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            details_json TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE IF NOT EXISTS item_recognition_selection (
+            item_id TEXT PRIMARY KEY REFERENCES items(item_id) ON DELETE RESTRICT,
+            recognition_result_id INTEGER NOT NULL
+                REFERENCES recognition_results(recognition_result_id) ON DELETE RESTRICT,
+            selected_by TEXT NOT NULL,
+            selected_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS recognition_requests (
+            request_id TEXT PRIMARY KEY,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            item_id TEXT NOT NULL REFERENCES items(item_id) ON DELETE RESTRICT,
+            batch_id TEXT NOT NULL REFERENCES batches(batch_id) ON DELETE RESTRICT,
+            provider TEXT NOT NULL,
+            model_name TEXT NOT NULL DEFAULT '',
+            tier TEXT NOT NULL DEFAULT 'baseline',
+            trigger TEXT NOT NULL DEFAULT 'OPERATOR_REQUEST',
+            forced_by TEXT NOT NULL DEFAULT 'operator',
+            image_profile TEXT NOT NULL DEFAULT 'standard',
+            status TEXT NOT NULL DEFAULT 'QUEUED',
+            recognition_result_id INTEGER
+                REFERENCES recognition_results(recognition_result_id) ON DELETE RESTRICT,
+            attempt_number INTEGER NOT NULL DEFAULT 0,
+            retry_after_seconds INTEGER,
+            error_code TEXT NOT NULL DEFAULT '',
+            error_message TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS recognition_benchmark_cases (
+            benchmark_case_id TEXT PRIMARY KEY,
+            item_id TEXT NOT NULL REFERENCES items(item_id) ON DELETE RESTRICT,
+            dataset_class TEXT NOT NULL,
+            truth_json TEXT NOT NULL,
+            labelled_by TEXT NOT NULL,
+            labelled_at TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1))
         );
         CREATE TABLE IF NOT EXISTS tag_definitions (
             tag_id TEXT PRIMARY KEY,
@@ -552,7 +648,11 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
 
 EXPECTED_SCHEMA: dict[str, set[str]] = {
     "schema_migrations": {"version", "applied_at", "description"},
-    "batches": {"batch_id", "source_fingerprint", "status", "item_count"},
+    "batches": {
+        "batch_id", "source_fingerprint", "status", "item_count", "capture_source",
+        "source_batch_id", "is_test_copy", "publish_eligible",
+        "reservation_eligible", "quarantine_reason",
+    },
     "items": {
         "item_id", "sku", "batch_id", "sequence", "shelf", "title", "price_cents",
         "discount_percent", "review_status", "recognition_status", "record_revision",
@@ -575,11 +675,39 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
     "photos": {
         "photo_id", "batch_id", "item_id", "kind", "stream_index", "sha256",
         "original_copy_path", "processed_path", "preview_path", "recognition_path",
+        "capture_source", "capture_metadata_json",
     },
     "recognition_results": {
         "recognition_result_id", "item_id", "provider", "source_kind", "model_name",
         "suggested_title", "suggested_price_cents", "confidence", "accepted_at",
         "input_image_count", "input_image_bytes", "suggested_tag_ids_json",
+        "attempt_uuid", "tier", "trigger", "forced_by", "prompt_version",
+        "response_schema_version", "image_profile", "selected_images_json",
+        "title_evidence_json", "field_evidence_json", "contradiction_flags_json",
+        "configured_price_version", "estimated_cost_cad", "latency_ms",
+        "prior_result_id", "request_id", "route_reason",
+    },
+    "recognition_attempt_states": {
+        "recognition_result_id", "state", "selected_at", "selected_by",
+        "accepted_at", "accepted_by", "updated_at",
+    },
+    "recognition_attempt_events": {
+        "attempt_event_id", "recognition_result_id", "event_type", "actor",
+        "occurred_at", "details_json",
+    },
+    "item_recognition_selection": {
+        "item_id", "recognition_result_id", "selected_by", "selected_at",
+    },
+    "recognition_requests": {
+        "request_id", "idempotency_key", "item_id", "batch_id", "provider",
+        "model_name", "tier", "trigger", "forced_by", "image_profile", "status",
+        "recognition_result_id", "attempt_number", "retry_after_seconds",
+        "error_code", "error_message", "created_at", "started_at", "finished_at",
+        "updated_at",
+    },
+    "recognition_benchmark_cases": {
+        "benchmark_case_id", "item_id", "dataset_class", "truth_json",
+        "labelled_by", "labelled_at", "active",
     },
     "recognition_jobs": {
         "batch_id", "provider", "status", "total", "completed", "recognized", "failed",
@@ -641,6 +769,11 @@ EXPECTED_INDEXES = {
     "idx_items_review",
     "idx_photos_item",
     "idx_recognition_item",
+    "idx_recognition_attempt_uuid",
+    "idx_recognition_attempt_tier",
+    "idx_recognition_attempt_events",
+    "idx_recognition_requests_status",
+    "idx_recognition_benchmark_item",
     "idx_item_change_log_item",
     "idx_checkpoints_batch",
     "idx_csv_staging_lifecycle",
@@ -720,6 +853,11 @@ def schema_manifest_report(connection: sqlite3.Connection) -> dict[str, Any]:
         "tag_definitions": {("tag_id",), ("canonical_label",)},
         "tag_aliases": {("alias",)},
         "item_tags": {("item_id", "tag_id")},
+        "recognition_attempt_states": {("recognition_result_id",)},
+        "recognition_attempt_events": {("attempt_event_id",)},
+        "item_recognition_selection": {("item_id",)},
+        "recognition_requests": {("request_id",), ("idempotency_key",)},
+        "recognition_benchmark_cases": {("benchmark_case_id",)},
     }
     for table, expected in required_unique.items():
         if table not in tables:
@@ -734,6 +872,15 @@ def schema_manifest_report(connection: sqlite3.Connection) -> dict[str, Any]:
         ("photos", "item_id", "items", "item_id"),
         ("recognition_results", "item_id", "items", "item_id"),
         ("recognition_jobs", "batch_id", "batches", "batch_id"),
+        ("batches", "source_batch_id", "batches", "batch_id"),
+        ("recognition_attempt_states", "recognition_result_id", "recognition_results", "recognition_result_id"),
+        ("recognition_attempt_events", "recognition_result_id", "recognition_results", "recognition_result_id"),
+        ("item_recognition_selection", "item_id", "items", "item_id"),
+        ("item_recognition_selection", "recognition_result_id", "recognition_results", "recognition_result_id"),
+        ("recognition_requests", "item_id", "items", "item_id"),
+        ("recognition_requests", "batch_id", "batches", "batch_id"),
+        ("recognition_requests", "recognition_result_id", "recognition_results", "recognition_result_id"),
+        ("recognition_benchmark_cases", "item_id", "items", "item_id"),
         ("csv_staging", "batch_id", "batches", "batch_id"),
         ("tag_aliases", "tag_id", "tag_definitions", "tag_id"),
         ("item_tags", "item_id", "items", "item_id"),
@@ -802,6 +949,16 @@ LEGACY_ITEM_ADDITIONS = [
 
 def _upgrade_legacy(connection: sqlite3.Connection) -> None:
     tables = _table_names(connection)
+    if "batches" in tables:
+        for definition in (
+            "capture_source TEXT NOT NULL DEFAULT 'DESKTOP_IMPORT_QR'",
+            "source_batch_id TEXT REFERENCES batches(batch_id) ON DELETE RESTRICT",
+            "is_test_copy INTEGER NOT NULL DEFAULT 0 CHECK(is_test_copy IN (0,1))",
+            "publish_eligible INTEGER NOT NULL DEFAULT 1 CHECK(publish_eligible IN (0,1))",
+            "reservation_eligible INTEGER NOT NULL DEFAULT 1 CHECK(reservation_eligible IN (0,1))",
+            "quarantine_reason TEXT NOT NULL DEFAULT ''",
+        ):
+            _add_column(connection, "batches", definition)
     if "items" in tables:
         for definition in LEGACY_ITEM_ADDITIONS:
             _add_column(connection, "items", definition)
@@ -814,6 +971,8 @@ def _upgrade_legacy(connection: sqlite3.Connection) -> None:
             "recognition_bytes INTEGER NOT NULL DEFAULT 0",
             "ai_eligible INTEGER NOT NULL DEFAULT 1",
             "image_role TEXT NOT NULL DEFAULT 'unknown'",
+            "capture_source TEXT NOT NULL DEFAULT 'DESKTOP_IMPORT_QR'",
+            "capture_metadata_json TEXT NOT NULL DEFAULT '{}'",
         ):
             _add_column(connection, "photos", definition)
     if "recognition_jobs" in tables:
@@ -854,6 +1013,23 @@ def _upgrade_legacy(connection: sqlite3.Connection) -> None:
             "accepted_at TEXT",
             "source_kind TEXT NOT NULL DEFAULT 'LIVE'",
             "model_name TEXT NOT NULL DEFAULT ''",
+            "attempt_uuid TEXT NOT NULL DEFAULT ''",
+            "tier TEXT NOT NULL DEFAULT 'baseline'",
+            "trigger TEXT NOT NULL DEFAULT 'INITIAL'",
+            "forced_by TEXT NOT NULL DEFAULT 'system'",
+            "prompt_version TEXT NOT NULL DEFAULT 'v1'",
+            "response_schema_version TEXT NOT NULL DEFAULT 'v1'",
+            "image_profile TEXT NOT NULL DEFAULT 'standard'",
+            "selected_images_json TEXT NOT NULL DEFAULT '[]'",
+            "title_evidence_json TEXT NOT NULL DEFAULT '[]'",
+            "field_evidence_json TEXT NOT NULL DEFAULT '{}'",
+            "contradiction_flags_json TEXT NOT NULL DEFAULT '[]'",
+            "configured_price_version TEXT NOT NULL DEFAULT ''",
+            "estimated_cost_cad REAL NOT NULL DEFAULT 0",
+            "latency_ms INTEGER NOT NULL DEFAULT 0",
+            "prior_result_id INTEGER REFERENCES recognition_results(recognition_result_id) ON DELETE RESTRICT",
+            "request_id TEXT",
+            "route_reason TEXT NOT NULL DEFAULT ''",
         ):
             _add_column(connection, "recognition_results", definition)
     if "batch_checkpoints" in tables:
@@ -1271,6 +1447,53 @@ def _migrate_controlled_tags(connection: sqlite3.Connection) -> None:
             )
 
 
+def _install_recognition_immutability(connection: sqlite3.Connection) -> None:
+    """Recognition payload rows are evidence and may only be appended."""
+    connection.executescript(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_recognition_attempt_uuid
+            ON recognition_results(attempt_uuid) WHERE attempt_uuid<>'';
+        CREATE INDEX IF NOT EXISTS idx_recognition_attempt_tier
+            ON recognition_results(tier, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_recognition_attempt_events
+            ON recognition_attempt_events(recognition_result_id, occurred_at);
+        CREATE INDEX IF NOT EXISTS idx_recognition_requests_status
+            ON recognition_requests(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_recognition_benchmark_item
+            ON recognition_benchmark_cases(item_id, active);
+        CREATE TRIGGER IF NOT EXISTS recognition_results_immutable_update
+        BEFORE UPDATE ON recognition_results
+        BEGIN
+            SELECT RAISE(ABORT, 'recognition attempts are immutable');
+        END;
+        CREATE TRIGGER IF NOT EXISTS recognition_results_immutable_delete
+        BEFORE DELETE ON recognition_results
+        BEGIN
+            SELECT RAISE(ABORT, 'recognition attempts cannot be deleted');
+        END;
+        CREATE TRIGGER IF NOT EXISTS recognition_attempt_events_immutable_update
+        BEFORE UPDATE ON recognition_attempt_events
+        BEGIN
+            SELECT RAISE(ABORT, 'recognition attempt events are immutable');
+        END;
+        CREATE TRIGGER IF NOT EXISTS recognition_attempt_events_immutable_delete
+        BEFORE DELETE ON recognition_attempt_events
+        BEGIN
+            SELECT RAISE(ABORT, 'recognition attempt events cannot be deleted');
+        END;
+        CREATE TRIGGER IF NOT EXISTS quarantined_items_never_ready_update
+        BEFORE UPDATE OF ready ON items
+        WHEN NEW.ready=1 AND EXISTS(
+            SELECT 1 FROM batches b
+            WHERE b.batch_id=NEW.batch_id AND b.publish_eligible=0
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'quarantined test-copy items cannot become saleable');
+        END;
+        """
+    )
+
+
 def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
     db_file.parent.mkdir(parents=True, exist_ok=True)
     current = 0
@@ -1289,6 +1512,8 @@ def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
                 "startup was refused without modifying the database."
             )
         if current == SCHEMA_VERSION:
+            with transaction(db_file) as connection:
+                _install_recognition_immutability(connection)
             with connect(db_file) as connection:
                 integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
                 foreign = connection.execute("PRAGMA foreign_key_check").fetchall()
@@ -1347,6 +1572,34 @@ def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
                 "ELSE COALESCE(NULLIF(source_kind,''),'LIVE') END"
             )
             connection.execute(
+                "UPDATE recognition_results SET attempt_uuid='legacy-' || recognition_result_id "
+                "WHERE attempt_uuid=''"
+            )
+            connection.execute(
+                """INSERT OR IGNORE INTO recognition_attempt_states(
+                       recognition_result_id,state,selected_at,selected_by,
+                       accepted_at,accepted_by,updated_at
+                   )
+                   SELECT recognition_result_id,
+                          CASE WHEN accepted_at IS NULL THEN 'UNREVIEWED' ELSE 'ACCEPTED' END,
+                          NULL,'',accepted_at,
+                          CASE WHEN accepted_at IS NULL THEN '' ELSE 'legacy-operator' END,
+                          COALESCE(accepted_at,created_at)
+                   FROM recognition_results"""
+            )
+            connection.execute(
+                "UPDATE batches SET capture_source=CASE "
+                "WHEN is_test_copy=1 THEN 'TEST' "
+                "WHEN command_count>0 THEN 'DESKTOP_IMPORT_QR' "
+                "ELSE 'DESKTOP_IMPORT_MANUAL' END "
+                "WHERE capture_source='' OR capture_source='DESKTOP_IMPORT_QR'"
+            )
+            connection.execute(
+                "UPDATE photos SET capture_source=COALESCE("
+                "(SELECT b.capture_source FROM batches b WHERE b.batch_id=photos.batch_id),"
+                "'DESKTOP_IMPORT_QR')"
+            )
+            connection.execute(
                 "UPDATE csv_staging SET updated_at=CASE WHEN updated_at='' THEN created_at ELSE updated_at END, "
                 "expires_at=CASE WHEN expires_at='' THEN ? ELSE expires_at END",
                 ((datetime.now().astimezone() + timedelta(days=7)).isoformat(timespec='microseconds'),),
@@ -1364,9 +1617,10 @@ def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
                 (
                     SCHEMA_VERSION,
                     timestamp,
-                    "SnapIMS v0.10.0 secure configuration revisions and provider capabilities",
+                    "SnapIMS v0.10.0 immutable recognition attempts, routing requests, and capture provenance",
                 ),
             )
+            _install_recognition_immutability(connection)
             _insert_internal_event(
                 connection,
                 component="system",
@@ -1450,7 +1704,10 @@ def find_batch_by_fingerprint(db_file: Path, fingerprint: str) -> dict[str, Any]
 
 def _item_select_sql(where: str) -> str:
     return f"""
-        SELECT i.*, COUNT(p.photo_id) AS image_count,
+        SELECT i.*,b.capture_source AS batch_capture_source,
+               b.is_test_copy,b.publish_eligible,b.reservation_eligible,
+               b.source_batch_id,b.quarantine_reason,
+               COUNT(p.photo_id) AS image_count,
                MIN(CASE WHEN p.photo_order=1 THEN p.photo_id END) AS front_photo_id,
                MIN(CASE WHEN p.photo_order=1 THEN COALESCE(p.preview_path,p.thumbnail_path) END) AS front_thumbnail,
                MIN(CASE WHEN p.photo_order=1 THEN p.processed_path END) AS front_image,
@@ -1475,11 +1732,17 @@ def _item_select_sql(where: str) -> str:
                r.input_image_bytes,
                r.accepted_at AS suggestion_accepted_at
         FROM items i
+        JOIN batches b ON b.batch_id=i.batch_id
         LEFT JOIN photos p ON p.item_id=i.item_id AND p.kind='product'
         LEFT JOIN recognition_results r ON r.recognition_result_id=(
-            SELECT MAX(r2.recognition_result_id)
-            FROM recognition_results r2
-            WHERE r2.item_id=i.item_id
+            SELECT COALESCE(
+                (SELECT current.recognition_result_id
+                   FROM item_recognition_selection current
+                  WHERE current.item_id=i.item_id),
+                (SELECT MAX(r2.recognition_result_id)
+                   FROM recognition_results r2
+                  WHERE r2.item_id=i.item_id)
+            )
         )
         {where}
         GROUP BY i.item_id
@@ -1737,7 +2000,9 @@ def record_ai_tag_suggestions_in_connection(
                                THEN item_tags.source ELSE excluded.source END,
                    assigned_at=CASE WHEN item_tags.acceptance_state='ACCEPTED'
                                     THEN item_tags.assigned_at ELSE excluded.assigned_at END,
-                   recognition_result_id=excluded.recognition_result_id,
+                   recognition_result_id=CASE WHEN item_tags.acceptance_state='ACCEPTED'
+                                               THEN item_tags.recognition_result_id
+                                               ELSE excluded.recognition_result_id END,
                    acceptance_state=CASE WHEN item_tags.acceptance_state='ACCEPTED'
                                          THEN 'ACCEPTED' ELSE 'SUGGESTED' END""",
             (item_id, raw_value, "AI_RECOGNITION", timestamp, recognition_result_id),
@@ -1882,18 +2147,158 @@ def update_item(
 def latest_recognition(db_file: Path, item_id: str) -> dict[str, Any] | None:
     with connect(db_file) as connection:
         row = connection.execute(
-            "SELECT * FROM recognition_results WHERE item_id=? ORDER BY recognition_result_id DESC LIMIT 1",
+            """SELECT r.*,
+                      COALESCE(s.state,'UNREVIEWED') AS attempt_state,
+                      s.accepted_at AS state_accepted_at,
+                      s.accepted_by,
+                      s.selected_at,
+                      s.selected_by
+               FROM recognition_results r
+               LEFT JOIN recognition_attempt_states s
+                 ON s.recognition_result_id=r.recognition_result_id
+               WHERE r.item_id=?
+               ORDER BY r.recognition_result_id DESC LIMIT 1""",
             (item_id,),
         ).fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    result = dict(row)
+    result["accepted_at"] = result.pop("state_accepted_at") or result.get("accepted_at")
+    return result
+
+
+def selected_recognition(db_file: Path, item_id: str) -> dict[str, Any] | None:
+    with connect(db_file) as connection:
+        row = connection.execute(
+            """SELECT r.*,COALESCE(s.state,'SELECTED') AS attempt_state,
+                      s.accepted_at AS state_accepted_at,s.accepted_by,
+                      s.selected_at,s.selected_by
+               FROM item_recognition_selection current
+               JOIN recognition_results r
+                 ON r.recognition_result_id=current.recognition_result_id
+               LEFT JOIN recognition_attempt_states s
+                 ON s.recognition_result_id=r.recognition_result_id
+               WHERE current.item_id=?""",
+            (item_id,),
+        ).fetchone()
+    if not row:
+        return None
+    result = dict(row)
+    result["accepted_at"] = result.pop("state_accepted_at") or result.get("accepted_at")
+    return result
 
 
 def recognition_history(db_file: Path, item_id: str) -> list[dict[str, Any]]:
     with connect(db_file) as connection:
         rows = connection.execute(
-            "SELECT * FROM recognition_results WHERE item_id=? ORDER BY recognition_result_id DESC", (item_id,)
+            """SELECT r.*,COALESCE(s.state,'UNREVIEWED') AS attempt_state,
+                      s.accepted_at AS state_accepted_at,s.accepted_by,
+                      s.selected_at,s.selected_by,
+                      CASE WHEN current.recognition_result_id IS NULL THEN 0 ELSE 1 END AS is_current
+               FROM recognition_results r
+               LEFT JOIN recognition_attempt_states s
+                 ON s.recognition_result_id=r.recognition_result_id
+               LEFT JOIN item_recognition_selection current
+                 ON current.item_id=r.item_id
+                AND current.recognition_result_id=r.recognition_result_id
+               WHERE r.item_id=? ORDER BY r.recognition_result_id DESC""",
+            (item_id,),
         ).fetchall()
-    return [dict(row) for row in rows]
+    history: list[dict[str, Any]] = []
+    for row in rows:
+        result = dict(row)
+        result["accepted_at"] = result.pop("state_accepted_at") or result.get("accepted_at")
+        history.append(result)
+    return history
+
+
+def select_recognition_attempt(
+    db_file: Path,
+    item_id: str,
+    recognition_result_id: int,
+    *,
+    actor: str = "operator",
+) -> None:
+    timestamp = now()
+    with transaction(db_file) as connection:
+        row = connection.execute(
+            "SELECT item_id FROM recognition_results WHERE recognition_result_id=?",
+            (recognition_result_id,),
+        ).fetchone()
+        if row is None or str(row["item_id"]) != item_id:
+            raise ValueError("Recognition attempt does not belong to this Item")
+        prior = connection.execute(
+            "SELECT recognition_result_id FROM item_recognition_selection WHERE item_id=?",
+            (item_id,),
+        ).fetchone()
+        if prior and int(prior[0]) != recognition_result_id:
+            connection.execute(
+                """UPDATE recognition_attempt_states
+                   SET state=CASE WHEN state='ACCEPTED' THEN state ELSE 'SUPERSEDED' END,
+                       updated_at=?
+                   WHERE recognition_result_id=?""",
+                (timestamp, int(prior[0])),
+            )
+        connection.execute(
+            """INSERT INTO item_recognition_selection(
+                   item_id,recognition_result_id,selected_by,selected_at
+               ) VALUES(?,?,?,?)
+               ON CONFLICT(item_id) DO UPDATE SET
+                   recognition_result_id=excluded.recognition_result_id,
+                   selected_by=excluded.selected_by,selected_at=excluded.selected_at""",
+            (item_id, recognition_result_id, actor, timestamp),
+        )
+        connection.execute(
+            """INSERT INTO recognition_attempt_states(
+                   recognition_result_id,state,selected_at,selected_by,updated_at
+               ) VALUES(?,'SELECTED',?,?,?)
+               ON CONFLICT(recognition_result_id) DO UPDATE SET
+                   state=CASE WHEN recognition_attempt_states.state='ACCEPTED'
+                              THEN 'ACCEPTED' ELSE 'SELECTED' END,
+                   selected_at=excluded.selected_at,selected_by=excluded.selected_by,
+                   updated_at=excluded.updated_at""",
+            (recognition_result_id, timestamp, actor, timestamp),
+        )
+        connection.execute(
+            """INSERT INTO recognition_attempt_events(
+                   recognition_result_id,event_type,actor,occurred_at,details_json
+               ) VALUES(?,'SELECTED',?,?,?)""",
+            (
+                recognition_result_id,
+                actor,
+                timestamp,
+                json.dumps({"prior_result_id": int(prior[0]) if prior else None}, sort_keys=True),
+            ),
+        )
+
+
+def clear_recognition_selection(
+    db_file: Path, item_id: str, *, actor: str = "operator"
+) -> bool:
+    timestamp = now()
+    with transaction(db_file) as connection:
+        row = connection.execute(
+            "SELECT recognition_result_id FROM item_recognition_selection WHERE item_id=?",
+            (item_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        recognition_result_id = int(row[0])
+        connection.execute("DELETE FROM item_recognition_selection WHERE item_id=?", (item_id,))
+        connection.execute(
+            """UPDATE recognition_attempt_states
+               SET state=CASE WHEN state='ACCEPTED' THEN state ELSE 'UNREVIEWED' END,
+                   updated_at=?
+               WHERE recognition_result_id=?""",
+            (timestamp, recognition_result_id),
+        )
+        connection.execute(
+            """INSERT INTO recognition_attempt_events(
+                   recognition_result_id,event_type,actor,occurred_at,details_json
+               ) VALUES(?,'SELECTION_CLEARED',?,?,'{}')""",
+            (recognition_result_id, actor, timestamp),
+        )
+    return True
 
 
 def get_cursor(db_file: Path, batch_id: str, queue: str) -> str:
