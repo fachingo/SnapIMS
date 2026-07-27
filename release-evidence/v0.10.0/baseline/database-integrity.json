@@ -1,0 +1,88 @@
+{
+  "inventory": {
+    "path": "/home/isaiah/SnapIMS-data/database/inventory.sqlite3",
+    "size": 1007616,
+    "user_version": 8,
+    "integrity": "ok",
+    "foreign_key_violations": 0,
+    "schema_manifest": {
+      "ok": true,
+      "problems": [],
+      "schema_version": 8
+    },
+    "migrations": [
+      {
+        "version": 1,
+        "applied_at": "2026-07-16T17:55:25",
+        "description": "Initial event-sourced SnapIMS prototype schema"
+      },
+      {
+        "version": 2,
+        "applied_at": "2026-07-16T21:34:06",
+        "description": "Associate recognition results with batches and recognizer models"
+      },
+      {
+        "version": 3,
+        "applied_at": "2026-07-16T21:34:06",
+        "description": "Add durable recognition review state and acceptance audit"
+      },
+      {
+        "version": 4,
+        "applied_at": "2026-07-18T12:19:11",
+        "description": "Persist batch recognition progress and Review cursors"
+      },
+      {
+        "version": 5,
+        "applied_at": "2026-07-24T18:53:39-06:00",
+        "description": "SnapIMS v0.5.1 verified schema"
+      },
+      {
+        "version": 6,
+        "applied_at": "2026-07-25T00:49:06-06:00",
+        "description": "SnapIMS v0.6.0 operator workstation schema"
+      },
+      {
+        "version": 7,
+        "applied_at": "2026-07-25T04:33:38.130137-06:00",
+        "description": "SnapIMS v0.6.1 stabilization schema"
+      },
+      {
+        "version": 8,
+        "applied_at": "2026-07-25T11:50:35.384573-06:00",
+        "description": "SnapIMS v0.7.0 keyboard and local Movie catalog schema"
+      }
+    ],
+    "counts": {
+      "batches": 4,
+      "items": 32,
+      "photos": 173,
+      "recognition_results": 13,
+      "inventory_events": 32,
+      "shopify_sync": 32
+    }
+  },
+  "catalog": {
+    "path": "/home/isaiah/SnapIMS-data/database/movie_catalog.sqlite3",
+    "size": 212992,
+    "user_version": 1,
+    "integrity": "ok",
+    "foreign_key_violations": 0,
+    "structure_errors": [],
+    "migrations": [
+      {
+        "version": 1,
+        "applied_at": "2026-07-25T11:50:35-06:00",
+        "description": "SLMC permanent local movie catalog foundation",
+        "schema_hash": "67f5f50f27dfb696bb9dbdd0d4fbe045859b8fa05861398c6050361b139708aa"
+      }
+    ],
+    "counts": {
+      "movies": 0,
+      "movie_aliases": 0,
+      "catalog_lookup_jobs": 9,
+      "catalog_events": 0
+    },
+    "fts_available": "1",
+    "fts_rows": 0
+  }
+}

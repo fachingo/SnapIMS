@@ -1,0 +1,18 @@
+PASS  Python
+PASS  venv
+PASS  dependencies
+PASS  SQLite
+PASS  logs directory
+PASS  config
+FAIL  write permissions
+PASS  port availability
+PASS  authentication
+PASS  OpenAI API key
+PASS  Cloudflare tunnel
+FAIL  Guacamole web application - Failed to connect to bus: Operation not permitted; Failed to connect to bus: Operation not permitted; Failed to connect to bus: Operation not permitted; Guacamole login page unavailable at http://127.0.0.1:8080/guacamole/
+FAIL  guacd service - guacd is not running
+FAIL  Tomcat service - snapims-guacamole-tomcat is not running
+FAIL  Guacamole HTTP port is not listening
+FAIL  guacd port 4822 is not listening
+FAIL  RDP desktop backend is not listening on 127.0.0.1:3389
+FAIL  SSH backend is not listening on 127.0.0.1:22

@@ -1,0 +1,5 @@
+bda7093 (HEAD -> feature/v0.10.0-final-preproduction, origin/feature/v0.9-infrastructure, feature/v0.9-infrastructure) Finalize infrastructure diagnostics and deployment tooling
+6b546d6 (feature/v0.7.0-keyboard-catalog) v0.9 infrastructure and remote workstation
+a49cba0 (tag: v0.7.0, origin/feature/v0.7.0-keyboard-catalog, origin/HEAD) docs: normalize publication report formatting
+045a559 docs: remove generated markdown trailing whitespace
+ab22f18 docs: keep generated v0.7.0 reports deterministic

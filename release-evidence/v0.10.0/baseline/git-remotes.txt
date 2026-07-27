@@ -1,0 +1,2 @@
+origin	https://github.com/fachingo/SnapIMS.git (fetch)
+origin	https://github.com/fachingo/SnapIMS.git (push)

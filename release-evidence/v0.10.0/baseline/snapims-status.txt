@@ -1,0 +1,13 @@
+SnapIMS .............. STOPPED
+Health ............... FAIL
+Cloudflare Tunnel .... STOPPED
+Guacamole ............ UNAVAILABLE
+guacd ................ STOPPED
+Tomcat ............... STOPPED
+xrdp desktop ......... STOPPED
+Authentication ....... PASS
+Database ............. PASS
+OpenAI ............... PASS
+Port ................. 8767
+Version .............. 0.9.0
+Guacamole detail ..... Failed to connect to bus: Operation not permitted; Failed to connect to bus: Operation not permitted; Failed to connect to bus: Operation not permitted; Guacamole login page unavailable at http://127.0.0.1:8080/guacamole/

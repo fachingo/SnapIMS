@@ -1,0 +1,30 @@
+00_START_HERE.md: OK
+01_MASTER_CONTROLLER.md: OK
+02_PHASE_0_BASELINE_AND_PRESERVATION.md: OK
+03_PHASE_1_STABILIZATION_SECURITY.md: OK
+04_PHASE_2_OBSERVABILITY.md: OK
+05_PHASE_3_SECURE_SETTINGS.md: OK
+06_PHASE_4_RECOGNITION_ROUTING.md: OK
+07_PHASE_5_INVENTORY_SEARCH.md: OK
+08_PHASE_6_MOVIE_DATABASE.md: OK
+09_PHASE_7_SHOPIFY_ORDERS_PICKING.md: OK
+10_PHASE_8_SCALE_ACCEPTANCE.md: OK
+11_PHASE_9_DOCUMENTATION_RELEASE.md: OK
+12_IMPLEMENTATION_STATE_TEMPLATE.md: OK
+13_ACCEPTANCE_CHECKLIST.md: OK
+14_FINAL_REPORT_TEMPLATE.md: OK
+15_RESUME_PROMPT.md: OK
+16_OWNER_APPROVAL_GATES.md: OK
+17_VERSION_POLICY.md: OK
+18_REFERENCE_INDEX.md: OK
+19_COMBINED_EXECUTION_PROMPT.md: OK
+20_ALL_PHASES_COMBINED.md: OK
+References/SnapIMS_Pre-1.0_Integrated_Feature_Roadmap_v0.10.0.md: OK
+sha256sum: References/SnapIMS_Pre-1.0_Integrated_Feature_Roadmap_v0.10.0.pdf: No such file or directory
+References/SnapIMS_Pre-1.0_Integrated_Feature_Roadmap_v0.10.0.pdf: FAILED open or read
+References/SnapIMS_v0.9.0_Integrated_Three-Perspective_Audit.md: OK
+sha256sum: References/SnapIMS_v0.9.0_Integrated_Three-Perspective_Audit.pdf: No such file or directory
+References/SnapIMS_v0.9.0_Integrated_Three-Perspective_Audit.pdf: FAILED open or read
+sha256sum: install_into_repo.sh: No such file or directory
+install_into_repo.sh: FAILED open or read
+sha256sum: WARNING: 3 listed files could not be read

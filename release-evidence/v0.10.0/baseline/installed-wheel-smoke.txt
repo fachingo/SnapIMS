@@ -1,0 +1,7 @@
+NOT RUN
+
+Baseline package build failed before a wheel was produced:
+
+`pyproject_hooks._impl.BackendUnavailable: Cannot import 'setuptools.build_meta'`
+
+This is recorded as baseline failure V010-P0-002. An installed-wheel smoke test must be captured after restoring the declared build dependencies.

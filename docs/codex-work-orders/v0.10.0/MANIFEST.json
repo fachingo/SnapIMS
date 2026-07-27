@@ -1,0 +1,136 @@
+{
+  "package": "SnapIMS v0.10.0 Codex Work Order",
+  "file_count": 26,
+  "files": [
+    {
+      "path": "00_START_HERE.md",
+      "bytes": 2894,
+      "sha256": "555da6899dbb113de091f41b0f0b0243ba757599145dea9f2f39a4ba69c422ac"
+    },
+    {
+      "path": "01_MASTER_CONTROLLER.md",
+      "bytes": 6577,
+      "sha256": "509f4f0c3ead2727b0f92c35c7567dfcdcd9e4f9f221d96e65fd16bda02c4f1b"
+    },
+    {
+      "path": "02_PHASE_0_BASELINE_AND_PRESERVATION.md",
+      "bytes": 3795,
+      "sha256": "0ad49e586f001624c2d0640572decd83fb6ad4043cebc09981b82abaad559ac2"
+    },
+    {
+      "path": "03_PHASE_1_STABILIZATION_SECURITY.md",
+      "bytes": 6855,
+      "sha256": "4325c0768d6f191612fc977daaeafe3757f982a032029e6a1e411b6702d324a5"
+    },
+    {
+      "path": "04_PHASE_2_OBSERVABILITY.md",
+      "bytes": 4374,
+      "sha256": "ed0cf6cca59f24ee15aa221553b18f0040a623f206217aeafc3e4bb8bbee19a4"
+    },
+    {
+      "path": "05_PHASE_3_SECURE_SETTINGS.md",
+      "bytes": 4188,
+      "sha256": "5b51e79777fff72fe2e8d8144219c1d6d0dab667548688d68ca06508c150d59e"
+    },
+    {
+      "path": "06_PHASE_4_RECOGNITION_ROUTING.md",
+      "bytes": 4784,
+      "sha256": "e2987e500cbaa518d6eba2fe738dab54b174e4d0ef1e6384bc03b5356804af27"
+    },
+    {
+      "path": "07_PHASE_5_INVENTORY_SEARCH.md",
+      "bytes": 3786,
+      "sha256": "46e6c904f35f9695400b7bf0d8ead1f5963e6a4e09261cb075409a04a89d91bb"
+    },
+    {
+      "path": "08_PHASE_6_MOVIE_DATABASE.md",
+      "bytes": 6610,
+      "sha256": "4a86277bffdf56b51bfd8b7192f6ba79ead6dfbc6c7ea67ad8cbb20765ca1fea"
+    },
+    {
+      "path": "09_PHASE_7_SHOPIFY_ORDERS_PICKING.md",
+      "bytes": 5609,
+      "sha256": "8c2536981abaeaf8c27a59a1c6d26dbaf7c9d1077d59bfe627abf22f643b0b7f"
+    },
+    {
+      "path": "10_PHASE_8_SCALE_ACCEPTANCE.md",
+      "bytes": 3607,
+      "sha256": "a1cb28467501e8c13787f7c20f322033cdb7698f3fa8097ffaafaa87367ed433"
+    },
+    {
+      "path": "11_PHASE_9_DOCUMENTATION_RELEASE.md",
+      "bytes": 3378,
+      "sha256": "f9c483cd84b223f2410bf4ae3fc343dff5908163babee33f1714dda59a9efe00"
+    },
+    {
+      "path": "12_IMPLEMENTATION_STATE_TEMPLATE.md",
+      "bytes": 1375,
+      "sha256": "1bf46c71bf245d4db9c1628bf55d418c794beb6ee6b08956098040536eed89b3"
+    },
+    {
+      "path": "13_ACCEPTANCE_CHECKLIST.md",
+      "bytes": 3889,
+      "sha256": "263682e6e15d6235cedf18c3fc876decd36f6d215083af9ea453d6c162efad8a"
+    },
+    {
+      "path": "14_FINAL_REPORT_TEMPLATE.md",
+      "bytes": 1999,
+      "sha256": "0ce6d2e7f8f803cb90ed00c989ded49b8153814cac30121651f8a7f9f2726932"
+    },
+    {
+      "path": "15_RESUME_PROMPT.md",
+      "bytes": 760,
+      "sha256": "4f6e6768ba5881eeaba35a0d46e7fe217f17fcb397e4e4ad4c534d0ac4fec30d"
+    },
+    {
+      "path": "16_OWNER_APPROVAL_GATES.md",
+      "bytes": 1782,
+      "sha256": "890bb6b6e86c05e4061d51fa2db454a3808fc784b8e178f16f130aac93a6a3b4"
+    },
+    {
+      "path": "17_VERSION_POLICY.md",
+      "bytes": 987,
+      "sha256": "c6cc6143130742369f842cbcd3d4177509c75ffd86aed33df3a05171971425ca"
+    },
+    {
+      "path": "18_REFERENCE_INDEX.md",
+      "bytes": 1748,
+      "sha256": "0c11e9e8f644d76d27ce8f057fdc79c1a6de969e64f345920f4b5fd875278130"
+    },
+    {
+      "path": "19_COMBINED_EXECUTION_PROMPT.md",
+      "bytes": 1071,
+      "sha256": "6b6fb14fa000fc49f639799e91d5f3b585b2e205ea7d362bea5b4e48991ce929"
+    },
+    {
+      "path": "20_ALL_PHASES_COMBINED.md",
+      "bytes": 71117,
+      "sha256": "cc6741c0951c817a3ba28131125a07c58e89fb467c97e814192210206349ba85"
+    },
+    {
+      "path": "References/SnapIMS_Pre-1.0_Integrated_Feature_Roadmap_v0.10.0.md",
+      "bytes": 29018,
+      "sha256": "340b62ac331b37ca50d8366cf852bed0e10781673e6a89ee83459c6e3f38ea93"
+    },
+    {
+      "path": "References/SnapIMS_Pre-1.0_Integrated_Feature_Roadmap_v0.10.0.pdf",
+      "bytes": 106645,
+      "sha256": "243388cd7a98d4d8965143907533a84c2ec849245f0873c156a1b56f28056d0d"
+    },
+    {
+      "path": "References/SnapIMS_v0.9.0_Integrated_Three-Perspective_Audit.md",
+      "bytes": 28922,
+      "sha256": "ae68be2ca586512b6e45264542d3a9b5a75b1c8a853b9f783cf1ee6fb1bf7cf2"
+    },
+    {
+      "path": "References/SnapIMS_v0.9.0_Integrated_Three-Perspective_Audit.pdf",
+      "bytes": 87791,
+      "sha256": "3682a4cdd742baf29fcefb8c9fbe43f260589a172ce65c31cc088ae715f6acac"
+    },
+    {
+      "path": "install_into_repo.sh",
+      "bytes": 604,
+      "sha256": "a23028d6e9a188b902e47d17bc9898f6a13b09302cd8c80aaa4540e3f183ee16"
+    }
+  ]
+}

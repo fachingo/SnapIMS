@@ -1,0 +1,8 @@
+* Getting build dependencies for sdist...
+
+Traceback (most recent call last):
+  File "/home/isaiah/Projects/SnapIMS/.venv/lib/python3.12/site-packages/pyproject_hooks/_impl.py", line 402, in _call_hook
+    raise BackendUnavailable(
+pyproject_hooks._impl.BackendUnavailable: Cannot import 'setuptools.build_meta'
+
+ERROR Backend 'setuptools.build_meta' is not available.
