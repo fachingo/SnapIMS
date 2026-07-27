@@ -41,7 +41,10 @@ class HTTPShopifyTransport:
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode())
+                payload = json.loads(response.read().decode())
+                if not isinstance(payload, dict):
+                    raise ShopifyAPIError("Shopify returned a non-object response")
+                return payload
         except urllib.error.HTTPError as exc:
             body = exc.read().decode(errors="replace")[:1000]
             raise ShopifyAPIError(f"Shopify HTTP {exc.code}: {body}") from exc
@@ -83,6 +86,8 @@ class ShopifyClient:
         data = payload.get("data", {}).get(field)
         if data is None:
             raise ShopifyAPIError(f"Shopify response did not contain {field}")
+        if not isinstance(data, dict):
+            raise ShopifyAPIError(f"Shopify response field {field} was not an object")
         user_errors = data.get("userErrors") or []
         if user_errors:
             raise ShopifyAPIError("; ".join(error.get("message", "Shopify user error") for error in user_errors))

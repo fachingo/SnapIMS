@@ -203,7 +203,11 @@ class WikipediaClient:
         self.catalog_db_file = catalog_db_file
         fixture = os.getenv("SNAPIMS_WIKIPEDIA_FIXTURE_DIR", "").strip()
         self.transport = transport or (FixtureTransport(Path(fixture)) if fixture else self._http_transport)
-        self.user_agent = user_agent or os.getenv("SNAPIMS_WIKIPEDIA_USER_AGENT", DEFAULT_USER_AGENT)
+        self.user_agent = (
+            user_agent
+            or os.getenv("SNAPIMS_WIKIPEDIA_USER_AGENT")
+            or DEFAULT_USER_AGENT
+        )
         self.timeout = timeout if timeout is not None else float(
             catalog_db.get_setting(catalog_db_file, "wikipedia_timeout_seconds", "10")
         )
@@ -260,7 +264,9 @@ class WikipediaClient:
         if cached:
             expires_at = str(cached[1] or "")
             if not expires_at or datetime.fromisoformat(expires_at) > datetime.now().astimezone():
-                return json.loads(str(cached[0]))
+                payload = json.loads(str(cached[0]))
+                if isinstance(payload, dict):
+                    return payload
 
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):

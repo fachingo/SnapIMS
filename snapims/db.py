@@ -499,7 +499,7 @@ def schema_manifest_report(connection: sqlite3.Connection) -> dict[str, Any]:
                 result.add(columns)
         return result
 
-    required_unique = {
+    required_unique: dict[str, set[tuple[str, ...]]] = {
         "batches": {("batch_id",), ("source_fingerprint",)},
         "items": {("item_id",), ("sku",), ("batch_id", "sequence")},
         "photos": {("batch_id", "stream_index")},
@@ -511,8 +511,8 @@ def schema_manifest_report(connection: sqlite3.Connection) -> dict[str, Any]:
     for table, expected in required_unique.items():
         if table not in tables:
             continue
-        actual = unique_column_sets(table)
-        for columns in sorted(expected - actual):
+        actual_unique = unique_column_sets(table)
+        for columns in sorted(expected - actual_unique):
             problems.append(f"Missing unique constraint: {table}({','.join(columns)})")
 
     required_foreign_keys = {
@@ -1510,7 +1510,9 @@ def create_batch_checkpoint_in_connection(
             restored_from_checkpoint_id,
         ),
     )
-    return int(cursor.lastrowid)
+    if cursor.lastrowid is None:
+        raise RuntimeError("SQLite did not return a checkpoint ID")
+    return cursor.lastrowid
 
 
 def create_batch_checkpoint(

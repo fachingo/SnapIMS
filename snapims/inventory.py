@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -44,7 +45,9 @@ def _normalize_header(value: str) -> str:
     return " ".join(str(value or "").replace("\ufeff", "").replace("\u00a0", " ").strip().split())
 
 
-def _canonical_headers(fieldnames: list[str] | None) -> tuple[list[str], dict[str, str]]:
+def _canonical_headers(
+    fieldnames: Sequence[str] | None,
+) -> tuple[list[str], dict[str, str]]:
     detected = [_normalize_header(name) for name in (fieldnames or [])]
     mapping: dict[str, str] = {}
     canonical: list[str] = []
@@ -69,7 +72,7 @@ def _canonical_headers(fieldnames: list[str] | None) -> tuple[list[str], dict[st
     return canonical, mapping
 
 
-def _csv_reader(csv_text: str) -> tuple[csv.DictReader[str], list[str]]:
+def _csv_reader(csv_text: str) -> tuple[Iterable[dict[str, Any]], list[str]]:
     import io
 
     text = csv_text.lstrip("\ufeff")

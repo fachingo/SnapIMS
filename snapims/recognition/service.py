@@ -106,7 +106,9 @@ def run_recognition(db_file: Path, item_id: str, recognizer: BaseRecognizer) -> 
             "UPDATE items SET recognition_status='COMPLETE',recognition_error='',updated_at=? WHERE item_id=?",
             (db.now(), item_id),
         )
-    recognition_result_id = int(cursor.lastrowid)
+    if cursor.lastrowid is None:
+        raise RuntimeError("SQLite did not return a recognition result ID")
+    recognition_result_id = cursor.lastrowid
     # Catalog work is additive. A catalog failure must never erase or roll back
     # the committed visual recognition result. Unique local matches are linked
     # immediately; network misses continue in the restart-safe catalog worker.

@@ -377,7 +377,9 @@ def _insert_batch(
                     ({1: "front", 2: "spine", 3: "back", 4: "cassette"}.get(artifact.photo_order or 0, "support") if artifact.kind == "product" else artifact.kind),
                 ),
             )
-            photo_ids[artifact.source.stream_index] = int(cursor.lastrowid)
+            if cursor.lastrowid is None:
+                raise RuntimeError("SQLite did not return a photo ID")
+            photo_ids[artifact.source.stream_index] = cursor.lastrowid
         for command_photo in batch.commands:
             command = parse_command(command_photo.qr_payload or "")
             if command:

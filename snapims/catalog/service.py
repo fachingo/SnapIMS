@@ -578,7 +578,9 @@ def _run_job(paths: DataPaths, job_id: int, client: WikipediaClient | None = Non
                     uuid.uuid5(uuid.NAMESPACE_URL, json.dumps(asdict(request), sort_keys=True)).hex,
                 ),
             )
-            attempt_id = int(cursor.lastrowid)
+            if cursor.lastrowid is None:
+                raise RuntimeError("SQLite did not return a catalog attempt ID")
+            attempt_id = cursor.lastrowid
         wikipedia = client or WikipediaClient(paths.catalog_db_file)
         limit = int(catalog_db.get_setting(paths.catalog_db_file, "wikipedia_max_candidates", "5"))
         candidates = wikipedia.search_candidates(
@@ -791,6 +793,7 @@ def latest_job(catalog_db_file: Path, *, item_id: str = "", recognition_result_i
         catalog_db.initialize(catalog_db_file, create=False)
     except Exception:
         return None
+    value: int | str
     if recognition_result_id is not None:
         where, value = "recognition_result_id=?", recognition_result_id
     else:

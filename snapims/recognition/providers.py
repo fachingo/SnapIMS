@@ -87,7 +87,7 @@ class OpenAIRecognizer(BaseRecognizer):
 
     def model_name(self) -> str:
         _load_environment()
-        return self.model or os.getenv("SNAPIMS_OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+        return self.model or os.getenv("SNAPIMS_OPENAI_MODEL") or DEFAULT_OPENAI_MODEL
 
     def available(self) -> tuple[bool, str]:
         _load_environment()

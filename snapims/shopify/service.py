@@ -128,7 +128,9 @@ class ShopifyService:
                 "INSERT INTO upload_attempts(item_id,started_at,status) VALUES(?,?,'RUNNING')",
                 (item_id, db.now()),
             )
-            attempt = int(cursor.lastrowid)
+            if cursor.lastrowid is None:
+                raise RuntimeError("SQLite did not return an upload attempt ID")
+            attempt = cursor.lastrowid
 
         try:
             product_id = str(checkpoint.get("product_id") or item["shopify_product_id"] or "")

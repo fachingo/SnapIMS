@@ -21,7 +21,9 @@ def _start_job(paths: DataPaths, operation: str, payload: dict[str, Any]) -> int
                ) VALUES(?,'RUNNING',?,?,?)""",
             (operation, json.dumps(payload, sort_keys=True), catalog_db.now(), catalog_db.now()),
         )
-        return int(cursor.lastrowid)
+        if cursor.lastrowid is None:
+            raise RuntimeError("SQLite did not return a maintenance job ID")
+        return cursor.lastrowid
 
 
 def _finish_job(
