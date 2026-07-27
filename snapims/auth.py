@@ -5,6 +5,7 @@ import binascii
 import hashlib
 import hmac
 import secrets
+from typing import Any
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 COOKIE = "snapims_session"
@@ -13,6 +14,7 @@ SCRYPT_N = 2**14
 SCRYPT_R = 8
 SCRYPT_P = 1
 MIN_SECRET_LENGTH = 32
+DEFAULT_SESSION_GENERATION = "1"
 
 
 def generate_secret() -> str:
@@ -86,12 +88,66 @@ def serializer(secret: str) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(secret, salt="snapims-session")
 
 
-def issue_session(secret: str, username: str) -> str:
-    return serializer(secret).dumps({"sub": username})
+def credential_fingerprint(password_hash: str) -> str:
+    """Bind sessions to the current credential without exposing its stored hash."""
+    return hashlib.sha256(password_hash.encode("utf-8")).hexdigest()[:24]
 
 
-def read_session(secret: str, value: str, max_age: int = SESSION_MAX_AGE_SECONDS) -> str | None:
+def issue_session(
+    secret: str,
+    username: str,
+    *,
+    generation: str = DEFAULT_SESSION_GENERATION,
+    password_hash: str = "",
+    csrf_token: str | None = None,
+) -> str:
+    return serializer(secret).dumps(
+        {
+            "sub": username,
+            "gen": generation,
+            "credential": credential_fingerprint(password_hash),
+            "csrf": csrf_token or secrets.token_urlsafe(32),
+        }
+    )
+
+
+def read_session_claims(
+    secret: str,
+    value: str,
+    max_age: int = SESSION_MAX_AGE_SECONDS,
+    *,
+    generation: str = DEFAULT_SESSION_GENERATION,
+    password_hash: str = "",
+) -> dict[str, Any] | None:
     try:
-        return serializer(secret).loads(value, max_age=max_age).get("sub")
-    except (BadSignature, AttributeError):
+        claims = serializer(secret).loads(value, max_age=max_age)
+        if not isinstance(claims, dict):
+            return None
+        if not hmac.compare_digest(str(claims.get("gen", "")), generation):
+            return None
+        expected = credential_fingerprint(password_hash)
+        if not hmac.compare_digest(str(claims.get("credential", "")), expected):
+            return None
+        if not claims.get("sub") or not claims.get("csrf"):
+            return None
+        return claims
+    except (BadSignature, AttributeError, TypeError):
         return None
+
+
+def read_session(
+    secret: str,
+    value: str,
+    max_age: int = SESSION_MAX_AGE_SECONDS,
+    *,
+    generation: str = DEFAULT_SESSION_GENERATION,
+    password_hash: str = "",
+) -> str | None:
+    claims = read_session_claims(
+        secret,
+        value,
+        max_age,
+        generation=generation,
+        password_hash=password_hash,
+    )
+    return str(claims["sub"]) if claims else None

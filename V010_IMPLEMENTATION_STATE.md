@@ -4,10 +4,10 @@
 
 - Project: SnapIMS
 - Branch: `feature/v0.10.0-final-preproduction`
-- HEAD: `27a245b94f38f0ba19726fe572e04629a358274b`
+- HEAD: `c74d09e` (verified Phase 0 exit)
 - Upstream: none (branch not yet pushed)
 - Started: 2026-07-26T18:59:00-06:00
-- Last updated: 2026-07-26T19:21:00-06:00
+- Last updated: 2026-07-26T19:29:00-06:00
 - Current application version: source/package metadata `0.9.0`; installed editable distribution metadata `0.7.0`
 - Inventory schema: 8
 - Catalog schema: 1
@@ -28,7 +28,7 @@
 - Phase: 1 — Stabilization, Security and Truthful Orchestration
 - Phase file: `docs/codex-work-orders/v0.10.0/03_PHASE_1_STABILIZATION_SECURITY.md`
 - Status: IN PROGRESS
-- Latest verified commit: `27a245b` (`chore: record phase 0 owner gate`)
+- Latest verified commit: `c74d09e` (`chore: complete v0.10.0 preservation gate`)
 - NEXT_PHASE: `03_PHASE_1_STABILIZATION_SECURITY.md`
 - NEXT_ACTION: Implement CSRF/origin protection, login hardening, session generation, security headers, and failure-path tests as the first Phase 1 milestone.
 
@@ -48,6 +48,13 @@
 - [x] Backed up `/etc/guacamole/snapims-admin.env`; verified owner/group `isaiah:isaiah`, mode 0600, parent directories mode 0700, size 97 bytes, and SHA-256 without printing contents.
 - [ ] Capture an installed-wheel smoke test after the baseline build-tool failure is repaired in Phase 1.
 - [x] Created the Phase 0 preservation milestone and owner-gate checkpoint commits.
+- [x] Added session-bound CSRF protection for authenticated form and JSON state changes plus anonymous login CSRF.
+- [x] Added configured Host/Origin validation compatible with the local and Cloudflare-forwarded HTTPS hosts.
+- [x] Added CSP, nosniff, referrer, permissions, anti-frame, and sensitive-page no-store headers.
+- [x] Bound signed sessions to session generation and the current password hash so credential rotation revokes existing sessions.
+- [x] Added bounded identity/IP login failure tracking with stepped backoff and generic client responses.
+- [x] Added safe authentication success/failure/throttle/logout operational log facts without password values.
+- [x] Restored declared build tooling, built the package, and passed an isolated no-dependency installed-wheel version smoke.
 
 ## Migrations
 
@@ -75,6 +82,11 @@ No v0.10.0 migration has been authored or applied.
 | work-order SHA-256 verification | PARTIAL | `release-evidence/v0.10.0/baseline/work-order-sha256.txt` | All present files match; two duplicate-reference PDFs and installer listed by the manifest are absent |
 | `snapims status` | PASS under current implementation | `release-evidence/v0.10.0/baseline/snapims-status.txt` | Phase 1 must make health semantics truthful |
 | `snapims doctor` | PASS under current implementation | `release-evidence/v0.10.0/baseline/snapims-doctor.txt` | Current command does not yet exit nonzero on required failures |
+| Phase 1 security focused tests | PASS | `release-evidence/v0.10.0/phase-1-security/security-focused.txt` | 17 tests |
+| Phase 1 focused Ruff | PASS | `release-evidence/v0.10.0/phase-1-security/ruff.txt` | Exit 0 |
+| Phase 1 JavaScript syntax | PASS | `release-evidence/v0.10.0/phase-1-security/node-check.txt` | Exit 0 |
+| Phase 1 mypy | FAIL at baseline count | `release-evidence/v0.10.0/phase-1-security/mypy.txt` | 19 pre-existing errors; no errors from security changes |
+| Installed-wheel smoke | PASS | `release-evidence/v0.10.0/phase-1-security/installed-wheel-smoke.txt` | Wheel and source both report 0.9.0 |
 
 ## Browser verification
 
@@ -99,7 +111,7 @@ No v0.10.0 migration has been authored or applied.
 | ID | Severity | Reproduction | Current state | Next action |
 |---|---|---|---|---|
 | V010-P0-001 | High | `python -m mypy snapims --ignore-missing-imports` | 19 baseline type errors | Repair in first Phase 1 bounded milestone |
-| V010-P0-002 | High | `python -m build --no-isolation` | `setuptools.build_meta` unavailable | Restore build dependencies, build, then installed-wheel smoke |
+| V010-P0-002 | High | `python -m build --no-isolation` | RESOLVED | Installed declared setuptools/wheel; build and isolated wheel smoke pass |
 | V010-P0-003 | High | Resolve `desktop.ims.canadavhs.ca` | DNS resolution fails | Treat `remote.canadavhs.ca` as compatibility evidence; owner/infrastructure decision before docs claim official hostname |
 | V010-P0-004 | High | Backup root-only Guacamole secret file | RESOLVED | Owner completed copy; checksum/mode verified and external manifest updated |
 | V010-P0-005 | Medium | Compare installed metadata to source | installed metadata 0.7.0; source 0.9.0 | Reinstall verified package after build repair |

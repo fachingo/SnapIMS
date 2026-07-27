@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
   <title>{% block title %}SnapIMS{% endblock %}</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
@@ -20,7 +21,7 @@
       <a href="/publish">Publish</a>
       <a href="/settings">Settings</a>
       <a href="/diagnostics">Diagnostics</a>
-      <form method="post" action="/logout" style="display:inline"><button type="submit">Log out</button></form>
+      <form method="post" action="/logout" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Log out</button></form>
     </nav>
     <button class="command-trigger" type="button" data-command-open title="Command palette (Ctrl+Shift+P; Ctrl+K fallback)">⌘</button>
     {% endif %}

@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import json
+import hmac
 import logging
 from logging.handlers import RotatingFileHandler
 import mimetypes
 import os
 from pathlib import Path
+import secrets
+import threading
+import time
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlparse
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -60,7 +64,7 @@ from snapims.auth import (
     authentication_enabled,
     authentication_problem,
     issue_session,
-    read_session,
+    read_session_claims,
     verify_password,
 )
 from snapims.config import SnapIMSConfig
@@ -69,6 +73,104 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 STATIC_ROOT = PACKAGE_ROOT / "static"
 TEMPLATES = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
 LOGGER = logging.getLogger(__name__)
+CSRF_COOKIE = "snapims_csrf"
+STATE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+_LOGIN_FAILURES: dict[str, tuple[int, float, float]] = {}
+_LOGIN_LOCK = threading.Lock()
+_LOGIN_MAX_RECORDS = 10_000
+
+
+def _client_identity(request: Request, username: str = "") -> str:
+    forwarded = request.headers.get("cf-connecting-ip") or request.headers.get(
+        "x-forwarded-for", ""
+    ).split(",", 1)[0]
+    address = forwarded.strip() or (request.client.host if request.client else "unknown")
+    return f"{address.casefold()}|{username.strip().casefold()}"
+
+
+def _login_retry_after(identity: str) -> int:
+    now_value = time.monotonic()
+    with _LOGIN_LOCK:
+        record = _LOGIN_FAILURES.get(identity)
+        if not record:
+            return 0
+        _, blocked_until, _ = record
+        return max(0, int(blocked_until - now_value + 0.999))
+
+
+def _record_login_failure(identity: str) -> int:
+    now_value = time.monotonic()
+    with _LOGIN_LOCK:
+        if len(_LOGIN_FAILURES) >= _LOGIN_MAX_RECORDS:
+            oldest = sorted(_LOGIN_FAILURES, key=lambda key: _LOGIN_FAILURES[key][2])
+            for key in oldest[: max(1, len(oldest) // 10)]:
+                _LOGIN_FAILURES.pop(key, None)
+        failures, _, _ = _LOGIN_FAILURES.get(identity, (0, 0.0, now_value))
+        failures += 1
+        delay = 0 if failures < 3 else min(60, 2 ** (failures - 3))
+        _LOGIN_FAILURES[identity] = (failures, now_value + delay, now_value)
+        return delay
+
+
+def _clear_login_failures(identity: str) -> None:
+    with _LOGIN_LOCK:
+        _LOGIN_FAILURES.pop(identity, None)
+
+
+def _new_csrf() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _origin_allowed(request: Request, config: SnapIMSConfig) -> bool:
+    host = request.headers.get("host", "").split(":", 1)[0].strip().casefold()
+    if host not in config.allowed_hosts:
+        return False
+    origin = request.headers.get("origin")
+    if not origin:
+        return True
+    parsed = urlparse(origin)
+    if not parsed.hostname or parsed.hostname.casefold() not in config.allowed_hosts:
+        return False
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
+    expected_scheme = forwarded_proto or request.url.scheme
+    return parsed.scheme == expected_scheme
+
+
+async def _submitted_csrf(request: Request) -> str:
+    header = request.headers.get("x-csrf-token", "")
+    if header:
+        return header
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("application/x-www-form-urlencoded"):
+        text_body = (await request.body()).decode("utf-8", errors="replace")
+        return parse_qs(text_body, keep_blank_values=True).get("csrf_token", [""])[0]
+    if content_type.startswith("multipart/form-data"):
+        raw_body = await request.body()
+        marker = b'name="csrf_token"'
+        position = raw_body.find(marker)
+        if position >= 0:
+            value_start = raw_body.find(b"\r\n\r\n", position)
+            if value_start >= 0:
+                value_end = raw_body.find(b"\r\n", value_start + 4)
+                if value_end >= 0:
+                    return raw_body[value_start + 4 : value_end].decode(
+                        "utf-8", errors="replace"
+                    )
+    return ""
+
+
+def _security_headers(response: Any, path: str) -> None:
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; "
+        "form-action 'self'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "same-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["X-Frame-Options"] = "DENY"
+    if path in {"/login", "/settings"} or path.startswith("/settings/"):
+        response.headers["Cache-Control"] = "no-store"
 
 
 @asynccontextmanager
@@ -144,17 +246,66 @@ async def authentication(request: Request, call_next):
         "/health",
     }
     auth_problem = authentication_problem(config.auth_secret, config.admin_password_hash)
+    enabled = authentication_enabled(config.auth_secret, config.admin_password_hash)
+    claims = None
+    session = request.cookies.get(COOKIE)
+    if enabled and session:
+        claims = read_session_claims(
+            config.auth_secret,
+            session,
+            generation=config.session_generation,
+            password_hash=config.admin_password_hash,
+        )
+    anonymous_csrf = request.cookies.get(CSRF_COOKIE, "")
+    request.state.csrf_token = (
+        str(claims.get("csrf", "")) if claims else anonymous_csrf or _new_csrf()
+    )
+    if request.method in STATE_METHODS and enabled:
+        if not _origin_allowed(request, config):
+            LOGGER.warning(
+                "Security request rejected reason=origin path=%s client=%s",
+                request.url.path,
+                _client_identity(request),
+            )
+            origin_response = JSONResponse({"detail": "Forbidden"}, status_code=403)
+            _security_headers(origin_response, request.url.path)
+            return origin_response
+        expected = str(claims.get("csrf", "")) if claims else anonymous_csrf
+        submitted = await _submitted_csrf(request)
+        if not expected or not submitted or not hmac.compare_digest(expected, submitted):
+            LOGGER.warning(
+                "Security request rejected reason=csrf path=%s client=%s",
+                request.url.path,
+                _client_identity(request),
+            )
+            csrf_response = JSONResponse({"detail": "Forbidden"}, status_code=403)
+            _security_headers(csrf_response, request.url.path)
+            return csrf_response
     if auth_problem and not public:
-        return RedirectResponse(
+        config_response = RedirectResponse(
             f"/login?error={quote('Authentication configuration error. Check .env.')}",
             status_code=303,
         )
-    if authentication_enabled(config.auth_secret, config.admin_password_hash) and not public:
-        session = request.cookies.get(COOKIE)
-        username = read_session(config.auth_secret, session) if session else None
+        _security_headers(config_response, request.url.path)
+        return config_response
+    if enabled and not public:
+        username = str(claims.get("sub", "")) if claims else None
         if username != config.admin_username:
-            return RedirectResponse("/login", status_code=303)
+            login_response = RedirectResponse("/login", status_code=303)
+            _security_headers(login_response, request.url.path)
+            return login_response
     response = await call_next(request)
+    if enabled and not claims and not anonymous_csrf:
+        forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
+        response.set_cookie(
+            CSRF_COOKIE,
+            request.state.csrf_token,
+            httponly=True,
+            secure=request.url.scheme == "https" or forwarded_proto == "https",
+            samesite="strict",
+            max_age=3600,
+        )
+    _security_headers(response, request.url.path)
     return response
 
 
@@ -188,25 +339,48 @@ async def login(request: Request, username: str = Form(""), password: str = Form
         )
     if not authentication_enabled(config.auth_secret, config.admin_password_hash):
         return RedirectResponse("/", status_code=303)
+    identity = _client_identity(request, username)
+    retry_after = _login_retry_after(identity)
+    if retry_after:
+        LOGGER.warning("Authentication failed outcome=throttled identity=%s", identity)
+        response = RedirectResponse("/login?error=Invalid%20credentials", status_code=303)
+        response.headers["Retry-After"] = str(retry_after)
+        return response
     if username == config.admin_username and verify_password(password, config.admin_password_hash):
+        _clear_login_failures(identity)
+        LOGGER.info("Authentication succeeded identity=%s", identity)
         response = RedirectResponse("/", status_code=303)
         forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
         response.set_cookie(
             COOKIE,
-            issue_session(config.auth_secret, username),
+            issue_session(
+                config.auth_secret,
+                username,
+                generation=config.session_generation,
+                password_hash=config.admin_password_hash,
+            ),
             httponly=True,
             secure=request.url.scheme == "https" or forwarded_proto == "https",
             samesite="lax",
             max_age=86400,
         )
+        response.delete_cookie(CSRF_COOKIE)
         return response
+    delay = _record_login_failure(identity)
+    LOGGER.warning(
+        "Authentication failed outcome=invalid identity=%s backoff_seconds=%s",
+        identity,
+        delay,
+    )
     return RedirectResponse("/login?error=Invalid%20credentials", status_code=303)
 
 
 @app.post("/logout")
-async def logout() -> RedirectResponse:
+async def logout(request: Request) -> RedirectResponse:
+    LOGGER.info("Authentication logout identity=%s", _client_identity(request))
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(COOKIE)
+    response.delete_cookie(CSRF_COOKIE)
     return response
 
 
@@ -215,7 +389,12 @@ def get_paths() -> DataPaths:
 
 
 def context(request: Request, **values: Any) -> dict[str, Any]:
-    return {"request": request, "version": __version__, **values}
+    return {
+        "request": request,
+        "version": __version__,
+        "csrf_token": getattr(request.state, "csrf_token", ""),
+        **values,
+    }
 
 
 def redirect(url: str) -> RedirectResponse:
@@ -900,7 +1079,12 @@ async def save_item(
         ):
             try:
                 queue_operator_title_correction(
-                    paths, item_id, values["title"], values["release_year"]
+                    paths,
+                    item_id,
+                    str(values["title"]),
+                    int(values["release_year"])
+                    if values["release_year"] is not None
+                    else None,
                 )
             except Exception as exc:
                 LOGGER.exception("Catalog correction lookup failed for %s: %s", item_id, exc)
@@ -1021,6 +1205,8 @@ async def api_update_item(item_id: str, request: Request) -> JSONResponse:
             except Exception as exc:
                 LOGGER.exception("Catalog correction lookup failed for %s: %s", item_id, exc)
     saved = db.get_item(paths.db_file, item_id)
+    if saved is None:
+        raise HTTPException(404)
     return JSONResponse(
         {"ok": True, "item": saved, "health": db.batch_health(paths.db_file, saved["batch_id"])}
     )
@@ -1257,7 +1443,9 @@ async def upload_csv_preview(
             ),
         )
     except (UnicodeDecodeError, CSVImportError, OSError) as exc:
-        return publish_page(request, batch_id=batch_id, message=f"CSV upload failed: {exc}")
+        return await publish_page(
+            request, batch_id=batch_id, message=f"CSV upload failed: {exc}"
+        )
 
 
 @app.get("/publish/csv/diff/{token}", response_class=HTMLResponse)

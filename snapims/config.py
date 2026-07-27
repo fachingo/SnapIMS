@@ -4,6 +4,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 def default_project_path() -> Path:
@@ -95,6 +96,9 @@ class SnapIMSConfig:
     admin_username: str
     admin_password_hash: str
     openai_api_key: str
+    public_url: str
+    allowed_hosts: tuple[str, ...]
+    session_generation: str
 
     @classmethod
     def load(cls) -> "SnapIMSConfig":
@@ -113,6 +117,17 @@ class SnapIMSConfig:
         data = DataPaths.from_root()
         data.ensure()
         logs = data.logs
+        public_url = os.getenv("SNAPIMS_PUBLIC_URL", "https://ims.canadavhs.ca").rstrip("/")
+        configured_hosts = {
+            value.strip().casefold()
+            for value in os.getenv(
+                "SNAPIMS_ALLOWED_HOSTS",
+                "127.0.0.1,localhost,testserver,ims.canadavhs.ca",
+            ).split(",")
+            if value.strip()
+        }
+        if hostname := urlparse(public_url).hostname:
+            configured_hosts.add(hostname.casefold())
         return cls(
             project_path=project,
             host=os.getenv("SNAPIMS_HOST", "127.0.0.1"),
@@ -148,6 +163,12 @@ class SnapIMSConfig:
             admin_username=os.getenv("SNAPIMS_ADMIN_USERNAME", "admin"),
             admin_password_hash=os.getenv("SNAPIMS_ADMIN_PASSWORD_HASH", ""),
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+            public_url=public_url,
+            allowed_hosts=tuple(sorted(configured_hosts)),
+            session_generation=os.getenv(
+                "SNAPIMS_SESSION_GENERATION", "1"
+            ).strip()
+            or "1",
         )
 
     def ensure(self) -> "SnapIMSConfig":

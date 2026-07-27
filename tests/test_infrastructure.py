@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,12 @@ from snapims.manager import ServiceManager
 from snapims.web.app import app
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _csrf(response_text: str) -> str:
+    match = re.search(r'<meta name="csrf-token" content="([^"]+)"', response_text)
+    assert match, response_text
+    return match.group(1)
 
 
 def _isolated_env(data_dir: Path, *, auth: bool = False) -> dict[str, str]:
@@ -88,10 +95,15 @@ def test_authentication_login_logout_flow(data_paths, monkeypatch: pytest.Monkey
         blocked = client.get("/", follow_redirects=False)
         assert blocked.status_code == 303
         assert blocked.headers["location"] == "/login"
+        anonymous_csrf = _csrf(client.get("/login").text)
 
         bad_login = client.post(
             "/login",
-            data={"username": "operator", "password": "wrong"},
+            data={
+                "username": "operator",
+                "password": "wrong",
+                "csrf_token": anonymous_csrf,
+            },
             follow_redirects=False,
         )
         assert bad_login.status_code == 303
@@ -99,7 +111,11 @@ def test_authentication_login_logout_flow(data_paths, monkeypatch: pytest.Monkey
 
         good_login = client.post(
             "/login",
-            data={"username": "operator", "password": "correct horse battery"},
+            data={
+                "username": "operator",
+                "password": "correct horse battery",
+                "csrf_token": anonymous_csrf,
+            },
             follow_redirects=False,
         )
         assert good_login.status_code == 303
@@ -108,10 +124,136 @@ def test_authentication_login_logout_flow(data_paths, monkeypatch: pytest.Monkey
         dashboard = client.get("/")
         assert dashboard.status_code == 200
         assert "SnapIMS" in dashboard.text
+        session_csrf = _csrf(dashboard.text)
 
-        logout = client.post("/logout", follow_redirects=False)
+        logout = client.post(
+            "/logout",
+            data={"csrf_token": session_csrf},
+            follow_redirects=False,
+        )
         assert logout.status_code == 303
         assert logout.headers["location"] == "/login"
+
+
+def test_csrf_origin_session_binding_and_security_headers(
+    data_paths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SNAPIMS_AUTH_SECRET", generate_secret())
+    monkeypatch.setenv("SNAPIMS_ADMIN_USERNAME", "security-operator")
+    monkeypatch.setenv(
+        "SNAPIMS_ADMIN_PASSWORD_HASH", hash_password("correct horse battery")
+    )
+
+    with TestClient(app) as first, TestClient(app) as second:
+        login_page = first.get("/login")
+        token = _csrf(login_page.text)
+        assert login_page.headers["cache-control"] == "no-store"
+        assert "default-src 'self'" in login_page.headers["content-security-policy"]
+        assert login_page.headers["x-content-type-options"] == "nosniff"
+        assert login_page.headers["x-frame-options"] == "DENY"
+
+        missing = first.post(
+            "/login",
+            data={"username": "security-operator", "password": "correct horse battery"},
+        )
+        assert missing.status_code == 403
+
+        wrong = first.post(
+            "/login",
+            data={
+                "username": "security-operator",
+                "password": "correct horse battery",
+                "csrf_token": "wrong-token",
+            },
+        )
+        assert wrong.status_code == 403
+
+        cross_origin = first.post(
+            "/login",
+            data={
+                "username": "security-operator",
+                "password": "correct horse battery",
+                "csrf_token": token,
+            },
+            headers={"origin": "https://evil.example"},
+        )
+        assert cross_origin.status_code == 403
+
+        signed_in = first.post(
+            "/login",
+            data={
+                "username": "security-operator",
+                "password": "correct horse battery",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert signed_in.status_code == 303
+        authenticated_token = _csrf(first.get("/").text)
+
+        no_token = first.post("/settings", data={"incoming_folder": str(data_paths.incoming)})
+        assert no_token.status_code == 403
+
+        second_token = _csrf(second.get("/login").text)
+        second_login = second.post(
+            "/login",
+            data={
+                "username": "security-operator",
+                "password": "correct horse battery",
+                "csrf_token": second_token,
+            },
+            follow_redirects=False,
+        )
+        assert second_login.status_code == 303
+        wrong_session = second.post(
+            "/logout",
+            data={"csrf_token": authenticated_token},
+            follow_redirects=False,
+        )
+        assert wrong_session.status_code == 403
+
+        monkeypatch.setenv(
+            "SNAPIMS_ADMIN_PASSWORD_HASH", hash_password("rotated correct password")
+        )
+        revoked = first.get("/", follow_redirects=False)
+        assert revoked.status_code == 303
+        assert revoked.headers["location"] == "/login"
+
+
+def test_login_backoff_is_bounded_and_generic(
+    data_paths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SNAPIMS_AUTH_SECRET", generate_secret())
+    monkeypatch.setenv("SNAPIMS_ADMIN_USERNAME", "throttle-operator")
+    monkeypatch.setenv(
+        "SNAPIMS_ADMIN_PASSWORD_HASH", hash_password("correct horse battery")
+    )
+    with TestClient(app) as client:
+        token = _csrf(client.get("/login").text)
+        for _ in range(3):
+            response = client.post(
+                "/login",
+                data={
+                    "username": "throttle-operator",
+                    "password": "wrong",
+                    "csrf_token": token,
+                },
+                follow_redirects=False,
+            )
+            assert response.status_code == 303
+            assert "Invalid%20credentials" in response.headers["location"]
+        throttled = client.post(
+            "/login",
+            data={
+                "username": "throttle-operator",
+                "password": "wrong",
+                "csrf_token": token,
+            },
+            follow_redirects=False,
+        )
+        assert throttled.status_code == 303
+        assert int(throttled.headers["retry-after"]) <= 60
+        assert "Invalid%20credentials" in throttled.headers["location"]
 
 
 def test_partial_authentication_configuration_fails_closed(

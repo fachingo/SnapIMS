@@ -729,3 +729,25 @@
     applyFilters();
   }
 })();
+const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || "";
+const nativeFetch = window.fetch.bind(window);
+window.fetch = (input, init = {}) => {
+  const method = String(init.method || "GET").toUpperCase();
+  const target = typeof input === "string" ? new URL(input, window.location.href) : new URL(input.url);
+  if (csrfToken && target.origin === window.location.origin && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const headers = new Headers(init.headers || (typeof input !== "string" ? input.headers : undefined));
+    headers.set("X-CSRF-Token", csrfToken);
+    init = {...init, headers};
+  }
+  return nativeFetch(input, init);
+};
+
+document.querySelectorAll('form[method="post" i]').forEach((form) => {
+  if (!form.querySelector('input[name="csrf_token"]')) {
+    const field = document.createElement("input");
+    field.type = "hidden";
+    field.name = "csrf_token";
+    field.value = csrfToken;
+    form.appendChild(field);
+  }
+});
