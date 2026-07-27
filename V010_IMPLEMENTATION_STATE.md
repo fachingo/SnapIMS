@@ -4,12 +4,12 @@
 
 - Project: SnapIMS
 - Branch: `feature/v0.10.0-final-preproduction`
-- HEAD: `913676e` (verified Phase 1 Controlled Tags/Firefox milestone)
+- HEAD: `209e498` (verified Phase 2 observability and Live Activity milestone)
 - Upstream: none (branch not yet pushed)
 - Started: 2026-07-26T18:59:00-06:00
-- Last updated: 2026-07-26T22:16:00-06:00
+- Last updated: 2026-07-26T23:22:00-06:00
 - Current application version: source/package metadata `0.9.0`; installed editable distribution metadata `0.7.0`
-- Inventory schema: 9
+- Inventory schema: 10
 - Catalog schema: 1
 
 ## Preservation
@@ -25,12 +25,12 @@
 
 ## Current phase
 
-- Phase: 2 — Inventory Event Timeline and Observability
-- Phase file: `docs/codex-work-orders/v0.10.0/04_PHASE_2_OBSERVABILITY.md`
+- Phase: 3 — Secure Application Settings
+- Phase file: `docs/codex-work-orders/v0.10.0/05_PHASE_3_SECURE_SETTINGS.md`
 - Status: READY TO START
-- Latest verified commit: `913676e` (`feat: add controlled tags and truthful shortcuts`)
-- NEXT_PHASE: `04_PHASE_2_OBSERVABILITY.md`
-- NEXT_ACTION: Implement the append-only Inventory Event Timeline and operator-facing observability surfaces in Phase 2 dependency order.
+- Latest verified commit: `209e498` (`Implement operational observability and Live Activity`)
+- NEXT_PHASE: `05_PHASE_3_SECURE_SETTINGS.md`
+- NEXT_ACTION: Implement secure application Settings in Phase 3 dependency order, using the Phase 2 redaction and event services for test/save/rollback evidence.
 
 ## Completed criteria
 
@@ -70,6 +70,15 @@
 - [x] Applied schema 9 to production with an automatic pre-migration backup and preserved all 4 batches and 32 items.
 - [x] Passed production restart, required doctor checks, and a full `down`/`up` cold boot.
 - [x] Reconciled the current README without labeling the unfinished branch as released v0.10.0.
+- [x] Added schema 10 durable operational events with complete context fields, required indexes, and bounded class-based retention.
+- [x] Added the shared redaction layer for events, rotating logs, exception summaries, diagnostics, CLI output, and support bundles.
+- [x] Added structured `snapims log`/`snapims logs` aliases with composable follow/last/since/error/severity/source/entity/correlation/JSON/export filters.
+- [x] Instrumented startup/shutdown, migration/backup, auth, import, recognition, catalog, CSV, bulk, Settings save, Shopify stages, and infrastructure recovery.
+- [x] Added Diagnostics Live Activity with active operations, queue depths, filters, elapsed/correlation/retry facts, safe details, copy, bounded polling, and support-bundle export.
+- [x] Verified exact recognition, catalog ambiguity, Shopify fake-failure/retry, duplicate-import, tunnel/origin, redaction, CLI, and restart-durability acceptance paths.
+- [x] Passed native Firefox Phase 2 acceptance with eight checks and zero console/page errors.
+- [x] Applied schema 10 to production with automatic backup and preserved all 4 batches and 32 items.
+- [x] Passed production cold start, status, doctor, structured log aliases, integrity, foreign keys, and schema manifest.
 
 ## Migrations
 
@@ -78,6 +87,7 @@
 | Baseline schema 8 (existing) | inventory | Validated external online backup | Opened read-only | Already present before work | integrity OK; FK 0; manifest OK |
 | Baseline schema 1 (existing) | catalog | Validated external online backup | Opened read-only | Already present before work | integrity OK; FK 0; structure OK |
 | Inventory schema 8 → 9 (Controlled Tags) | inventory | `/home/isaiah/SnapIMS-data/backups/inventory-20260726-221200-351595-before-schema-v9.sqlite3` | PASS on production-data copy; 4 batches and 32 items preserved | PASS | integrity OK; FK 0; manifest OK; 4 batches and 32 items preserved |
+| Inventory schema 9 → 10 (Operational Events) | inventory | `/home/isaiah/SnapIMS-data/backups/inventory-20260726-231208-344081-before-schema-v10.sqlite3` | PASS in unit migration and Firefox workspaces | PASS | integrity OK; FK 0; manifest OK; 4 batches and 32 items preserved; migration event present |
 
 ## Tests
 
@@ -109,6 +119,9 @@
 | Phase 1 final mypy | PASS | `release-evidence/v0.10.0/phase-1-type-safety/VERIFICATION.md` | 37 source files |
 | Controlled Tags migration/unit/HTTP tests | PASS | `release-evidence/v0.10.0/phase-1-controlled-tags/VERIFICATION.md` | Unknown/retired/AI rejection and compatibility paths covered |
 | Production cold boot and doctor | PASS | `release-evidence/v0.10.0/phase-1-controlled-tags/PRODUCTION_ACCEPTANCE.md` | Schema 9; all required checks pass |
+| Phase 2 full regression/static/build gate | PASS | `release-evidence/v0.10.0/phase-2-observability/VERIFICATION.md` | One expected skip; 38 mypy-clean modules |
+| Phase 2 event/redaction/CLI/workflow acceptance | PASS | `release-evidence/v0.10.0/phase-2-observability/VERIFICATION.md` | Recognition, catalog, Shopify, duplicate import, support bundle, retention |
+| Phase 2 production migration/cold boot | PASS | `release-evidence/v0.10.0/phase-2-observability/PRODUCTION_ACCEPTANCE.md` | Schema 10; 4 batches/32 items; all required checks pass |
 
 ## Browser verification
 
@@ -118,6 +131,7 @@
 | Official Guacamole hostname | DNS/HTTP probe | FAIL | `desktop.ims.canadavhs.ca` did not resolve |
 | Compatibility Guacamole hostname | read-only HTTP probe | PASS | Guacamole login markers found at `remote.canadavhs.ca` |
 | Phase 1 shortcuts and Controlled Tags | Playwright Firefox against real uvicorn | PASS | `release-evidence/v0.10.0/phase-1-firefox/` |
+| Phase 2 Live Activity, filters, redaction, bundle, restart durability | Playwright Firefox against real uvicorn | PASS | `release-evidence/v0.10.0/phase-2-firefox/` |
 
 ## External actions
 
@@ -149,9 +163,7 @@
 
 ## Files/areas currently being edited
 
-- Phase 2 inventory-event schema and services
-- `snapims/web/app.py`
-- Phase 2 observability UI and tests
+- Phase 3 secure application Settings (not yet started)
 
 ## Resume checklist
 
