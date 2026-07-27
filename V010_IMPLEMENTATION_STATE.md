@@ -4,12 +4,12 @@
 
 - Project: SnapIMS
 - Branch: `feature/v0.10.0-final-preproduction`
-- HEAD: `209e498` (verified Phase 2 observability and Live Activity milestone)
+- HEAD: `77c09bc` (verified Phase 3 secure Settings native-Firefox milestone)
 - Upstream: none (branch not yet pushed)
 - Started: 2026-07-26T18:59:00-06:00
-- Last updated: 2026-07-26T23:22:00-06:00
+- Last updated: 2026-07-27T13:02:11-06:00
 - Current application version: source/package metadata `0.9.0`; installed editable distribution metadata `0.7.0`
-- Inventory schema: 10
+- Inventory schema: 11
 - Catalog schema: 1
 
 ## Preservation
@@ -25,12 +25,12 @@
 
 ## Current phase
 
-- Phase: 3 — Secure Application Settings
-- Phase file: `docs/codex-work-orders/v0.10.0/05_PHASE_3_SECURE_SETTINGS.md`
+- Phase: 4 — Recognition Routing, Escalation, and Cost Control
+- Phase file: `docs/codex-work-orders/v0.10.0/06_PHASE_4_RECOGNITION_ROUTING.md`
 - Status: READY TO START
-- Latest verified commit: `209e498` (`Implement operational observability and Live Activity`)
-- NEXT_PHASE: `05_PHASE_3_SECURE_SETTINGS.md`
-- NEXT_ACTION: Implement secure application Settings in Phase 3 dependency order, using the Phase 2 redaction and event services for test/save/rollback evidence.
+- Latest verified commit: `77c09bc` (`Verify secure Settings workflows in Firefox`)
+- NEXT_PHASE: `06_PHASE_4_RECOGNITION_ROUTING.md`
+- NEXT_ACTION: Implement Phase 4 recognition routing in dependency order using the tested-model registry, secure configuration service, and Phase 2 operational events.
 
 ## Completed criteria
 
@@ -79,6 +79,17 @@
 - [x] Passed native Firefox Phase 2 acceptance with eight checks and zero console/page errors.
 - [x] Applied schema 10 to production with automatic backup and preserved all 4 batches and 32 items.
 - [x] Passed production cold start, status, doctor, structured log aliases, integrity, foreign keys, and schema manifest.
+- [x] Added schema 11 configuration revisions and tested provider-model capabilities with automatic pre-migration backup and rollback evidence.
+- [x] Replaced implicit dotenv mutation with explicit environment → secret store → persisted setting → legacy `.env` → default precedence.
+- [x] Added owner-only, mode-checked, atomic and fsynced secret storage with timestamped backups, masked reads, safe legacy copy, and rollback.
+- [x] Added General, Recognition, Shopify, Movie Data, Infrastructure, Security, and Backup/Retention settings sections with provenance and external-override protection.
+- [x] Added administrator re-authentication for secret changes, legacy migration, rollback, credential rotation, and global session revocation.
+- [x] Added official-model discovery and bounded OpenAI image plus strict-schema capability probing; recognition roles accept only tested-compatible model IDs.
+- [x] Added the validated read-only Shopify shop identity, granted-scope/capability-gap, and location probe with draft-only enforcement and no automatic write.
+- [x] Added Wikimedia identification, bounded concurrency, request spacing, Retry-After/exponential retry, timeout/cache controls, and candidate provenance preview.
+- [x] Verified submitted connection-test secrets are discarded unless explicitly saved and never appear in HTML, URLs, diagnostics events, support bundles, or error responses.
+- [x] Passed native Firefox Phase 3 acceptance with ten checks and zero console/page errors, including secure save, restart retention, bundle redaction, and session revocation.
+- [x] Applied schema 11 to production with an automatic backup, preserved all 4 batches and 32 items, and passed restart, cold boot, status, doctor, endpoint, integrity, FK, and manifest checks.
 
 ## Migrations
 
@@ -88,6 +99,7 @@
 | Baseline schema 1 (existing) | catalog | Validated external online backup | Opened read-only | Already present before work | integrity OK; FK 0; structure OK |
 | Inventory schema 8 → 9 (Controlled Tags) | inventory | `/home/isaiah/SnapIMS-data/backups/inventory-20260726-221200-351595-before-schema-v9.sqlite3` | PASS on production-data copy; 4 batches and 32 items preserved | PASS | integrity OK; FK 0; manifest OK; 4 batches and 32 items preserved |
 | Inventory schema 9 → 10 (Operational Events) | inventory | `/home/isaiah/SnapIMS-data/backups/inventory-20260726-231208-344081-before-schema-v10.sqlite3` | PASS in unit migration and Firefox workspaces | PASS | integrity OK; FK 0; manifest OK; 4 batches and 32 items preserved; migration event present |
+| Inventory schema 10 → 11 (Secure Settings) | inventory | `/home/isaiah/SnapIMS-data/backups/inventory-20260727-130108-376761-before-schema-v11.sqlite3` | PASS in migration tests and Firefox workspaces | PASS | integrity OK; FK 0; manifest OK; 4 batches and 32 items preserved |
 
 ## Tests
 
@@ -122,6 +134,9 @@
 | Phase 2 full regression/static/build gate | PASS | `release-evidence/v0.10.0/phase-2-observability/VERIFICATION.md` | One expected skip; 38 mypy-clean modules |
 | Phase 2 event/redaction/CLI/workflow acceptance | PASS | `release-evidence/v0.10.0/phase-2-observability/VERIFICATION.md` | Recognition, catalog, Shopify, duplicate import, support bundle, retention |
 | Phase 2 production migration/cold boot | PASS | `release-evidence/v0.10.0/phase-2-observability/PRODUCTION_ACCEPTANCE.md` | Schema 10; 4 batches/32 items; all required checks pass |
+| Phase 3 full regression/static/build gate | PASS | `release-evidence/v0.10.0/phase-3-settings/VERIFICATION.md` | One expected skip; 40 mypy-clean modules; isolated sdist/wheel pass |
+| Phase 3 secure store/provenance/provider/HTTP acceptance | PASS | `release-evidence/v0.10.0/phase-3-settings/VERIFICATION.md` | Atomic permissions, rollback, tested models, unsaved-secret no-echo, session revocation |
+| Phase 3 production migration/cold boot | PASS | `release-evidence/v0.10.0/phase-3-settings/PRODUCTION_ACCEPTANCE.md` | Schema 11; 4 batches/32 items; all required checks pass |
 
 ## Browser verification
 
@@ -132,6 +147,7 @@
 | Compatibility Guacamole hostname | read-only HTTP probe | PASS | Guacamole login markers found at `remote.canadavhs.ca` |
 | Phase 1 shortcuts and Controlled Tags | Playwright Firefox against real uvicorn | PASS | `release-evidence/v0.10.0/phase-1-firefox/` |
 | Phase 2 Live Activity, filters, redaction, bundle, restart durability | Playwright Firefox against real uvicorn | PASS | `release-evidence/v0.10.0/phase-2-firefox/` |
+| Phase 3 secure Settings, provenance, candidate test, redaction, restart, revocation | Playwright Firefox against real uvicorn | PASS | `release-evidence/v0.10.0/phase-3-firefox/` |
 
 ## External actions
 
@@ -163,7 +179,8 @@
 
 ## Files/areas currently being edited
 
-- Phase 3 secure application Settings (not yet started)
+- None. Phase 3 is closed at a clean verified checkpoint.
+- Phase 4 recognition routing is the next unstarted area.
 
 ## Resume checklist
 
