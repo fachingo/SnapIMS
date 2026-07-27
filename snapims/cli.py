@@ -9,8 +9,9 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 import tomllib
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -25,6 +26,7 @@ from snapims.catalog import db as catalog_db
 from snapims.config import SnapIMSConfig
 from snapims.demo import create_demo_batch
 from snapims.manager import ServiceManager
+from snapims.observability import query_events, redact
 from snapims.pipeline import parse_batch
 from snapims.processor import process_batch
 
@@ -243,6 +245,114 @@ def _print_update_report(report: dict[str, Any]) -> None:
         print("  (none)")
 
 
+def _parse_event_since(value: str) -> str:
+    candidate = value.strip()
+    relative = re.fullmatch(r"(\d+)([mhd])", candidate, flags=re.IGNORECASE)
+    if relative:
+        amount = int(relative.group(1))
+        unit = relative.group(2).casefold()
+        delta = {
+            "m": timedelta(minutes=amount),
+            "h": timedelta(hours=amount),
+            "d": timedelta(days=amount),
+        }[unit]
+        return (
+            (datetime.now(UTC) - delta)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
+    try:
+        parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "--since must be a relative duration such as 30m or 2h, "
+            "or an ISO-8601 timestamp"
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _event_lines(events: list[dict[str, Any]], *, as_json: bool) -> list[str]:
+    safe_events = cast(list[dict[str, Any]], redact(events))
+    if as_json:
+        return [
+            json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            for event in safe_events
+        ]
+    lines: list[str] = []
+    for event in safe_events:
+        relationships = []
+        if event.get("retry_of_event_id"):
+            relationships.append(f"retry_of={event['retry_of_event_id']}")
+        if event.get("recovery_of_event_id"):
+            relationships.append(f"recovery_of={event['recovery_of_event_id']}")
+        context = [
+            f"operation={event['operation_id']}" if event.get("operation_id") else "",
+            f"batch={event['batch_id']}" if event.get("batch_id") else "",
+            f"item={event['item_id']}" if event.get("item_id") else "",
+            f"order={event['order_id']}" if event.get("order_id") else "",
+            *relationships,
+        ]
+        detail = " ".join(value for value in context if value)
+        summary = str(event.get("safe_summary") or event.get("outcome") or "").strip()
+        suffix = " ".join(value for value in (detail, summary) if value)
+        lines.append(
+            f"{event['occurred_at']} {event['severity']:<8} "
+            f"{event['component']}/{event['event_type']} id={event['event_id']}"
+            + (f" {suffix}" if suffix else "")
+        )
+    return lines
+
+
+def _show_events(config: SnapIMSConfig, args: argparse.Namespace) -> None:
+    if args.last < 1:
+        raise SystemExit("--last must be at least 1")
+    db.initialize(config.data.db_file, paths=config.data)
+    filters = {
+        "last": args.last,
+        "since": args.since or "",
+        "errors": bool(args.errors),
+        "severity": args.severity or "",
+        "source": args.source or "",
+        "batch_id": args.batch or "",
+        "item_id": args.item or "",
+        "order_id": args.order or "",
+        "operation_id": args.operation or "",
+    }
+    events = query_events(config.data.db_file, **filters)
+    lines = _event_lines(events, as_json=bool(args.json))
+    if args.export:
+        destination = Path(args.export).expanduser().resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(destination.suffix + ".tmp")
+        temporary.write_text(("\n".join(lines) + ("\n" if lines else "")), encoding="utf-8")
+        temporary.chmod(0o600)
+        temporary.replace(destination)
+        destination.chmod(0o600)
+        print(f"Exported {len(lines)} redacted events to {destination}")
+    else:
+        for line in lines:
+            print(line)
+    if not args.follow:
+        return
+    last_event_id = max((int(event["event_id"]) for event in events), default=0)
+    try:
+        while True:
+            following = query_events(
+                config.data.db_file,
+                **filters,
+                after_event_id=last_event_id,
+            )
+            for line in _event_lines(following, as_json=bool(args.json)):
+                print(line, flush=True)
+            if following:
+                last_event_id = max(int(event["event_id"]) for event in following)
+            time.sleep(1)
+    except KeyboardInterrupt:
+        return
+
+
 def _apply_update(
     config: SnapIMSConfig, manager: ServiceManager, *, allow_dirty: bool
 ) -> None:
@@ -315,12 +425,35 @@ def build_parser() -> argparse.ArgumentParser:
         "down",
         "restart",
         "status",
-        "logs",
         "doctor",
         "shell",
         "version",
     ):
         sub.add_parser(command)
+    for command in ("log", "logs"):
+        logs = sub.add_parser(command)
+        logs.add_argument("--follow", action="store_true")
+        logs.add_argument("--last", type=int, default=100)
+        logs.add_argument("--since", type=_parse_event_since)
+        level = logs.add_mutually_exclusive_group()
+        level.add_argument("--errors", action="store_true")
+        level.add_argument(
+            "--severity",
+            choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
+        )
+        logs.add_argument(
+            "--source",
+            help=(
+                "Component such as app, recognition, catalog, shopify, import, "
+                "cloudflare, guacamole, system, auth, or inventory"
+            ),
+        )
+        logs.add_argument("--batch")
+        logs.add_argument("--item")
+        logs.add_argument("--order")
+        logs.add_argument("--operation")
+        logs.add_argument("--json", action="store_true")
+        logs.add_argument("--export")
     update = sub.add_parser("update")
     update_mode = update.add_mutually_exclusive_group(required=True)
     update_mode.add_argument("--check", action="store_true")
@@ -460,8 +593,8 @@ def main() -> None:
             print(f"Guacamole warning .... {guacamole['warning']}")
         if auth_detail and auth_state != "PASS":
             print(f"Authentication detail  {auth_detail}")
-    elif args.command == "logs":
-        subprocess.run(["tail", "-n", "100", "-f", str(config.app_log)], check=False)
+    elif args.command in {"log", "logs"}:
+        _show_events(config, args)
     elif args.command == "tunnel":
         if args.action == "start":
             pid = manager.start_tunnel()

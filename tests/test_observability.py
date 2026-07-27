@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from snapims import db
+from snapims import cli
 from snapims.config import DataPaths
 from snapims.observability import (
     create_support_bundle,
@@ -181,3 +185,99 @@ def test_support_bundle_is_bounded_redacted_and_excludes_binary_media(
     assert b"buyer@example.test" not in contents
     assert b"PRIVATE-IMAGE-BINARY" not in contents
     assert b'"schema_version": 10' in contents
+
+
+def test_log_alias_parser_accepts_composable_contract_filters() -> None:
+    parser = cli.build_parser()
+    arguments = [
+        "--last",
+        "25",
+        "--since",
+        "30m",
+        "--errors",
+        "--source",
+        "recognition",
+        "--batch",
+        "BATCH-1",
+        "--item",
+        "ITEM-1",
+        "--order",
+        "ORDER-1",
+        "--operation",
+        "OP-1",
+        "--json",
+        "--export",
+        "/tmp/events.jsonl",
+    ]
+    singular = parser.parse_args(["log", *arguments])
+    plural = parser.parse_args(["logs", *arguments])
+    assert singular.command == "log"
+    assert plural.command == "logs"
+    assert singular.last == plural.last == 25
+    assert singular.source == plural.source == "recognition"
+    assert singular.since.endswith("Z")
+
+
+def test_cli_log_filters_and_export_return_only_matching_redacted_events(
+    tmp_path: Path,
+) -> None:
+    paths = DataPaths.from_root(tmp_path / "data").ensure()
+    db.initialize(paths.db_file, paths=paths)
+    secret = "cli-output-secret"
+    emit_event(
+        paths.db_file,
+        component="recognition",
+        event_type="recognition.failed",
+        severity="ERROR",
+        operation_id="OP-1",
+        batch_id="BATCH-1",
+        safe_summary=f"provider token={secret}",
+        known_secrets=[secret],
+    )
+    emit_event(
+        paths.db_file,
+        component="import",
+        event_type="import.completed",
+        operation_id="OP-2",
+        batch_id="BATCH-2",
+    )
+    destination = tmp_path / "filtered.jsonl"
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "SNAPIMS_SKIP_DOTENV": "1",
+            "SNAPIMS_DATA_DIR": str(paths.root),
+            "SNAPIMS_AUTH_SECRET": "",
+            "SNAPIMS_ADMIN_PASSWORD_HASH": "",
+            "OPENAI_API_KEY": "",
+        }
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "snapims.cli",
+            "--data-dir",
+            str(paths.root),
+            "logs",
+            "--errors",
+            "--source",
+            "recognition",
+            "--batch",
+            "BATCH-1",
+            "--json",
+            "--export",
+            str(destination),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    exported = destination.read_text(encoding="utf-8")
+    assert "recognition.failed" in exported
+    assert "import.completed" not in exported
+    assert secret not in exported
+    assert destination.stat().st_mode & 0o777 == 0o600
