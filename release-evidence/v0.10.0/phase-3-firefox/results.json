@@ -1,0 +1,20 @@
+{
+  "browser": "Playwright Firefox",
+  "checks": {
+    "all_settings_sections": true,
+    "movie_candidate_provenance": true,
+    "owner_only_secret_store": true,
+    "provenance_and_external_override": true,
+    "secret_retained_after_restart": true,
+    "secret_save_never_echoes": true,
+    "security_secrets_not_rendered": true,
+    "session_revocation": true,
+    "stored_auth_login": true,
+    "support_bundle_omits_secret": true
+  },
+  "console_errors": [],
+  "page_errors": [],
+  "passed": true,
+  "url": "http://127.0.0.1:37251",
+  "workspace": "/tmp/snapims-v010-phase3-firefox-n7hnel3i"
+}
