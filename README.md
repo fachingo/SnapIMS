@@ -1,6 +1,8 @@
 # SnapIMS 0.9.0
 
-SnapIMS is a photo-first, exception-driven inventory workstation for Canada VHS. This release adds the missing remote-workstation infrastructure: Apache Guacamole, guacd, a SnapIMS-owned Tomcat service, RDP desktop access, SSH terminal access, Cloudflare hostname setup, and CLI diagnostics. Import, review, publish, AI recognition, database schema, catalog, and Shopify workflows are unchanged.
+SnapIMS is a photo-first, exception-driven inventory workstation for Canada VHS. Version 0.9.0 added the remote-workstation infrastructure: Apache Guacamole, guacd, a SnapIMS-owned Tomcat service, RDP desktop access, SSH terminal access, Cloudflare hostname setup, and CLI diagnostics.
+
+The active v0.10.0 pre-release branch includes a verified stabilization layer over that accepted foundation. It adds browser CSRF/origin protection, session and login hardening, truthful component health, guarded CLI updates, Shopify retry idempotency, schema-backed Controlled Tags, and Firefox-verified keyboard shortcuts. It is not yet the v0.10.0 release.
 
 ## Install
 
@@ -24,15 +26,33 @@ snapims status
 snapims doctor
 snapims restart
 snapims down
+snapims update --check
 ```
 
-`snapims up` starts SnapIMS, Cloudflare Tunnel when configured, guacd, xrdp, and the SnapIMS Guacamole Tomcat service. If Guacamole is not installed, `status` and `doctor` report it as unavailable with the missing component.
+`snapims up` starts only services configured as SnapIMS-managed. `status` distinguishes a running cloudflared process from a registered connector and shows service ownership. `doctor` exits nonzero for required failures while keeping optional checks as warnings. Use `snapims update --check` before the explicitly guarded `snapims update --apply`.
 
 Default local URLs:
 
 - SnapIMS: `http://127.0.0.1:8767`
 - Guacamole: `http://127.0.0.1:8080/guacamole/`
-- Remote desktop hostname: `https://desktop.ims.canadavhs.ca/guacamole/`
+- Remote desktop: the configured Guacamole public URL printed by `snapims up`
+
+Do not assume `desktop.ims.canadavhs.ca` is live: it did not resolve during the
+v0.10.0 baseline. The compatibility hostname is evidence only until the owner
+selects the authoritative public Guacamole hostname.
+
+## Keyboard and Tags
+
+- `Alt+P` opens the command palette.
+- `Alt+1` through `Alt+9` activate the corresponding visible Batch Editor quick
+  action when focus is not in a typing control.
+- Tags are approved immutable IDs, not free-form text. Review places Tags
+  between Price and Discount; Batch Editor provides pills and autocomplete.
+- Arrow keys navigate tag suggestions, Enter or comma accepts, Backspace removes
+  the last pill, and Escape closes suggestions first.
+- Retired tags remain visible on historical items but cannot be newly selected.
+- AI can suggest only active, AI-eligible Tag IDs. It cannot create taxonomy or
+  assign deterministic-only tags such as `Toonie Tapes`.
 
 ## Authentication
 

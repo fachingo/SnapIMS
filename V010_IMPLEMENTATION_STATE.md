@@ -4,12 +4,12 @@
 
 - Project: SnapIMS
 - Branch: `feature/v0.10.0-final-preproduction`
-- HEAD: `c9a0fd5` (verified Phase 1 orchestration/Shopify milestone)
+- HEAD: `913676e` (verified Phase 1 Controlled Tags/Firefox milestone)
 - Upstream: none (branch not yet pushed)
 - Started: 2026-07-26T18:59:00-06:00
-- Last updated: 2026-07-26T20:38:00-06:00
+- Last updated: 2026-07-26T22:16:00-06:00
 - Current application version: source/package metadata `0.9.0`; installed editable distribution metadata `0.7.0`
-- Inventory schema: 8
+- Inventory schema: 9
 - Catalog schema: 1
 
 ## Preservation
@@ -25,12 +25,12 @@
 
 ## Current phase
 
-- Phase: 1 — Stabilization, Security and Truthful Orchestration
-- Phase file: `docs/codex-work-orders/v0.10.0/03_PHASE_1_STABILIZATION_SECURITY.md`
-- Status: IN PROGRESS
-- Latest verified commit: `c9a0fd5` (`fix: make orchestration and Shopify retries truthful`)
-- NEXT_PHASE: `03_PHASE_1_STABILIZATION_SECURITY.md`
-- NEXT_ACTION: Repair the remaining baseline type defects, then implement the schema-backed Controlled Tags workflow and verified Firefox shortcuts.
+- Phase: 2 — Inventory Event Timeline and Observability
+- Phase file: `docs/codex-work-orders/v0.10.0/04_PHASE_2_OBSERVABILITY.md`
+- Status: READY TO START
+- Latest verified commit: `913676e` (`feat: add controlled tags and truthful shortcuts`)
+- NEXT_PHASE: `04_PHASE_2_OBSERVABILITY.md`
+- NEXT_ACTION: Implement the append-only Inventory Event Timeline and operator-facing observability surfaces in Phase 2 dependency order.
 
 ## Completed criteria
 
@@ -60,6 +60,16 @@
 - [x] Added explicit safe update check/apply modes, dirty/detached/upstream refusal, database restore metadata, dependency update, migration, restart, and rollback guidance.
 - [x] Replaced interpolated shell execution with safe `cwd`, environment, and argv execution.
 - [x] Persisted Shopify inventory activation idempotency identity and request evidence before the network call, reused it on retry, reconciled uncertain outcomes, and rejected ambiguous SKUs.
+- [x] Cleared all 19 baseline mypy defects without suppressions; all 37 source modules pass.
+- [x] Added schema 9 Controlled Tags with immutable IDs, aliases, governance flags, evidence, and Item relationships.
+- [x] Migrated legacy operator tags deterministically while keeping the text column as a compatibility projection.
+- [x] Restricted AI to approved AI-eligible Tag IDs and logged unknown/ineligible/deterministic-only rejections.
+- [x] Added Review and Batch Editor Tag pills/autocomplete with retired-tag history and keyboard behavior.
+- [x] Implemented `Alt+P` and visible-action `Alt+1`–`Alt+9`; verified typing and Escape behavior in native Firefox.
+- [x] Removed CSP-blocked inline event handlers discovered by Firefox.
+- [x] Applied schema 9 to production with an automatic pre-migration backup and preserved all 4 batches and 32 items.
+- [x] Passed production restart, required doctor checks, and a full `down`/`up` cold boot.
+- [x] Reconciled the current README without labeling the unfinished branch as released v0.10.0.
 
 ## Migrations
 
@@ -67,8 +77,7 @@
 |---|---|---|---|---|---|
 | Baseline schema 8 (existing) | inventory | Validated external online backup | Opened read-only | Already present before work | integrity OK; FK 0; manifest OK |
 | Baseline schema 1 (existing) | catalog | Validated external online backup | Opened read-only | Already present before work | integrity OK; FK 0; structure OK |
-
-No v0.10.0 migration has been authored or applied.
+| Inventory schema 8 → 9 (Controlled Tags) | inventory | `/home/isaiah/SnapIMS-data/backups/inventory-20260726-221200-351595-before-schema-v9.sqlite3` | PASS on production-data copy; 4 batches and 32 items preserved | PASS | integrity OK; FK 0; manifest OK; 4 batches and 32 items preserved |
 
 ## Tests
 
@@ -95,7 +104,11 @@ No v0.10.0 migration has been authored or applied.
 | Phase 1 orchestration/Shopify focused tests | PASS | `release-evidence/v0.10.0/phase-1-orchestration/VERIFICATION.md` | 40 tests |
 | Full regression after orchestration/Shopify milestone | PASS | `release-evidence/v0.10.0/phase-1-orchestration/VERIFICATION.md` | One expected skip |
 | Build and dependency verification | PASS | `release-evidence/v0.10.0/phase-1-orchestration/VERIFICATION.md` | sdist, wheel, and pip check pass |
-| Current mypy | FAIL, improved | `release-evidence/v0.10.0/phase-1-orchestration/VERIFICATION.md` | 16 remaining baseline defects; none in changed modules |
+| Post-orchestration interim mypy | FAIL, improved | `release-evidence/v0.10.0/phase-1-orchestration/VERIFICATION.md` | 16 remaining baseline defects at that checkpoint |
+| Phase 1 final full regression | PASS | `release-evidence/v0.10.0/phase-1-controlled-tags/VERIFICATION.md` | One expected skip |
+| Phase 1 final mypy | PASS | `release-evidence/v0.10.0/phase-1-type-safety/VERIFICATION.md` | 37 source files |
+| Controlled Tags migration/unit/HTTP tests | PASS | `release-evidence/v0.10.0/phase-1-controlled-tags/VERIFICATION.md` | Unknown/retired/AI rejection and compatibility paths covered |
+| Production cold boot and doctor | PASS | `release-evidence/v0.10.0/phase-1-controlled-tags/PRODUCTION_ACCEPTANCE.md` | Schema 9; all required checks pass |
 
 ## Browser verification
 
@@ -104,7 +117,7 @@ No v0.10.0 migration has been authored or applied.
 | Public SnapIMS authentication landing | read-only HTTP probe | PASS | `release-evidence/v0.10.0/baseline/ENDPOINT_VERIFICATION.md` |
 | Official Guacamole hostname | DNS/HTTP probe | FAIL | `desktop.ims.canadavhs.ca` did not resolve |
 | Compatibility Guacamole hostname | read-only HTTP probe | PASS | Guacamole login markers found at `remote.canadavhs.ca` |
-| Native Firefox final walkthrough | Firefox | NOT RUN | Required after Phase 1 UI repair |
+| Phase 1 shortcuts and Controlled Tags | Playwright Firefox against real uvicorn | PASS | `release-evidence/v0.10.0/phase-1-firefox/` |
 
 ## External actions
 
@@ -119,7 +132,7 @@ No v0.10.0 migration has been authored or applied.
 
 | ID | Severity | Reproduction | Current state | Next action |
 |---|---|---|---|---|
-| V010-P0-001 | High | `python -m mypy snapims --ignore-missing-imports` | Improved from 19 to 16 baseline type errors | Repair before Phase 1 exit |
+| V010-P0-001 | High | `python -m mypy snapims --ignore-missing-imports` | RESOLVED | All 37 source files pass |
 | V010-P0-002 | High | `python -m build --no-isolation` | RESOLVED | Installed declared setuptools/wheel; build and isolated wheel smoke pass |
 | V010-P0-003 | High | Resolve `desktop.ims.canadavhs.ca` | DNS resolution fails | Treat `remote.canadavhs.ca` as compatibility evidence; owner/infrastructure decision before docs claim official hostname |
 | V010-P0-004 | High | Backup root-only Guacamole secret file | RESOLVED | Owner completed copy; checksum/mode verified and external manifest updated |
@@ -136,14 +149,9 @@ No v0.10.0 migration has been authored or applied.
 
 ## Files/areas currently being edited
 
-- `snapims/db.py`
-- `snapims/catalog/`
-- `snapims/inventory.py`
-- `snapims/processor.py`
-- `snapims/recognition/`
-- `snapims/shopify/`
+- Phase 2 inventory-event schema and services
 - `snapims/web/app.py`
-- Phase 1 stabilization tests
+- Phase 2 observability UI and tests
 
 ## Resume checklist
 
