@@ -12,7 +12,7 @@ from typing import Any
 
 from snapims.config import DataPaths
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 def now() -> str:
@@ -352,6 +352,28 @@ def _base_schema(connection: sqlite3.Connection) -> None:
             value TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS configuration_revisions (
+            revision_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            section TEXT NOT NULL,
+            changed_fields_json TEXT NOT NULL DEFAULT '[]',
+            previous_values_json TEXT NOT NULL DEFAULT '{}',
+            new_values_json TEXT NOT NULL DEFAULT '{}',
+            contains_secrets INTEGER NOT NULL DEFAULT 0,
+            backup_reference TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS provider_model_capabilities (
+            provider TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            discovered_at TEXT NOT NULL,
+            supports_images INTEGER NOT NULL DEFAULT 0,
+            supports_strict_schema INTEGER NOT NULL DEFAULT 0,
+            test_status TEXT NOT NULL,
+            probe_version TEXT NOT NULL,
+            safe_summary TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY(provider, model_id)
+        );
         CREATE TABLE IF NOT EXISTS item_change_log (
             change_id INTEGER PRIMARY KEY AUTOINCREMENT,
             item_id TEXT NOT NULL REFERENCES items(item_id) ON DELETE RESTRICT,
@@ -513,6 +535,10 @@ def _base_schema(connection: sqlite3.Connection) -> None:
             ON operational_events(item_id, occurred_at DESC);
         CREATE INDEX IF NOT EXISTS idx_operational_events_order
             ON operational_events(order_id, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_configuration_revisions_time
+            ON configuration_revisions(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_provider_capability_status
+            ON provider_model_capabilities(provider, test_status, model_id);
         """
     )
 
@@ -589,6 +615,15 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
         "estimated_cost_cad", "status", "outcome", "error_class",
         "safe_summary", "detail_json", "process_marker", "retention_class",
     },
+    "configuration_revisions": {
+        "revision_id", "created_at", "section", "changed_fields_json",
+        "previous_values_json", "new_values_json", "contains_secrets",
+        "backup_reference", "status",
+    },
+    "provider_model_capabilities": {
+        "provider", "model_id", "discovered_at", "supports_images",
+        "supports_strict_schema", "test_status", "probe_version", "safe_summary",
+    },
     "item_movie_links": {
         "item_id", "movie_id", "link_status", "link_method",
         "recognition_result_id", "match_score", "linked_at", "updated_at",
@@ -622,6 +657,8 @@ EXPECTED_INDEXES = {
     "idx_operational_events_batch",
     "idx_operational_events_item",
     "idx_operational_events_order",
+    "idx_configuration_revisions_time",
+    "idx_provider_capability_status",
 }
 
 
@@ -678,6 +715,8 @@ def schema_manifest_report(connection: sqlite3.Connection) -> dict[str, Any]:
         "import_journal": {("import_id",), ("source_fingerprint",), ("batch_id",)},
         "operation_requests": {("request_id",)},
         "operational_events": {("event_id",)},
+        "configuration_revisions": {("revision_id",)},
+        "provider_model_capabilities": {("provider", "model_id")},
         "tag_definitions": {("tag_id",), ("canonical_label",)},
         "tag_aliases": {("alias",)},
         "item_tags": {("item_id", "tag_id")},
@@ -1325,7 +1364,7 @@ def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
                 (
                     SCHEMA_VERSION,
                     timestamp,
-                    "SnapIMS v0.10.0 durable operational event store",
+                    "SnapIMS v0.10.0 secure configuration revisions and provider capabilities",
                 ),
             )
             _insert_internal_event(

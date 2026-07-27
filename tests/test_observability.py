@@ -210,7 +210,7 @@ def test_support_bundle_is_bounded_redacted_and_excludes_binary_media(
     assert secret.encode() not in contents
     assert b"buyer@example.test" not in contents
     assert b"PRIVATE-IMAGE-BINARY" not in contents
-    assert b'"schema_version": 10' in contents
+    assert f'"schema_version": {db.SCHEMA_VERSION}'.encode() in contents
 
 
 def test_log_alias_parser_accepts_composable_contract_filters() -> None:
