@@ -1,6 +1,6 @@
 ---
 title: "SnapIMS Pre-1.0 Integrated Feature Roadmap"
-subtitle: "Updated feature enhancement work order and dependency-aware path from v0.9.0 to v1.0.0"
+subtitle: "Updated feature enhancement work order and dependency-aware path from v0.10.0 to v1.0.0"
 author: "Prepared for Canada VHS"
 date: "July 26, 2026"
 lang: en-CA
@@ -15,11 +15,11 @@ toc-depth: 3
 
 # Purpose and authority
 
-This document replaces the prior v0.9.0 Production Candidate Update as the current feature-enhancement and release-planning authority for SnapIMS.
+This document replaces the prior v0.10.0 Production Candidate Update as the current feature-enhancement and release-planning authority for SnapIMS.
 
 It incorporates:
 
-- the current v0.9.0 infrastructure implementation and live cold-boot acceptance;
+- the current v0.10.0 infrastructure implementation and live cold-boot acceptance;
 - the v0.8.0 and v0.7.0 feature/enrichment requirements that remain incomplete;
 - the Master Scope of Work issue mapping and dependency sequence;
 - the July 26, 2026 integrated source/operator/owner audit;
@@ -31,7 +31,7 @@ The live repository, production database, final browser UI, and verified host co
 
 ## 1.1 Current milestone
 
-SnapIMS v0.9.0 is accepted as the **infrastructure and remote-operation milestone**, subject to final documentation synchronization and repository evidence.
+SnapIMS v0.10.0 is accepted as the **infrastructure and remote-operation milestone**, subject to final documentation synchronization and repository evidence.
 
 Live evidence demonstrates:
 
@@ -45,7 +45,7 @@ Live evidence demonstrates:
 
 ## 1.2 Superseding the old final-feature rule
 
-The prior plan called v0.9.0 the final planned feature release before 1.0.0. Live use exposed missing workflows that are production blockers, not optional enrichment:
+The prior plan called v0.10.0 the final planned feature release before 1.0.0. Live use exposed missing workflows that are production blockers, not optional enrichment:
 
 - global inventory retrieval;
 - Shopify order reservation and picking;
@@ -59,7 +59,7 @@ Therefore the old rule is superseded.
 
 | Release | Scope | Rule |
 |---|---|---|
-| 0.9.0 | Infrastructure and remote operation | Accepted foundation; no new product schema. |
+| 0.10.0 | Infrastructure and remote operation | Accepted foundation; no new product schema. |
 | 0.9.1 | Stabilization patch, if released separately | Defects, security hardening, health truth, Shopify idempotency, documentation reconciliation only. |
 | 0.10.0 | Final pre-1.0 feature release | Observability, Settings, recognition control/router, inventory search, catalog completion, Shopify order/pick workflow. |
 | 0.10.x | Production fixes and evidence | No new operator workflow after feature freeze. |
@@ -132,7 +132,7 @@ The following order is mandatory because it prevents new schema work from landin
 2. Back up databases, originals/processed images, `.env`/secret store, Cloudflare config, Guacamole config, and current documentation.
 3. Run secret scan and verify `.env`, credentials, production database, media, and logs are ignored.
 4. Capture the current cold-boot PASS evidence.
-5. Create a clean feature branch from the accepted v0.9.0 commit.
+5. Create a clean feature branch from the accepted v0.10.0 commit.
 
 **Exit gate:** verified restore point and no unknown working-tree changes.
 
@@ -849,7 +849,7 @@ Unless the real pilot proves otherwise, defer:
 
 The path is now:
 
-1. preserve and stabilize v0.9.0;
+1. preserve and stabilize v0.10.0;
 2. implement the bounded v0.10.0 final feature scope in dependency order;
 3. freeze features;
 4. use 0.10.x only for fixes and evidence;
@@ -860,9 +860,9 @@ The new features are not uncontrolled expansion. Inventory search, picking, reco
 
 # 19. Source register
 
-- SnapIMS v0.9.0 audited branch `feature/v0.9-infrastructure` at commit `bda7093d8ca9b776b2e881ce38a09f10b222f56f`
-- `SnapIMS_v0.9.0_Integrated_Three-Perspective_Audit.md`
-- `SnapIMS_Feature_Enhancement_Work_Order_v0.9.0_Production_Candidate_Update.md`
+- SnapIMS v0.10.0 audited branch `feature/v0.9-infrastructure` at commit `bda7093d8ca9b776b2e881ce38a09f10b222f56f`
+- `SnapIMS_v0.10.0_Integrated_Three-Perspective_Audit.md`
+- `SnapIMS_Feature_Enhancement_Work_Order_v0.10.0_Production_Candidate_Update.md`
 - `SnapIMS_Feature_Enhancement_Work_Order_v0.8.0_Status.md`
 - `SnapIMS_Master_Scope_of_Work_and_Implementation_Plan(1).docx`
 - owner live field findings and cold-boot evidence, July 26, 2026

@@ -1,4 +1,4 @@
-# SnapIMS 0.9.0 Developer Guide
+# SnapIMS 0.10.0 Developer Guide
 
 Use the existing architecture. Do not redesign import, review, publish, AI recognition, catalog, database schema, or Shopify workflows for infrastructure work.
 

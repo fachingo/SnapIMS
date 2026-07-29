@@ -2,7 +2,7 @@
 
 ## Evidence basis
 
-This report reconciles the live repository at commit `bda7093d8ca9b776b2e881ce38a09f10b222f56f`, the production schema and service probes, the integrated v0.9.0 audit, and the v0.10.0 roadmap. No implementation claim below is based only on an older report.
+This report reconciles the live repository at commit `bda7093d8ca9b776b2e881ce38a09f10b222f56f`, the production schema and service probes, the integrated v0.10.0 audit, and the v0.10.0 roadmap. No implementation claim below is based only on an older report.
 
 Status meanings:
 
@@ -132,7 +132,7 @@ Status meanings:
 
 | Capability | Status | Current reality |
 |---|---|---|
-| Active version consistency | Contradicted | Source is 0.9.0, installed metadata 0.7.0, and active test/readiness documents still claim 0.7.0. |
+| Active version consistency | Contradicted | Source is 0.10.0, installed metadata 0.7.0, and active test/readiness documents still claim 0.7.0. |
 | Current Firefox shortcut proof | Absent | Historical evidence contradicts active shortcut claims; new native run required. |
 | Current Operator Guide/UI parity | Contradicted | Guide cannot cover absent v0.10.0 workflows and existing shortcut/hostname truth differs. |
 | Official Guacamole public hostname | Contradicted by live DNS | `desktop.ims.canadavhs.ca` failed resolution; compatibility `remote` hostname passed. |
@@ -141,4 +141,4 @@ Status meanings:
 
 ## Architecture conclusion
 
-The v0.9.0 branch is a sound recoverable foundation, not an implementation of the v0.10.0 work order. Permanent physical identity, transactional editing, local catalog foundations, and draft checkpoints should be extended in place. The stabilization/security phase is a real prerequisite: new settings, external jobs, inventory transitions, and order actions must not be added before CSRF, auth/session, health truth, process ownership, update safety, and outbound idempotency are corrected.
+The v0.10.0 branch is a sound recoverable foundation, not an implementation of the v0.10.0 work order. Permanent physical identity, transactional editing, local catalog foundations, and draft checkpoints should be extended in place. The stabilization/security phase is a real prerequisite: new settings, external jobs, inventory transitions, and order actions must not be added before CSRF, auth/session, health truth, process ownership, update safety, and outbound idempotency are corrected.

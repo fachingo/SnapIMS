@@ -13,7 +13,7 @@ Captured on 2026-07-26 before application source changes.
 
 ## Runtime and configuration
 
-- Source/package version: 0.9.0
+- Source/package version: 0.10.0
 - Installed distribution metadata: 0.7.0
 - Host/port: `127.0.0.1:8767`
 - Data root: `/home/isaiah/SnapIMS-data`

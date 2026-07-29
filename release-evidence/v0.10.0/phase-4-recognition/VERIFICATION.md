@@ -3,7 +3,7 @@
 Date: 2026-07-27  
 Branch: `feature/v0.10.0-final-preproduction`  
 Starting commit: `73243f5`  
-Application version: `0.9.0` (intentionally unchanged)
+Application version: `0.10.0` (intentionally unchanged)
 
 ## Implemented contract
 
@@ -54,8 +54,8 @@ Application version: `0.9.0` (intentionally unchanged)
 - `git diff --check`
   - PASS.
 - `.venv/bin/python -m build`
-  - PASS; built `snapims-0.9.0.tar.gz` and
-    `snapims-0.9.0-py3-none-any.whl`.
+  - PASS; built `snapims-0.10.0.tar.gz` and
+    `snapims-0.10.0-py3-none-any.whl`.
 - `.venv/bin/python -m pip check`
   - PASS.
 

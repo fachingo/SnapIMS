@@ -9,7 +9,7 @@
 - Started: 2026-07-26T18:59:00-06:00
 - Last updated: 2026-07-27T14:19:08-06:00
 - Current application version: source/package metadata, active editable
-  distribution, global launcher, CLI, and running status all `0.9.0`
+  distribution, global launcher, CLI, and running status all `0.10.0`
 - Inventory schema: 12 in Phase 4 code and disposable migration; production remains 11 pending the Phase 4 production gate
 - Catalog schema: 1
 
@@ -92,7 +92,7 @@
 - [x] Passed native Firefox Phase 3 acceptance with ten checks and zero console/page errors, including secure save, restart retention, bundle redaction, and session revocation.
 - [x] Applied schema 11 to production with an automatic backup, preserved all 4 batches and 32 items, and passed restart, cold boot, status, doctor, endpoint, integrity, FK, and manifest checks.
 - [x] Pushed `feature/v0.10.0-final-preproduction` without merge and verified requested commit `77c09bc` in the origin branch history under later Phase 3 closure `9b1c4b7`.
-- [x] Replaced stale editable 0.7.0 metadata with editable 0.9.0 and verified package, distribution, launcher, CLI, status, doctor, focused tests, pip consistency, and cold start.
+- [x] Replaced stale editable 0.7.0 metadata with editable 0.10.0 and verified package, distribution, launcher, CLI, status, doctor, focused tests, pip consistency, and cold start.
 - [x] Adopted `https://remote.canadavhs.ca/guacamole/` as the official Guacamole URL in runtime defaults and operator-facing material; retained unresolved `desktop.ims` only as explicit backlog.
 - [x] Recorded extensible Phase 4 capture-source values and the Phase 6 shared-catalog provenance/contribution privacy boundary.
 - [x] Added schema 12 append-only recognition attempts with UUID, Item/provider/model/tier/trigger/actor, prompt/schema/image profiles, selected image IDs/hashes/capture provenance, evidence, uncertainty, contradiction, token, configured-CAD-cost, latency, prior-attempt, request, and route metadata.
@@ -137,7 +137,7 @@
 | Phase 1 focused Ruff | PASS | `release-evidence/v0.10.0/phase-1-security/ruff.txt` | Exit 0 |
 | Phase 1 JavaScript syntax | PASS | `release-evidence/v0.10.0/phase-1-security/node-check.txt` | Exit 0 |
 | Phase 1 mypy | FAIL at baseline count | `release-evidence/v0.10.0/phase-1-security/mypy.txt` | 19 pre-existing errors; no errors from security changes |
-| Installed-wheel smoke | PASS | `release-evidence/v0.10.0/phase-1-security/installed-wheel-smoke.txt` | Wheel and source both report 0.9.0 |
+| Installed-wheel smoke | PASS | `release-evidence/v0.10.0/phase-1-security/installed-wheel-smoke.txt` | Wheel and source both report 0.10.0 |
 | Phase 1 orchestration/Shopify focused tests | PASS | `release-evidence/v0.10.0/phase-1-orchestration/VERIFICATION.md` | 40 tests |
 | Full regression after orchestration/Shopify milestone | PASS | `release-evidence/v0.10.0/phase-1-orchestration/VERIFICATION.md` | One expected skip |
 | Build and dependency verification | PASS | `release-evidence/v0.10.0/phase-1-orchestration/VERIFICATION.md` | sdist, wheel, and pip check pass |
@@ -152,10 +152,10 @@
 | Phase 3 full regression/static/build gate | PASS | `release-evidence/v0.10.0/phase-3-settings/VERIFICATION.md` | One expected skip; 40 mypy-clean modules; isolated sdist/wheel pass |
 | Phase 3 secure store/provenance/provider/HTTP acceptance | PASS | `release-evidence/v0.10.0/phase-3-settings/VERIFICATION.md` | Atomic permissions, rollback, tested models, unsaved-secret no-echo, session revocation |
 | Phase 3 production migration/cold boot | PASS | `release-evidence/v0.10.0/phase-3-settings/PRODUCTION_ACCEPTANCE.md` | Schema 11; 4 batches/32 items; all required checks pass |
-| Pre-Phase-4 remote/version/hostname checkpoint | PASS | `release-evidence/v0.10.0/pre-phase-4-checkpoint/VERIFICATION.md` | Origin verified; all active metadata 0.9.0; 34 focused tests; pip check; cold boot; official hostname reconciled |
+| Pre-Phase-4 remote/version/hostname checkpoint | PASS | `release-evidence/v0.10.0/pre-phase-4-checkpoint/VERIFICATION.md` | Origin verified; all active metadata 0.10.0; 34 focused tests; pip check; cold boot; official hostname reconciled |
 | Phase 4 full regression | PASS | `release-evidence/v0.10.0/phase-4-recognition/VERIFICATION.md` | 233 collected; one expected skip; exit 0 |
 | Phase 4 focused acceptance | PASS | `tests/test_v010_phase4_recognition.py` | Immutable evidence, idempotent rerun, older-attempt selection, UNKNOWN, cost, capture provenance, test-copy quarantine, restart pause, workspace, and duplicate choices |
-| Phase 4 static/build gate | PASS | `release-evidence/v0.10.0/phase-4-recognition/VERIFICATION.md` | Ruff; mypy 40 modules; JS syntax; diff check; sdist/wheel 0.9.0; pip check |
+| Phase 4 static/build gate | PASS | `release-evidence/v0.10.0/phase-4-recognition/VERIFICATION.md` | Ruff; mypy 40 modules; JS syntax; diff check; sdist/wheel 0.10.0; pip check |
 
 ## Browser verification
 
@@ -185,7 +185,7 @@
 | V010-P0-002 | High | `python -m build --no-isolation` | RESOLVED | Installed declared setuptools/wheel; build and isolated wheel smoke pass |
 | V010-P0-003 | High | Resolve `desktop.ims.canadavhs.ca` | CLOSED AS BACKLOG | Owner designated `remote.canadavhs.ca/guacamole/` as official; do not claim `desktop.ims` without deliberate DNS and browser acceptance |
 | V010-P0-004 | High | Backup root-only Guacamole secret file | RESOLVED | Owner completed copy; checksum/mode verified and external manifest updated |
-| V010-P0-005 | Medium | Compare installed metadata to source | RESOLVED | Replaced stale editable 0.7.0 finder/dist-info with editable 0.9.0; CLI, package, metadata, launcher, status, doctor, tests, pip check, and cold start pass |
+| V010-P0-005 | Medium | Compare installed metadata to source | RESOLVED | Replaced stale editable 0.7.0 finder/dist-info with editable 0.10.0; CLI, package, metadata, launcher, status, doctor, tests, pip check, and cold start pass |
 | V010-P0-006 | Low | `sha256sum -c SHA256SUMS` in work-order package | All present files match; two reference PDFs and `install_into_repo.sh` are absent | Markdown references are complete and authoritative; do not claim the package has all 26 manifest files |
 
 ## Owner decisions

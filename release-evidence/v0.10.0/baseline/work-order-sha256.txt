@@ -22,9 +22,9 @@
 References/SnapIMS_Pre-1.0_Integrated_Feature_Roadmap_v0.10.0.md: OK
 sha256sum: References/SnapIMS_Pre-1.0_Integrated_Feature_Roadmap_v0.10.0.pdf: No such file or directory
 References/SnapIMS_Pre-1.0_Integrated_Feature_Roadmap_v0.10.0.pdf: FAILED open or read
-References/SnapIMS_v0.9.0_Integrated_Three-Perspective_Audit.md: OK
-sha256sum: References/SnapIMS_v0.9.0_Integrated_Three-Perspective_Audit.pdf: No such file or directory
-References/SnapIMS_v0.9.0_Integrated_Three-Perspective_Audit.pdf: FAILED open or read
+References/SnapIMS_v0.10.0_Integrated_Three-Perspective_Audit.md: OK
+sha256sum: References/SnapIMS_v0.10.0_Integrated_Three-Perspective_Audit.pdf: No such file or directory
+References/SnapIMS_v0.10.0_Integrated_Three-Perspective_Audit.pdf: FAILED open or read
 sha256sum: install_into_repo.sh: No such file or directory
 install_into_repo.sh: FAILED open or read
 sha256sum: WARNING: 3 listed files could not be read

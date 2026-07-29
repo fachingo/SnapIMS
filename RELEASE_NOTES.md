@@ -1,8 +1,8 @@
-# SnapIMS 0.9.0 Release Notes
+# SnapIMS 0.10.0 Release Notes
 
 Release type: **minor**.
 
-0.9.0 completes the missing Apache Guacamole remote-workstation infrastructure without changing import, review, publish, AI recognition, catalog, database schema, or Shopify workflows.
+0.10.0 completes the missing Apache Guacamole remote-workstation infrastructure without changing import, review, publish, AI recognition, catalog, database schema, or Shopify workflows.
 
 ## Remote Workstation
 

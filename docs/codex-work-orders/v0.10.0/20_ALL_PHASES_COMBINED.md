@@ -125,7 +125,7 @@ Known accepted infrastructure baseline:
 
 - historical audited branch: `feature/v0.9-infrastructure`;
 - historical audited commit: `bda7093d8ca9b776b2e881ce38a09f10b222f56f`;
-- accepted infrastructure version: `0.9.0`;
+- accepted infrastructure version: `0.10.0`;
 - target implementation version: `0.10.0`;
 - supported host: Linux Mint;
 - local SnapIMS: `http://127.0.0.1:8767`;
@@ -144,7 +144,7 @@ When instructions conflict, use this order:
 2. current verified browser behaviour;
 3. this work-order package;
 4. integrated v0.10.0 roadmap;
-5. integrated v0.9.0 audit;
+5. integrated v0.10.0 audit;
 6. older feature documents and historical reports.
 
 Never preserve a false old claim merely because it is documented.
@@ -2374,7 +2374,7 @@ This package adds operator workflows, schema and external-system integration.
 Classification:
 
 ```text
-Minor release: 0.9.0 → 0.10.0
+Minor release: 0.10.0 → 0.10.0
 ```
 
 Do not use 0.9.1 for the completed combined package.
@@ -3059,7 +3059,7 @@ The work adds:
 This is a minor release:
 
 ```text
-0.9.0 → 0.10.0
+0.10.0 → 0.10.0
 ```
 
 If stabilization is released alone before the features, it may be `0.9.1`. Once the combined feature package lands, the synchronized version is `0.10.0`.
@@ -3094,7 +3094,7 @@ Historical documents may retain old versions only when clearly archived as histo
 
 The `References` directory contains:
 
-- integrated v0.9.0 audit in Markdown and PDF;
+- integrated v0.10.0 audit in Markdown and PDF;
 - integrated pre-1.0 v0.10.0 roadmap in Markdown and PDF.
 
 These are planning references. The live repository and final browser UI remain source of truth.

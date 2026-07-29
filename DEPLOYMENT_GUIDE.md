@@ -1,4 +1,4 @@
-# SnapIMS 0.9.0 Deployment Guide
+# SnapIMS 0.10.0 Deployment Guide
 
 SnapIMS and Guacamole both bind to localhost. Public access must go through Cloudflare Tunnel or another trusted reverse proxy.
 

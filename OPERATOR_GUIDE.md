@@ -1,4 +1,4 @@
-# SnapIMS 0.9.0 Operator Guide
+# SnapIMS 0.10.0 Operator Guide
 
 ## Daily Operation
 

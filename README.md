@@ -1,6 +1,6 @@
-# SnapIMS 0.9.0
+# SnapIMS 0.10.0
 
-SnapIMS is a photo-first, exception-driven inventory workstation for Canada VHS. Version 0.9.0 added the remote-workstation infrastructure: Apache Guacamole, guacd, a SnapIMS-owned Tomcat service, RDP desktop access, SSH terminal access, Cloudflare hostname setup, and CLI diagnostics.
+SnapIMS is a photo-first, exception-driven inventory workstation for Canada VHS. Version 0.10.0 added the remote-workstation infrastructure: Apache Guacamole, guacd, a SnapIMS-owned Tomcat service, RDP desktop access, SSH terminal access, Cloudflare hostname setup, and CLI diagnostics.
 
 The active v0.10.0 pre-release branch includes a verified stabilization layer over that accepted foundation. It adds browser CSRF/origin protection, session and login hardening, truthful component health, guarded CLI updates, Shopify retry idempotency, schema-backed Controlled Tags, and Firefox-verified keyboard shortcuts. It is not yet the v0.10.0 release.
 
@@ -72,4 +72,4 @@ Guacamole credentials are separate. The installer stores the generated Guacamole
 
 ## Release Status
 
-Version 0.9.0 is a **minor** infrastructure release. Production 1.0.0 still requires final live OpenAI, Shopify, physical CSV reconciliation, and operator acceptance gates.
+Version 0.10.0 is a **minor** infrastructure release. Production 1.0.0 still requires final live OpenAI, Shopify, physical CSV reconciliation, and operator acceptance gates.

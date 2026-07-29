@@ -18,7 +18,7 @@ The work adds:
 This is a minor release:
 
 ```text
-0.9.0 → 0.10.0
+0.10.0 → 0.10.0
 ```
 
 If stabilization is released alone before the features, it may be `0.9.1`. Once the combined feature package lands, the synchronized version is `0.10.0`.

@@ -4,7 +4,7 @@
 
 The `References` directory contains:
 
-- integrated v0.9.0 audit in Markdown and PDF;
+- integrated v0.10.0 audit in Markdown and PDF;
 - integrated pre-1.0 v0.10.0 roadmap in Markdown and PDF.
 
 These are planning references. The live repository and final browser UI remain source of truth.

@@ -21,7 +21,7 @@ Cause:
 - The active venv retained `snapims-0.7.0.dist-info`,
   `__editable__.snapims-0.7.0.pth`, and its editable finder.
 - Running Python from the repository saw the newer source-root
-  `snapims.egg-info` first, so `importlib.metadata` appeared to be 0.9.0 while
+  `snapims.egg-info` first, so `importlib.metadata` appeared to be 0.10.0 while
   `pip show` correctly exposed the stale active editable installation.
 
 Repair:
@@ -32,18 +32,18 @@ Repair:
 
 The first isolated attempt was blocked by sandbox DNS. The identical command
 was rerun through the approved network path and safely uninstalled editable
-0.7.0 before installing editable 0.9.0.
+0.7.0 before installing editable 0.10.0.
 
 Verified after repair:
 
-- `snapims --version`: 0.9.0
-- source package `snapims.__version__`: 0.9.0
-- `importlib.metadata.version("snapims")` from `/tmp`: 0.9.0
-- venv metadata: `snapims-0.9.0.dist-info`
-- `pip show snapims`: 0.9.0, editable at this repository
-- `~/.local/bin/snapims --version`: 0.9.0
+- `snapims --version`: 0.10.0
+- source package `snapims.__version__`: 0.10.0
+- `importlib.metadata.version("snapims")` from `/tmp`: 0.10.0
+- venv metadata: `snapims-0.10.0.dist-info`
+- `pip show snapims`: 0.10.0, editable at this repository
+- `~/.local/bin/snapims --version`: 0.10.0
 - global launcher targets this repository's `.venv/bin/python`
-- `snapims status`: Version 0.9.0 and all required components healthy
+- `snapims status`: Version 0.10.0 and all required components healthy
 - `snapims doctor`: all checks pass
 - focused infrastructure/settings/security tests: 34 pass
 - `pip check`: no broken requirements

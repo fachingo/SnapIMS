@@ -1,4 +1,4 @@
-# SnapIMS 0.9.0 Installation Guide
+# SnapIMS 0.10.0 Installation Guide
 
 SnapIMS is portable across Linux hosts. Do not depend on `~/Projects/SnapIMS`; clone the repository anywhere and install from the repository root.
 

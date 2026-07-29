@@ -6,7 +6,7 @@ Checked 2026-07-26T19:12:40-06:00 using read-only requests.
 
 - URL: `http://127.0.0.1:8767/health`
 - Result: HTTP 200
-- Body: `{"status":"ok","version":"0.9.0","schema":{"ok":true,"problems":[],"schema_version":8}}`
+- Body: `{"status":"ok","version":"0.10.0","schema":{"ok":true,"problems":[],"schema_version":8}}`
 
 ## Public SnapIMS
 

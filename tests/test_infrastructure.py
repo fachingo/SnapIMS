@@ -367,7 +367,7 @@ def test_update_apply_refuses_dirty_tree_before_backup(
         "ahead": 0,
         "behind": 1,
         "incoming": ["abc123 incoming"],
-        "current_version": "0.9.0",
+        "current_version": "0.10.0",
         "target_version": "0.10.0",
         "current_inventory_schema": 8,
         "target_inventory_schema": 9,

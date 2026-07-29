@@ -11,7 +11,7 @@ This package adds operator workflows, schema and external-system integration.
 Classification:
 
 ```text
-Minor release: 0.9.0 → 0.10.0
+Minor release: 0.10.0 → 0.10.0
 ```
 
 Do not use 0.9.1 for the completed combined package.

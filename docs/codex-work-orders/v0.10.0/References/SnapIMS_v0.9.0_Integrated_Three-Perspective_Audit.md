@@ -1,5 +1,5 @@
 ---
-title: "SnapIMS v0.9.0 Integrated Three-Perspective Audit"
+title: "SnapIMS v0.10.0 Integrated Three-Perspective Audit"
 subtitle: "Source audit, operator audit, owner-perspective audit, and pre-1.0 defect register"
 author: "Prepared for Canada VHS"
 date: "July 26, 2026"
@@ -33,7 +33,7 @@ The product is nevertheless **not ready for 1.0.0**. The largest remaining risks
 
 The recommended conclusion is:
 
-> Accept the v0.9.0 infrastructure milestone as a successful, cold-boot-verified foundation. Do not label the product 1.0.0. Perform one bounded stabilization pass, then implement a final pre-1.0 minor release, proposed as v0.10.0, containing observability, operator configuration, recognition controls, inventory search, rights-respecting catalog completion, and Shopify order picking.
+> Accept the v0.10.0 infrastructure milestone as a successful, cold-boot-verified foundation. Do not label the product 1.0.0. Perform one bounded stabilization pass, then implement a final pre-1.0 minor release, proposed as v0.10.0, containing observability, operator configuration, recognition controls, inventory search, rights-respecting catalog completion, and Shopify order picking.
 
 # 1. Audit scope and evidence standard
 
@@ -42,7 +42,7 @@ The recommended conclusion is:
 - Repository: `fachingo/SnapIMS`
 - Audited branch: `feature/v0.9-infrastructure`
 - Audited commit: `bda7093d8ca9b776b2e881ce38a09f10b222f56f`
-- Application version: `0.9.0`
+- Application version: `0.10.0`
 - Audit date: July 26, 2026
 
 ## 1.2 Methods used
@@ -51,7 +51,7 @@ This audit combines four evidence streams:
 
 1. **Direct source inspection** through the GitHub connector at the audited commit.
 2. **Owner live-host evidence** from the Linux Mint production candidate, including cold boot, `snapims up`, `snapims status`, `snapims doctor`, external Cloudflare access, Guacamole desktop, and browser SSH.
-3. **Existing planning and verification documents**, including the v0.9.0 Production Candidate Update, the v0.8.0 Status Update, and the Master Scope of Work and Implementation Plan.
+3. **Existing planning and verification documents**, including the v0.10.0 Production Candidate Update, the v0.8.0 Status Update, and the Master Scope of Work and Implementation Plan.
 4. **Three deliberately different review perspectives**:
    - technical/AI systems auditor;
    - first-time inventory operator;
@@ -94,7 +94,7 @@ The following were demonstrated on the actual host after a cold boot:
 - remote access works from a phone outside the local network;
 - no router port forwarding is required.
 
-This completes most of the former v0.9.0 infrastructure acceptance scope.
+This completes most of the former v0.10.0 infrastructure acceptance scope.
 
 ## 2.2 Source-confirmed product strengths
 
@@ -136,7 +136,7 @@ There is no measured staged router in the active source. One model is selected f
 
 The local catalog is substantial and should be preserved. It supports exact/alias/FTS matching, candidate scoring, durable Movie creation, provenance, aliases, director/genre/country/language data, and separate catalog events.
 
-The external discovery path remains coupled directly to the Wikipedia client. The provider-neutral candidate-resolution boundary described in the v0.9.0 plan is not yet complete. The roadmap should add that boundary before another provider is selected so SnapIMS can use an approved API without copying its entire database or making provider IDs into local identity.
+The external discovery path remains coupled directly to the Wikipedia client. The provider-neutral candidate-resolution boundary described in the v0.10.0 plan is not yet complete. The roadmap should add that boundary before another provider is selected so SnapIMS can use an approved API without copying its entire database or making provider IDs into local identity.
 
 ## 3.4 Shopify findings
 
@@ -212,7 +212,7 @@ The current source and active documents disagree:
 - the UI still advertises Ctrl+Shift+P/Ctrl+K for the command palette, not the claimed Alt+P;
 - Batch Editor still advertises and implements Ctrl+1-9, despite real Firefox conflicts and older claims that Alt+1-9 replaced them;
 - prior status documents claim a first-class Tags field, but the inspected quick Review and Batch Editor do not show that contract;
-- Production Readiness and Test Results still identify v0.7.0 as current while the application is v0.9.0.
+- Production Readiness and Test Results still identify v0.7.0 as current while the application is v0.10.0.
 
 For a first-time operator, this is a trust problem even when the underlying code is stable.
 
@@ -277,7 +277,7 @@ Severity meanings:
 | AUD-AUTH-01 | High | No login throttling, audit, session revocation, or in-app password rotation. | Source-confirmed | Harden application authentication. |
 | AUD-HEALTH-01 | High | HTTP 200 can report health PASS even when schema is degraded. | Source-confirmed | Treat degraded schema as failed/degraded health and nonzero doctor result. |
 | AUD-CF-01 | High | Tunnel status is process/PID based rather than public-route verified. | Source-confirmed | Add connector and endpoint probes with exact failure reason. |
-| AUD-TEST-01 | High | No current v0.9.0 test report or PR-triggered CI run is associated with audited commit. | Source-confirmed | Produce current automated, Firefox, and live-host evidence. |
+| AUD-TEST-01 | High | No current v0.10.0 test report or PR-triggered CI run is associated with audited commit. | Source-confirmed | Produce current automated, Firefox, and live-host evidence. |
 | AUD-CAT-01 | High | Provider-neutral candidate API boundary is incomplete. | Source-confirmed/plan pending | Add approved replaceable candidate provider interface. |
 | AUD-CAT-02 | High | Rights/caching policy is designed but not fully proven in production. | Plan pending | Enforce field-level provenance, rate limits, cache policy, attribution. |
 | AUD-STATE-01 | High | Approved Tags and shortcut claims do not match inspected UI/source. | Source-confirmed | Reconcile regression or remove obsolete claims. |
@@ -295,7 +295,7 @@ Severity meanings:
 | AUD-BACKUP-01 | Medium | Operational update and migration backup policy is not enforced by CLI. | Source-confirmed | Require preflight backup for migrations/live external writes. |
 | AUD-LOG-01 | Medium | Logging policy lacks formal redaction/correlation acceptance tests. | Source-confirmed | Add secret redaction, request IDs, bounded retention, export bundle. |
 | AUD-PERF-01 | Medium | No current measured recognition cost/latency benchmark in CAD. | Plan pending | Run representative VHS benchmark before routing thresholds. |
-| AUD-REL-01 | Medium | The old rule that v0.9.0 is the final feature release is no longer truthful. | New production blockers | Supersede it with one final v0.10.0 feature release. |
+| AUD-REL-01 | Medium | The old rule that v0.10.0 is the final feature release is no longer truthful. | New production blockers | Supersede it with one final v0.10.0 feature release. |
 
 # 7. Detailed required outcomes
 
@@ -390,7 +390,7 @@ Cancellation releases reservations. Re-importing an order never duplicates pick 
 
 # 9. Immediate action recommendation
 
-Do not begin the new database/order schema immediately. First perform a short v0.9.0 stabilization and evidence pass:
+Do not begin the new database/order schema immediately. First perform a short v0.10.0 stabilization and evidence pass:
 
 1. Back up the production candidate database, media, `.env`, and Cloudflare/Guacamole configuration.
 2. Reconcile shortcut, Tags, version, and documentation contradictions.
@@ -398,7 +398,7 @@ Do not begin the new database/order schema immediately. First perform a short v0
 4. Add CSRF protection and login abuse tests.
 5. Correct health/tunnel truth semantics.
 6. Guard `snapims update` and shell path handling.
-7. Produce a current v0.9.0 test/browser report.
+7. Produce a current v0.10.0 test/browser report.
 8. Freeze a migration baseline and only then begin the v0.10.0 schema work.
 
 # 10. Source register
@@ -430,7 +430,7 @@ Do not begin the new database/order schema immediately. First perform a short v0
 
 ## Planning sources used
 
-- `SnapIMS_Feature_Enhancement_Work_Order_v0.9.0_Production_Candidate_Update.md`
+- `SnapIMS_Feature_Enhancement_Work_Order_v0.10.0_Production_Candidate_Update.md`
 - `SnapIMS_Feature_Enhancement_Work_Order_v0.8.0_Status.md`
 - `SnapIMS_Master_Scope_of_Work_and_Implementation_Plan(1).docx`
 - owner field-test findings from July 26, 2026
