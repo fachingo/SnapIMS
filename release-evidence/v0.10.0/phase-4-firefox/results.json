@@ -1,0 +1,21 @@
+{
+  "browser": "Playwright Firefox",
+  "checks": {
+    "approved_fields_unchanged_after_rerun": true,
+    "attempt_cost_latency_visible": true,
+    "duplicate_force_click_idempotent": true,
+    "duplicate_options_visible": true,
+    "older_attempt_selectable": true,
+    "recognition_workspace": true,
+    "restart_pauses_interrupted_request": true,
+    "schema_integrity_after_restart": true,
+    "successful_item_rerun_controls": true,
+    "test_copy_quarantined": true,
+    "unknown_visible_and_unfinished": true
+  },
+  "console_errors": [],
+  "page_errors": [],
+  "passed": true,
+  "url": "http://127.0.0.1:59911",
+  "workspace": "/tmp/snapims-v010-phase4-firefox-jgjsrfww"
+}
