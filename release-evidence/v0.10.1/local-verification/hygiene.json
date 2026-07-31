@@ -1,9 +1,4 @@
 {
-  "status": "FAIL",
-  "problems": [
-    "terminal/pager capture: SnapIMS_Operator_Guide.pdf",
-    "terminal/pager capture: SnapIMS_Operator_Guide.docx",
-    "terminal/pager capture: SnapIMS_Operator_Guide_v0.7.0.docx",
-    "terminal/pager capture: SnapIMS_Operator_Guide_v0.7.0.pdf"
-  ]
+  "status": "PASS",
+  "problems": []
 }

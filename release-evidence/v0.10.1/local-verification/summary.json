@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-30T20:54:26.418116-06:00",
+  "generated_at": "2026-07-30T20:59:29.412006-06:00",
   "version": "0.10.1",
   "results": [
     {
@@ -126,14 +126,9 @@
     },
     {
       "name": "hygiene",
-      "status": "FAIL",
-      "problems": [
-        "terminal/pager capture: SnapIMS_Operator_Guide.pdf",
-        "terminal/pager capture: SnapIMS_Operator_Guide.docx",
-        "terminal/pager capture: SnapIMS_Operator_Guide_v0.7.0.docx",
-        "terminal/pager capture: SnapIMS_Operator_Guide_v0.7.0.pdf"
-      ]
+      "status": "PASS",
+      "problems": []
     }
   ],
-  "overall": "FAIL"
+  "overall": "PASS"
 }

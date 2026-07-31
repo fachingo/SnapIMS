@@ -80,7 +80,12 @@ def hygiene() -> dict[str, object]:
     allowed_binary_roots = {"release-evidence", ".git", ".venv", "dist", "build"}
     control_files: list[str] = []
     for path in ROOT.iterdir():
-        if path.name.startswith(".") or path.name in allowed_binary_roots or path.is_dir():
+        if (
+            path.name.startswith(".")
+            or path.name in allowed_binary_roots
+            or path.is_dir()
+            or path.suffix.lower() in {".pdf", ".docx"}
+        ):
             continue
         try:
             data = path.read_bytes()

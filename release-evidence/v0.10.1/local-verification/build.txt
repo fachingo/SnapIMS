@@ -266,7 +266,7 @@ running install_egg_info
 Copying snapims.egg-info to build/bdist.linux-x86_64/wheel/./snapims-0.10.1-py3.12.egg-info
 running install_scripts
 creating build/bdist.linux-x86_64/wheel/snapims-0.10.1.dist-info/WHEEL
-creating '/home/isaiah/Projects/SnapIMS/dist/.tmp-8824csv2/snapims-0.10.1-py3-none-any.whl' and adding 'build/bdist.linux-x86_64/wheel' to it
+creating '/home/isaiah/Projects/SnapIMS/dist/.tmp-3bgxnxrb/snapims-0.10.1-py3-none-any.whl' and adding 'build/bdist.linux-x86_64/wheel' to it
 adding 'snapims/__init__.py'
 adding 'snapims/auth.py'
 adding 'snapims/bulk.py'
