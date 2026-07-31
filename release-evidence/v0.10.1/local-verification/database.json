@@ -1,0 +1,4 @@
+{
+  "status": "FAIL",
+  "error": "IntegrityError: recognition attempts are immutable"
+}

@@ -1,0 +1,18 @@
+{
+  "generated_at": "2026-07-29T22:27:41.786736-06:00",
+  "url": "http://127.0.0.1:8767",
+  "results": [
+    {
+      "browser": "chromium",
+      "status": "FAIL",
+      "error": "RuntimeError: Browser login required; set SNAPIMS_ADMIN_USERNAME/PASSWORD"
+    },
+    {
+      "browser": "firefox",
+      "status": "FAIL",
+      "error": "RuntimeError: Browser login required; set SNAPIMS_ADMIN_USERNAME/PASSWORD"
+    }
+  ],
+  "overall": "FAIL",
+  "edge_note": "Run the Chromium project against installed Microsoft Edge separately when available."
+}

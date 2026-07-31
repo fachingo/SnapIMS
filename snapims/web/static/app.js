@@ -13,22 +13,36 @@
   const status = qs('#recognition-status[data-running="true"]');
   if (status) {
     const batch = status.dataset.batch;
+    let pollDelay = 1500;
+    let pollTimer = null;
+    const schedulePoll = (delay = pollDelay) => {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(poll, document.hidden ? Math.max(delay, 5000) : delay);
+    };
     const poll = async () => {
+      if (document.hidden) return schedulePoll(5000);
       try {
         const response = await fetch(`/review/job/${encodeURIComponent(batch)}`);
+        if ([401, 403].includes(response.status)) return;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         const strong = qs("strong", status);
         if (strong) strong.textContent = data.text;
-        if (data.job && ["RUNNING", "IDENTIFYING"].includes(data.job.status)) {
-          setTimeout(poll, 450);
+        pollDelay = 1500;
+        if (data.job && ["RUNNING", "IDENTIFYING", "PAUSING"].includes(data.job.status)) {
+          schedulePoll();
         } else {
           window.location.reload();
         }
       } catch (_) {
-        setTimeout(poll, 900);
+        pollDelay = Math.min(30000, Math.max(3000, pollDelay * 2));
+        schedulePoll();
       }
     };
-    setTimeout(poll, 300);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) schedulePoll(250);
+    });
+    schedulePoll(750);
   }
 
   // One-enter Review: focus the first required empty quick field, otherwise Price.
@@ -149,6 +163,12 @@
     let selected = String(picker.dataset.selected || "").split(",").filter(Boolean);
     let matches = [];
     let activeIndex = 0;
+    const listboxId = suggestions.id || `tag-options-${crypto.randomUUID?.() || Math.random().toString(36).slice(2)}`;
+    suggestions.id = listboxId;
+    input.setAttribute("role", "combobox");
+    input.setAttribute("aria-autocomplete", "list");
+    input.setAttribute("aria-controls", listboxId);
+    input.setAttribute("aria-expanded", "false");
 
     const sync = (notify = false) => {
       picker.dataset.selected = selected.join(",");
@@ -180,6 +200,8 @@
       suggestions.replaceChildren();
       matches = [];
       activeIndex = 0;
+      input.setAttribute("aria-expanded", "false");
+      input.removeAttribute("aria-activedescendant");
     };
     const showSuggestions = () => {
       const query = input.value.trim().toLowerCase();
@@ -189,7 +211,9 @@
       matches.forEach((tag, index) => {
         const option = document.createElement("button");
         option.type = "button";
+        option.id = `${listboxId}-option-${index}`;
         option.setAttribute("role", "option");
+        option.setAttribute("aria-selected", index === activeIndex ? "true" : "false");
         option.classList.toggle("active", index === activeIndex);
         const label = document.createElement("span");
         label.textContent = tag.canonical_label;
@@ -207,6 +231,9 @@
         suggestions.append(option);
       });
       suggestions.hidden = matches.length === 0;
+      input.setAttribute("aria-expanded", matches.length ? "true" : "false");
+      if (matches.length) input.setAttribute("aria-activedescendant", `${listboxId}-option-${activeIndex}`);
+      else input.removeAttribute("aria-activedescendant");
     };
     input.addEventListener("focus", showSuggestions);
     input.addEventListener("input", () => { activeIndex = 0; showSuggestions(); });
@@ -339,7 +366,12 @@
       return row;
     };
     const pollState = qs("[data-activity-poll-state]");
+    let activityDelay = 2500;
     const pollActivity = async () => {
+      if (document.hidden) {
+        setTimeout(pollActivity, 7500);
+        return;
+      }
       const params = new URLSearchParams({
         after: activity.dataset.lastEventId || "0",
         last: "100",
@@ -356,12 +388,14 @@
         while (activity.children.length > 100) activity.lastElementChild?.remove();
         activity.dataset.lastEventId = String(payload.last_event_id || activity.dataset.lastEventId);
         if (pollState) pollState.textContent = "Live";
+        activityDelay = 2500;
       } catch (_) {
         if (pollState) pollState.textContent = "Retrying";
+        activityDelay = Math.min(30000, Math.max(5000, activityDelay * 2));
       }
-      setTimeout(pollActivity, 2500);
+      setTimeout(pollActivity, activityDelay);
     };
-    setTimeout(pollActivity, 2500);
+    setTimeout(pollActivity, activityDelay);
   }
 
   // Batch Editor workstation.
@@ -377,6 +411,9 @@
   const selectedRows = () => rows().filter((row) => qs(".row-select", row)?.checked);
   const saveState = qs("#editor-save-state");
   const pending = new Map();
+  const saveQueues = new Map();
+  const saveSequences = new Map();
+  let inFlightSaves = 0;
   const undoStack = [];
   const redoStack = [];
   let lowThreshold = 0.70;
@@ -478,46 +515,70 @@
     });
   };
 
-  const sendEdit = async (input, {recordUndo = true} = {}) => {
+  const sameValue = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+  const sendEdit = (input, {recordUndo = true} = {}) => {
     const row = input.closest("tr");
     const itemId = row.dataset.itemId;
     const field = input.dataset.field;
     const value = currentInputValue(input);
-    const item = byId.get(itemId) || {};
-    const oldValue = item[field];
+    const sequence = (saveSequences.get(input) || 0) + 1;
+    saveSequences.set(input, sequence);
+    clearTimeout(pending.get(input));
+    pending.delete(input);
     input.classList.add("dirty");
     input.classList.remove("save-failed");
     saveState.textContent = "Saving…";
-    try {
-      const response = await fetch(`/api/items/${encodeURIComponent(itemId)}`, {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({field, value, revision: Number(row.dataset.revision), reason: "Batch Editor"}),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data.error || "Save failed");
-      if (recordUndo && oldValue !== data.item[field]) {
-        undoStack.push({itemId, field, oldValue, newValue: data.item[field]});
-        redoStack.length = 0;
+
+    const prior = saveQueues.get(itemId) || Promise.resolve(true);
+    const task = prior.catch(() => false).then(async () => {
+      const item = byId.get(itemId) || {};
+      const oldValue = item[field];
+      inFlightSaves += 1;
+      try {
+        const response = await fetch(`/api/items/${encodeURIComponent(itemId)}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({field, value, revision: Number(row.dataset.revision), reason: "Batch Editor"}),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || "Save failed");
+        if (recordUndo && !sameValue(oldValue, data.item[field])) {
+          undoStack.push({itemId, field, oldValue, newValue: data.item[field]});
+          redoStack.length = 0;
+        }
+        row.dataset.revision = data.item.record_revision;
+        row.dataset.reviewStatus = data.item.review_status;
+        row.dataset.confidence = data.item.display_confidence ?? -1;
+        row.dataset.rare = data.item.rare;
+        row.dataset.review = data.item.review;
+        row.dataset.updated = data.item.updated_at || "";
+        Object.assign(item, data.item);
+        const newest = saveSequences.get(input) === sequence;
+        const unchangedSinceQueued = sameValue(currentInputValue(input), value);
+        if (newest && unchangedSinceQueued) {
+          input.classList.remove("dirty", "save-failed");
+          saveState.textContent = "Saved";
+        } else {
+          input.classList.add("dirty");
+          saveState.textContent = "Saving latest change…";
+        }
+        updateHealth(data.health);
+        persistView();
+        return true;
+      } catch (error) {
+        input.classList.add("dirty", "save-failed");
+        saveState.textContent = "Save failed";
+        toast(error.message, "error");
+        return false;
+      } finally {
+        inFlightSaves -= 1;
       }
-      row.dataset.revision = data.item.record_revision;
-      row.dataset.reviewStatus = data.item.review_status;
-      row.dataset.confidence = data.item.display_confidence ?? -1;
-      row.dataset.rare = data.item.rare;
-      row.dataset.review = data.item.review;
-      row.dataset.updated = data.item.updated_at || "";
-      Object.assign(item, data.item);
-      input.classList.remove("dirty", "save-failed");
-      saveState.textContent = "Saved";
-      updateHealth(data.health);
-      persistView();
-      return true;
-    } catch (error) {
-      input.classList.add("save-failed");
-      saveState.textContent = "Save failed";
-      toast(error.message, "error");
-      return false;
-    }
+    });
+    const tracked = task.finally(() => {
+      if (saveQueues.get(itemId) === tracked) saveQueues.delete(itemId);
+    });
+    saveQueues.set(itemId, tracked);
+    return tracked;
   };
   qsa("[data-editor-tags]", grid).forEach((picker) => {
     qs("[data-tag-input]", picker)?.addEventListener("focus", () => {
@@ -931,7 +992,7 @@
 
   window.addEventListener("beforeunload", (event) => {
     persistView();
-    if (!qsa(".dirty", grid).length) return;
+    if (!qsa(".dirty", grid).length && inFlightSaves === 0) return;
     event.preventDefault();
     event.returnValue = "";
   });

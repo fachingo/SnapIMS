@@ -172,6 +172,9 @@ class ShopifyService:
         assert item is not None
         photos = db.get_item_photos(self.db_file, item_id)
         image_paths = [Path(photo["processed_path"]) for photo in photos]
+        media_identifiers = [
+            f"snapims:{item_id}:photo:{int(photo['photo_id'])}" for photo in photos
+        ]
         with db.connect(self.db_file) as connection:
             sync_row = connection.execute(
                 "SELECT * FROM shopify_sync WHERE item_id=?", (item_id,)
@@ -287,33 +290,44 @@ class ShopifyService:
 
             if order.get(step, 0) < order["attach_media"]:
                 active_stage = "media_status_reconcile"
-                statuses = self.client.media_status(product_id)
-                remote_media_exists = len(statuses) >= len(image_paths) and not any(
-                    status in {"FAILED", "ERROR"} for status in statuses
-                )
-                if not remote_media_exists:
+                records = self.client.media_records(product_id)
+                by_identifier = {record["alt"]: record for record in records if record["alt"]}
+                missing_indexes = [
+                    index
+                    for index, identifier in enumerate(media_identifiers)
+                    if identifier not in by_identifier
+                ]
+                if missing_indexes:
+                    missing_paths = [image_paths[index] for index in missing_indexes]
+                    missing_ids = [media_identifiers[index] for index in missing_indexes]
                     active_stage = "stage_images"
-                    targets = self.client.stage_images(image_paths)
+                    targets = self.client.stage_images(missing_paths)
                     active_stage = "upload_staged_images"
-                    urls = self.client.upload_staged_images(image_paths, targets)
+                    urls = self.client.upload_staged_images(missing_paths, targets)
                     active_stage = "attach_media"
-                    self.client.attach_media(product_id, urls, item["title"])
+                    self.client.attach_media(product_id, urls, missing_ids)
                 step = "attach_media"
                 self._checkpoint(item_id, step)
 
             active_stage = "media_processing"
             deadline = time.monotonic() + media_timeout
             while time.monotonic() < deadline:
-                statuses = self.client.media_status(product_id)
-                if len(statuses) >= len(image_paths) and all(
-                    status == "READY" for status in statuses[: len(image_paths)]
-                ):
+                records = self.client.media_records(product_id)
+                by_identifier = {record["alt"]: record for record in records if record["alt"]}
+                intended = [by_identifier.get(identifier) for identifier in media_identifiers]
+                intended_statuses = [
+                    record["status"] if record is not None else "MISSING"
+                    for record in intended
+                ]
+                if intended and all(status == "READY" for status in intended_statuses):
                     break
-                if any(status in {"FAILED", "ERROR"} for status in statuses):
-                    raise RuntimeError(f"Shopify media processing failed: {statuses}")
+                if any(status in {"FAILED", "ERROR"} for status in intended_statuses):
+                    raise RuntimeError(
+                        f"Shopify media processing failed for intended photos: {intended_statuses}"
+                    )
                 time.sleep(max(0, poll_interval))
             else:
-                raise TimeoutError("Shopify media did not reach READY before timeout")
+                raise TimeoutError("Shopify intended media did not reach READY before timeout")
 
             admin_url = (
                 f"https://{self.config.store_domain}/admin/products/"

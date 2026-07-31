@@ -1,0 +1,125 @@
+{
+  "generated_at": "2026-07-29T23:10:37.367454-06:00",
+  "version": "0.10.1",
+  "results": [
+    {
+      "name": "focused-tests",
+      "command": [
+        "/home/isaiah/Projects/SnapIMS/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_v0101_regressions.py"
+      ],
+      "status": "FAIL",
+      "exit": 1
+    },
+    {
+      "name": "full-pytest",
+      "command": [
+        "/home/isaiah/Projects/SnapIMS/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "status": "FAIL",
+      "exit": 1
+    },
+    {
+      "name": "ruff",
+      "command": [
+        "/home/isaiah/Projects/SnapIMS/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "."
+      ],
+      "status": "FAIL",
+      "exit": 1
+    },
+    {
+      "name": "mypy",
+      "command": [
+        "/home/isaiah/Projects/SnapIMS/.venv/bin/python",
+        "-m",
+        "mypy",
+        "snapims",
+        "--ignore-missing-imports"
+      ],
+      "status": "PASS",
+      "exit": 0
+    },
+    {
+      "name": "compileall",
+      "command": [
+        "/home/isaiah/Projects/SnapIMS/.venv/bin/python",
+        "-m",
+        "compileall",
+        "-q",
+        "snapims",
+        "tests",
+        "scripts"
+      ],
+      "status": "PASS",
+      "exit": 0
+    },
+    {
+      "name": "node-check",
+      "command": [
+        "node",
+        "--check",
+        "snapims/web/static/app.js"
+      ],
+      "status": "PASS",
+      "exit": 0
+    },
+    {
+      "name": "build",
+      "command": [
+        "/home/isaiah/Projects/SnapIMS/.venv/bin/python",
+        "-m",
+        "build",
+        "--no-isolation"
+      ],
+      "status": "PASS",
+      "exit": 0
+    },
+    {
+      "name": "pip-check",
+      "command": [
+        "/home/isaiah/Projects/SnapIMS/.venv/bin/python",
+        "-m",
+        "pip",
+        "check"
+      ],
+      "status": "PASS",
+      "exit": 0
+    },
+    {
+      "name": "git-diff-check",
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "status": "PASS",
+      "exit": 0
+    },
+    {
+      "name": "database",
+      "status": "FAIL",
+      "error": "IntegrityError: recognition attempts are immutable"
+    },
+    {
+      "name": "hygiene",
+      "status": "FAIL",
+      "problems": [
+        "terminal/pager capture: SnapIMS_Operator_Guide.pdf",
+        "terminal/pager capture: SnapIMS_Operator_Guide.docx",
+        "terminal/pager capture: SnapIMS_Operator_Guide_v0.7.0.docx",
+        "terminal/pager capture: SnapIMS_Operator_Guide_v0.7.0.pdf"
+      ]
+    }
+  ],
+  "overall": "FAIL"
+}

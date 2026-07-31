@@ -23,6 +23,7 @@ class FakeShopifyClient:
         self.remote_product = False
         self.inventory: int | None = None
         self.attached = False
+        self.media_identifiers: list[str] = []
         self.media_sequence = list(media_sequence or [["READY"]])
 
     def _call(self, name: str) -> None:
@@ -76,17 +77,37 @@ class FakeShopifyClient:
         self._call("upload_staged_images")
         return [target["resourceUrl"] for target in targets]
 
-    def attach_media(self, product_id: str, resource_urls: list[str], title: str) -> None:
+    def attach_media(
+        self,
+        product_id: str,
+        resource_urls: list[str],
+        media_identifiers: list[str],
+    ) -> None:
         self._call("attach_media")
         self.attached = True
+        for identifier in media_identifiers:
+            if identifier not in self.media_identifiers:
+                self.media_identifiers.append(identifier)
 
-    def media_status(self, product_id: str) -> list[str]:
-        self._call("media_status")
+    def media_records(self, product_id: str) -> list[dict[str, str]]:
+        self._call("media_records")
         if not self.attached:
             return []
         if len(self.media_sequence) > 1:
-            return self.media_sequence.pop(0)
-        return self.media_sequence[0]
+            statuses = self.media_sequence.pop(0)
+        else:
+            statuses = self.media_sequence[0]
+        return [
+            {
+                "id": f"gid://shopify/Media/{index + 1}",
+                "alt": identifier,
+                "status": statuses[index] if index < len(statuses) else "UNKNOWN",
+            }
+            for index, identifier in enumerate(self.media_identifiers)
+        ]
+
+    def media_status(self, product_id: str) -> list[str]:
+        return [record["status"] for record in self.media_records(product_id)]
 
 
 def valid_config() -> ShopifyConfig:

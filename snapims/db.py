@@ -12,7 +12,7 @@ from typing import Any
 
 from snapims.config import DataPaths
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 CAPTURE_SOURCES = frozenset(
     {
@@ -334,6 +334,15 @@ def _base_schema(connection: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             started_at TEXT,
             finished_at TEXT,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS recognition_item_leases (
+            item_id TEXT PRIMARY KEY REFERENCES items(item_id) ON DELETE CASCADE,
+            owner_kind TEXT NOT NULL CHECK(owner_kind IN ('BATCH','REQUEST')),
+            owner_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','PAUSED')),
+            acquired_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS recognition_benchmark_cases (
@@ -705,6 +714,10 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
         "error_code", "error_message", "created_at", "started_at", "finished_at",
         "updated_at",
     },
+    "recognition_item_leases": {
+        "item_id", "owner_kind", "owner_id", "status", "acquired_at",
+        "expires_at", "updated_at",
+    },
     "recognition_benchmark_cases": {
         "benchmark_case_id", "item_id", "dataset_class", "truth_json",
         "labelled_by", "labelled_at", "active",
@@ -773,6 +786,7 @@ EXPECTED_INDEXES = {
     "idx_recognition_attempt_tier",
     "idx_recognition_attempt_events",
     "idx_recognition_requests_status",
+    "idx_recognition_item_leases_status",
     "idx_recognition_benchmark_item",
     "idx_item_change_log_item",
     "idx_checkpoints_batch",
@@ -1459,6 +1473,8 @@ def _install_recognition_immutability(connection: sqlite3.Connection) -> None:
             ON recognition_attempt_events(recognition_result_id, occurred_at);
         CREATE INDEX IF NOT EXISTS idx_recognition_requests_status
             ON recognition_requests(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_recognition_item_leases_status
+            ON recognition_item_leases(status, expires_at);
         CREATE INDEX IF NOT EXISTS idx_recognition_benchmark_item
             ON recognition_benchmark_cases(item_id, active);
         CREATE TRIGGER IF NOT EXISTS recognition_results_immutable_update
@@ -1543,6 +1559,18 @@ def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
             _base_schema(connection)
             _migrate_controlled_tags(connection)
             _upgrade_legacy(connection)
+
+            # Existing supported databases may already have the recognition
+            # immutability triggers from an earlier schema. This migration
+            # performs controlled legacy normalization before reinstalling
+            # those protections at the end of the transaction.
+            connection.execute(
+                "DROP TRIGGER IF EXISTS recognition_results_immutable_update"
+            )
+            connection.execute(
+                "DROP TRIGGER IF EXISTS recognition_results_immutable_delete"
+            )
+
             timestamp = now()
             connection.execute(
                 "UPDATE items SET created_at=CASE WHEN created_at='' THEN ? ELSE created_at END, "
@@ -1617,7 +1645,7 @@ def initialize(db_file: Path, *, paths: DataPaths | None = None) -> None:
                 (
                     SCHEMA_VERSION,
                     timestamp,
-                    "SnapIMS v0.10.0 immutable recognition attempts, routing requests, and capture provenance",
+                    "SnapIMS v0.10.1 durable recognition leases and audit-remediation safety",
                 ),
             )
             _install_recognition_immutability(connection)

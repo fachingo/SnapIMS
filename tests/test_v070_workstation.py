@@ -44,12 +44,13 @@ def test_review_inline_title_override_completes_in_one_request(tmp_path: Path, d
             data={
                 "batch_id": result.batch_id,
                 "item_id": item["item_id"],
-                "title": "Manual One Enter Title",
-                "price": "4.00",
-                "discount": "0",
-            },
-            follow_redirects=False,
-        )
+                    "title": "Manual One Enter Title",
+                    "price": "4.00",
+                    "discount": "0",
+                    "revision": str(item["record_revision"]),
+                },
+                follow_redirects=False,
+            )
     assert response.status_code == 303
     assert "edit=true" not in response.headers["location"]
     saved = db.get_item(data_paths.db_file, item["item_id"])

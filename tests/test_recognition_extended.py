@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -154,8 +155,20 @@ def test_failure_state_and_retry_recovery(tmp_path: Path, data_paths) -> None:
         {"recognition_status": "FAILED", "recognition_error": "fixed failure"},
         source="RECOGNITION",
     )
-    retry_failed_item(data_paths.db_file, item["item_id"], "mock")
-    saved = db.get_item(data_paths.db_file, item["item_id"])
+    assert retry_failed_item(data_paths.db_file, item["item_id"], "mock")
+
+    deadline = time.monotonic() + 5.0
+    saved = None
+
+    while time.monotonic() < deadline:
+        saved = db.get_item(data_paths.db_file, item["item_id"])
+
+        if saved["recognition_status"] == "COMPLETE":
+            break
+
+        time.sleep(0.05)
+
+    assert saved is not None
     assert saved["recognition_status"] == "COMPLETE"
     assert saved["recognition_error"] == ""
     assert db.latest_recognition(data_paths.db_file, item["item_id"])["provider"] == "mock"

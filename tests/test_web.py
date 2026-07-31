@@ -84,7 +84,17 @@ def test_review_fast_path_by_http(tmp_path: Path, data_paths) -> None:
         while time.time() < deadline and db.get_recognition_job(data_paths.db_file, batch_id)["status"] in {"RUNNING", "IDENTIFYING"}:
             time.sleep(0.02)
         item = db.list_items(data_paths.db_file, batch_id=batch_id)[0]
-        response = client.post("/review/approve", data={"batch_id": batch_id, "item_id": item["item_id"], "price": "12.99", "discount": "5"}, follow_redirects=False)
+        response = client.post(
+            "/review/approve",
+            data={
+                "batch_id": batch_id,
+                "item_id": item["item_id"],
+                "price": "12.99",
+                "discount": "5",
+                "revision": str(item["record_revision"]),
+            },
+            follow_redirects=False,
+        )
         assert response.status_code == 303
         saved = db.get_item(data_paths.db_file, item["item_id"])
         assert saved["review_status"] == "DONE"

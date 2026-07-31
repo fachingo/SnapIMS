@@ -43,3 +43,7 @@
 .activity-active article{display:grid;gap:4px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
 .activity-active span{color:var(--muted);font-size:12px}
 @media(max-width:900px){.activity-filters{grid-template-columns:1fr 1fr}.activity-active{grid-template-columns:1fr}}
+
+.button:focus-visible,button:focus-visible,a:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
+.data-grid-wrap{scrollbar-gutter:stable both-edges;box-shadow:inset 16px 0 18px -20px #000,inset -16px 0 18px -20px #000}
+.data-grid th:first-child,.data-grid td:first-child{position:sticky;left:0;z-index:4;background:#111821}

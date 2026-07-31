@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 import types
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +15,7 @@ from snapims.config import DataPaths
 
 
 class _CompatClient:
-    """Small sync ASGI test client for Starlette builds that require httpx2."""
+    """Sync ASGI client with browser-like CSRF handling for application tests."""
 
     __test__ = False
 
@@ -24,6 +26,7 @@ class _CompatClient:
         raise_server_exceptions: bool = True,
         root_path: str = "",
         follow_redirects: bool = True,
+        auto_csrf: bool = True,
         **_: Any,
     ) -> None:
         self.app = app
@@ -31,8 +34,10 @@ class _CompatClient:
         self.raise_server_exceptions = raise_server_exceptions
         self.root_path = root_path
         self.follow_redirects = follow_redirects
+        self.auto_csrf = auto_csrf
         self.cookies = httpx.Cookies()
         self._lifespan: Any = None
+        self._csrf_token = ""
 
     def __enter__(self) -> "_CompatClient":
         self._lifespan = self.app.router.lifespan_context(self.app)
@@ -120,7 +125,31 @@ class _CompatClient:
         raise RuntimeError("Too many redirects")
 
     def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        return asyncio.run(self._request(method, url, **kwargs))
+        headers = httpx.Headers(kwargs.get("headers"))
+        data = kwargs.get("data")
+        has_explicit_csrf = bool(headers.get("x-csrf-token")) or (
+            isinstance(data, Mapping) and "csrf_token" in data
+        )
+        if (
+            self.auto_csrf
+            and method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+            and not has_explicit_csrf
+        ):
+            if not self._csrf_token:
+                self.get("/")
+            if self._csrf_token:
+                headers["X-CSRF-Token"] = self._csrf_token
+                kwargs["headers"] = headers
+
+        response = asyncio.run(self._request(method, url, **kwargs))
+        if response.headers.get("content-type", "").startswith("text/html"):
+            match = re.search(
+                r'<meta name="csrf-token" content="([^"]+)"',
+                response.text,
+            )
+            if match:
+                self._csrf_token = match.group(1)
+        return response
 
     def get(self, url: str, **kwargs: Any) -> httpx.Response:
         return self.request("GET", url, **kwargs)

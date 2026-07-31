@@ -1,0 +1,58 @@
+...F.......                                                              [100%]
+=================================== FAILURES ===================================
+_____ test_recognition_metadata_acceptance_can_preserve_commercial_fields ______
+
+tmp_path = PosixPath('/tmp/pytest-of-isaiah/pytest-4/test_recognition_metadata_acce0')
+data_paths = DataPaths(root=PosixPath('/tmp/pytest-of-isaiah/pytest-4/test_recognition_metadata_acce0/workspace'), incoming=PosixPa...e=PosixPath('/tmp/pytest-of-isaiah/pytest-4/test_recognition_metadata_acce0/workspace/database/movie_catalog.sqlite3'))
+
+    def test_recognition_metadata_acceptance_can_preserve_commercial_fields(
+        tmp_path: Path, data_paths
+    ) -> None:
+        _, item = ready_item(tmp_path, data_paths)
+        item_id = str(item["item_id"])
+        db.update_item(
+            data_paths.db_file,
+            item_id,
+            {"price_cents": 2499, "discount_percent": 12.5},
+        )
+        current = db.get_item(data_paths.db_file, item_id)
+        assert current is not None
+        with db.transaction(data_paths.db_file) as connection:
+            cursor = connection.execute(
+                """INSERT INTO recognition_results(
+                       item_id,provider,created_at,suggested_title,suggested_price_cents,
+                       suggested_discount_percent,confidence,attempt_uuid,tier,trigger,
+                       selected_images_json,title_evidence_json,field_evidence_json,
+                       contradiction_flags_json
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?, '[]','[]','{}','[]')""",
+                (
+                    item_id,
+                    "mock",
+                    db.now(),
+                    "Replacement metadata title",
+                    100,
+                    0,
+                    0.99,
+                    "v0101-commercial-preserve",
+                    "baseline",
+                    "TEST",
+                ),
+            )
+            result_id = int(cursor.lastrowid)
+            connection.execute(
+                """INSERT INTO recognition_attempt_states(
+                       recognition_result_id,state,selected_at,selected_by,updated_at
+                   ) VALUES(?,'SELECTED',?,'test',?)""",
+                (result_id, db.now(), db.now()),
+            )
+>           connection.execute(
+                """INSERT INTO item_recognition_selection(
+                       item_id,recognition_result_id,selected_by,selected_at
+                   ) VALUES(?,?,?,?)""",
+                (item_id, result_id, "test", db.now()),
+            )
+E           sqlite3.IntegrityError: UNIQUE constraint failed: item_recognition_selection.item_id
+
+tests/test_v0101_regressions.py:114: IntegrityError
+=========================== short test summary info ============================
+FAILED tests/test_v0101_regressions.py::test_recognition_metadata_acceptance_can_preserve_commercial_fields

@@ -1,0 +1,74 @@
+F841 Local variable `local` is assigned to but never used
+  --> scripts/finalize_v0101.py:35:5
+   |
+34 | def main() -> int:
+35 |     local = load_pass(LOCAL, "Local verification")
+   |     ^^^^^
+36 |     browser = load_pass(BROWSER, "Targeted browser verification")
+   |
+help: Remove assignment to unused variable `local`
+
+F841 Local variable `browser` is assigned to but never used
+  --> scripts/finalize_v0101.py:36:5
+   |
+34 | def main() -> int:
+35 |     local = load_pass(LOCAL, "Local verification")
+36 |     browser = load_pass(BROWSER, "Targeted browser verification")
+   |     ^^^^^^^
+37 |
+38 |     replace_once(ROOT / "pyproject.toml", 'version = "0.10.0"', 'version = "0.10.1"')
+   |
+help: Remove assignment to unused variable `browser`
+
+F401 [*] `hashlib` imported but unused
+ --> scripts/verify_v0101.py:4:8
+  |
+2 | from __future__ import annotations
+3 |
+4 | import hashlib
+  |        ^^^^^^^
+5 | import json
+6 | from pathlib import Path
+  |
+help: Remove unused import: `hashlib`
+  |
+3 |
+  - import hashlib
+4 | import json
+  |
+
+F401 [*] `sqlite3` imported but unused
+  --> scripts/verify_v0101.py:8:8
+   |
+ 6 | from pathlib import Path
+ 7 | import shutil
+ 8 | import sqlite3
+   |        ^^^^^^^
+ 9 | import subprocess
+10 | import sys
+   |
+help: Remove unused import: `sqlite3`
+  |
+7 | import shutil
+  - import sqlite3
+8 | import subprocess
+  |
+
+F401 [*] `json` imported but unused
+ --> tests/test_v0101_regressions.py:3:8
+  |
+1 | from __future__ import annotations
+2 |
+3 | import json
+  |        ^^^^
+4 | from pathlib import Path
+  |
+help: Remove unused import: `json`
+  |
+2 |
+  - import json
+3 | from pathlib import Path
+  |
+
+Found 5 errors.
+[*] 3 fixable with the `--fix` option (2 hidden fixes can be enabled with the `--unsafe-fixes` option).

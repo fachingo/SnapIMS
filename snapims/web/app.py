@@ -385,7 +385,16 @@ async def authentication(request: Request, call_next):
     request.state.csrf_token = (
         str(claims.get("csrf", "")) if claims else anonymous_csrf or _new_csrf()
     )
-    if request.method in STATE_METHODS and enabled:
+    request_host = request.headers.get("host", "").split(":", 1)[0].strip().casefold()
+    local_hosts = {"127.0.0.1", "localhost", "::1", "testserver"}
+    if not enabled and request_host not in local_hosts:
+        blocked = JSONResponse(
+            {"detail": "Authentication is required for non-local SnapIMS access."},
+            status_code=503,
+        )
+        _security_headers(blocked, request.url.path)
+        return blocked
+    if request.method in STATE_METHODS:
         if not _origin_allowed(request, config):
             LOGGER.warning(
                 "Security request rejected reason=origin path=%s client=%s",
@@ -438,7 +447,7 @@ async def authentication(request: Request, call_next):
             _security_headers(login_response, request.url.path)
             return login_response
     response = await call_next(request)
-    if enabled and not claims and not anonymous_csrf:
+    if not claims and not anonymous_csrf:
         forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
         response.set_cookie(
             CSRF_COOKIE,
@@ -955,6 +964,7 @@ async def recognition_workspace(
     low_confidence: bool = False,
     contradictions: bool = False,
     notice: str = "",
+    message: str = "",
 ) -> HTMLResponse:
     paths = get_paths()
     batches = db.list_batches(paths.db_file)
@@ -994,6 +1004,24 @@ async def recognition_workspace(
                 parameters,
             ).fetchall()
         ]
+        aggregate = connection.execute(
+            f"""SELECT COUNT(*) AS attempts,
+                       COALESCE(SUM(r.estimated_cost_cad),0) AS cost_cad,
+                       COALESCE(SUM(r.input_tokens),0) AS input_tokens,
+                       COALESCE(SUM(r.output_tokens),0) AS output_tokens,
+                       COALESCE(SUM(CASE WHEN r.confidence<? THEN 1 ELSE 0 END),0)
+                           AS low_confidence,
+                       COALESCE(SUM(CASE WHEN r.contradiction_flags_json<>'[]'
+                                         THEN 1 ELSE 0 END),0) AS contradictions
+                FROM recognition_results r
+                JOIN items i ON i.item_id=r.item_id
+                LEFT JOIN recognition_attempt_states s
+                  ON s.recognition_result_id=r.recognition_result_id
+                LEFT JOIN item_recognition_selection current
+                  ON current.item_id=r.item_id
+                WHERE {where}""",
+            [threshold, *parameters],
+        ).fetchone()
         jobs = [
             dict(row)
             for row in connection.execute(
@@ -1024,12 +1052,13 @@ async def recognition_workspace(
         ]
     items = db.list_items(paths.db_file, batch_id=selected) if selected else []
     totals = {
-        "attempts": len(attempts),
-        "cost_cad": sum(float(row["estimated_cost_cad"] or 0) for row in attempts),
-        "input_tokens": sum(int(row["input_tokens"] or 0) for row in attempts),
-        "output_tokens": sum(int(row["output_tokens"] or 0) for row in attempts),
-        "low_confidence": sum(float(row["confidence"] or 0) < threshold for row in attempts),
-        "contradictions": sum(str(row["contradiction_flags_json"]) != "[]" for row in attempts),
+        "attempts": int(aggregate["attempts"] or 0),
+        "cost_cad": float(aggregate["cost_cad"] or 0),
+        "input_tokens": int(aggregate["input_tokens"] or 0),
+        "output_tokens": int(aggregate["output_tokens"] or 0),
+        "low_confidence": int(aggregate["low_confidence"] or 0),
+        "contradictions": int(aggregate["contradictions"] or 0),
+        "basis": "all matching attempts; display rows are limited to the newest 250",
     }
     ladder = [
         ("baseline", configuration.value("SNAPIMS_OPENAI_BASELINE_MODEL", "")),
@@ -1039,7 +1068,22 @@ async def recognition_workspace(
     ]
     evaluated_cases: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = []
     for benchmark in benchmark_rows:
-        attempt = db.latest_recognition(paths.db_file, str(benchmark["item_id"]))
+        with db.connect(paths.db_file) as connection:
+            row = connection.execute(
+                """SELECT r.*,s.state AS attempt_state,s.accepted_at,s.accepted_by
+                   FROM recognition_results r
+                   LEFT JOIN recognition_attempt_states s
+                     ON s.recognition_result_id=r.recognition_result_id
+                   LEFT JOIN item_recognition_selection current
+                     ON current.item_id=r.item_id
+                   WHERE r.item_id=?
+                     AND (s.state='ACCEPTED'
+                          OR current.recognition_result_id=r.recognition_result_id)
+                   ORDER BY CASE WHEN s.state='ACCEPTED' THEN 0 ELSE 1 END,
+                            r.recognition_result_id DESC LIMIT 1""",
+                (str(benchmark["item_id"]),),
+            ).fetchone()
+        attempt = dict(row) if row else None
         truth = json.loads(str(benchmark["truth_json"]))
         if attempt:
             evaluated_cases.append((benchmark, truth, attempt))
@@ -1129,6 +1173,7 @@ async def recognition_workspace(
             benchmark_count=benchmark_count,
             benchmark_metrics=benchmark_metrics,
             notice=notice,
+            message=message,
             filter_state=state,
             filter_low=low_confidence,
             filter_contradictions=contradictions,
@@ -1164,12 +1209,17 @@ async def recognition_run_item(
             if started
             else "This recognition request is already queued or completed."
         )
+        return redirect(
+            f"/review?batch_id={quote(batch_id)}&item_id={quote(item_id)}&queue=ALL"
+            f"&notice={quote(notice)}"
+        )
     except Exception as exc:
-        notice = f"Recognition request was not queued: {exc}"
-    return redirect(
-        f"/review?batch_id={quote(batch_id)}&item_id={quote(item_id)}&queue=ALL"
-        f"&notice={quote(notice)}"
-    )
+        safe = safe_exception(exc, known_secrets=_configured_secrets())
+        message = f"Recognition request was not queued: {safe['safe_summary']}"
+        return redirect(
+            f"/review?batch_id={quote(batch_id)}&item_id={quote(item_id)}&queue=ALL"
+            f"&message={quote(message)}"
+        )
 
 
 @app.post("/recognition/run-batch")
@@ -1194,9 +1244,11 @@ async def recognition_run_batch(
             image_profile=image_profile,
         )
         notice = "Batch recognition queued." if started else "Batch recognition is already active."
+        return redirect(f"/recognition?batch_id={quote(batch_id)}&notice={quote(notice)}")
     except Exception as exc:
-        notice = f"Batch recognition was not queued: {exc}"
-    return redirect(f"/recognition?batch_id={quote(batch_id)}&notice={quote(notice)}")
+        safe = safe_exception(exc, known_secrets=_configured_secrets())
+        message = f"Batch recognition was not queued: {safe['safe_summary']}"
+        return redirect(f"/recognition?batch_id={quote(batch_id)}&message={quote(message)}")
 
 
 @app.post("/recognition/pause")
@@ -1264,25 +1316,34 @@ async def recognition_accept(
         db.select_recognition_attempt(
             get_paths().db_file, item_id, recognition_result_id, actor=actor
         )
+        current = db.get_item(get_paths().db_file, item_id)
+        if current is None:
+            raise KeyError(f"Unknown Item ID: {item_id}")
         errors = accept_item(
             get_paths().db_file,
             item_id,
-            price_cents=None,
-            discount_percent=0,
+            price_cents=current.get("price_cents"),
+            discount_percent=float(current.get("discount_percent") or 0),
             review_source=f"RECOGNITION_ATTEMPT:{actor}",
             replace_approved=True,
+            expected_revision=int(current["record_revision"]),
         )
         notice = (
-            "Selected attempt explicitly accepted into working fields."
+            "Selected recognition metadata accepted; Price and Discount were preserved."
             if not errors
             else "Selected attempt needs manual completion: " + "; ".join(errors)
         )
+        return redirect(
+            f"/review?batch_id={quote(batch_id)}&queue=ALL&item_id={quote(item_id)}"
+            f"&notice={quote(notice)}"
+        )
     except Exception as exc:
-        notice = f"Attempt was not accepted: {exc}"
-    return redirect(
-        f"/review?batch_id={quote(batch_id)}&queue=ALL&item_id={quote(item_id)}"
-        f"&notice={quote(notice)}"
-    )
+        safe = safe_exception(exc, known_secrets=_configured_secrets())
+        message = f"Attempt was not accepted: {safe['safe_summary']}"
+        return redirect(
+            f"/review?batch_id={quote(batch_id)}&queue=ALL&item_id={quote(item_id)}"
+            f"&message={quote(message)}"
+        )
 
 
 @app.post("/recognition/benchmark-label")
@@ -1350,6 +1411,7 @@ async def review_page(
     edit: bool = False,
     errors: str = "",
     notice: str = "",
+    message: str = "",
 ) -> HTMLResponse:
     paths = get_paths()
     batches = db.list_batches(paths.db_file)
@@ -1378,6 +1440,7 @@ async def review_page(
                 edit=edit,
                 errors=[],
                 notice=notice,
+                message=message,
                 photo_index=1,
                 health={},
                 catalog_status=None,
@@ -1455,6 +1518,7 @@ async def review_page(
             edit=edit,
             errors=decoded_errors,
             notice=notice,
+            message=message,
             photo_index=photo_index,
             conditions=CONDITIONS,
             pool_modes=POOL_MODES,
@@ -1527,9 +1591,11 @@ async def identify(
             if started
             else "Recognition could not start. Review the failure details below."
         )
+        return redirect(f"/review?batch_id={quote(batch_id)}&notice={quote(notice)}")
     except Exception as exc:
-        notice = f"Recognition could not start: {exc}"
-    return redirect(f"/review?batch_id={quote(batch_id)}&notice={quote(notice)}")
+        safe = safe_exception(exc, known_secrets=_configured_secrets())
+        message = f"Recognition could not start: {safe['safe_summary']}"
+        return redirect(f"/review?batch_id={quote(batch_id)}&message={quote(message)}")
 
 
 @app.post("/review/retry-batch")
@@ -1551,9 +1617,11 @@ async def retry_batch(
             if started
             else "Retry could not start. Review the updated failure details."
         )
+        return redirect(f"/review?batch_id={quote(batch_id)}&notice={quote(notice)}")
     except Exception as exc:
-        notice = f"Retry failed: {exc}"
-    return redirect(f"/review?batch_id={quote(batch_id)}&notice={quote(notice)}")
+        safe = safe_exception(exc, known_secrets=_configured_secrets())
+        message = f"Retry failed: {safe['safe_summary']}"
+        return redirect(f"/review?batch_id={quote(batch_id)}&message={quote(message)}")
 
 
 @app.post("/review/manual")
@@ -1596,6 +1664,7 @@ async def approve(
     price: str = Form(""),
     tag_ids: str = Form(""),
     discount: str = Form("0"),
+    revision: int = Form(...),
 ) -> RedirectResponse:
     try:
         price_cents = parse_price_cents(price, allow_blank=True)
@@ -1605,6 +1674,10 @@ async def approve(
             f"/review?batch_id={quote(batch_id)}&item_id={quote(item_id)}&edit=true&errors="
             + quote("Price or discount is invalid")
         )
+    current_before = db.get_item(get_paths().db_file, item_id)
+    if current_before is None:
+        raise HTTPException(404)
+    current_sequence = int(current_before["sequence"])
     try:
         errors = accept_item(
             get_paths().db_file,
@@ -1613,6 +1686,12 @@ async def approve(
             discount_percent=discount_percent,
             title_override=title.strip() or None,
             tag_ids=[value for value in tag_ids.split(",") if value],
+            expected_revision=revision,
+        )
+    except RuntimeError as exc:
+        return redirect(
+            f"/review?batch_id={quote(batch_id)}&item_id={quote(item_id)}&errors="
+            + quote(str(exc))
         )
     except ValueError as exc:
         return redirect(
@@ -1641,7 +1720,12 @@ async def approve(
     except Exception as exc:
         LOGGER.debug("Catalog lookup could not be queued after approval for %s: %s", item_id, exc)
     unresolved = db.list_items(get_paths().db_file, batch_id=batch_id, queue="UNRESOLVED")
-    target = unresolved[0]["item_id"] if unresolved else ""
+    after = next(
+        (row for row in unresolved if int(row["sequence"]) > current_sequence),
+        None,
+    )
+    target_row = after or (unresolved[0] if unresolved else None)
+    target = str(target_row["item_id"]) if target_row else ""
     if target:
         db.set_cursor(get_paths().db_file, batch_id, "UNRESOLVED", target)
         return redirect(
@@ -1691,13 +1775,21 @@ async def retry(
     provider: str = Form("openai"),
 ) -> RedirectResponse:
     try:
-        retry_failed_item(get_paths().db_file, item_id, provider)
-        notice = "Recognition recovered. Review the suggestion."
+        started = retry_failed_item(get_paths().db_file, item_id, provider)
+        notice = (
+            "Recognition retry queued. You can continue working while it runs."
+            if started
+            else "This recognition retry was already queued."
+        )
+        return redirect(
+            f"/review?batch_id={quote(batch_id)}&queue=UNRESOLVED&item_id={quote(item_id)}&notice={quote(notice)}"
+        )
     except Exception as exc:
-        notice = str(exc)
-    return redirect(
-        f"/review?batch_id={quote(batch_id)}&queue=UNRESOLVED&item_id={quote(item_id)}&notice={quote(notice)}"
-    )
+        safe = safe_exception(exc, known_secrets=_configured_secrets())
+        message = f"Recognition retry was not queued: {safe['safe_summary']}"
+        return redirect(
+            f"/review?batch_id={quote(batch_id)}&queue=UNRESOLVED&item_id={quote(item_id)}&message={quote(message)}"
+        )
 
 
 @app.post("/review/save")

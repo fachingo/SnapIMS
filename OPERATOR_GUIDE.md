@@ -1,82 +1,108 @@
-# SnapIMS 0.10.0 Operator Guide
+# SnapIMS 0.10.1 Operator Guide
 
-## Daily Operation
+This guide describes the v0.10.1 patch-level application. It is not the final
+v1.0 Operator Guide acceptance document.
 
-```bash
-snapims up
-snapims status
-snapims doctor
-snapims logs
-snapims restart
-snapims down
-```
+## Start and access
 
-`snapims up` is the normal startup command. It starts SnapIMS, Cloudflare Tunnel when configured, guacd, xrdp, and Guacamole Tomcat.
+Start SnapIMS using the installed launcher or service commands already documented
+for the Linux Mint host. Normal local access remains:
 
-Local URLs:
+`http://127.0.0.1:8767`
 
-- SnapIMS: `http://127.0.0.1:8767`
-- Guacamole: `http://127.0.0.1:8080/guacamole/`
+Remote access must use the approved protected endpoint. SnapIMS refuses non-local
+operation when application authentication is not configured. Host, Origin, and
+CSRF checks remain active even in local authentication-disabled mode.
 
-Remote URL after Cloudflare setup:
+## Daily workflow
 
-- `https://remote.canadavhs.ca/guacamole/`
+1. Open **Import** and select the source photo folder.
+2. Preview the batch and review item/photo/command counts and warnings.
+3. Preserve the import or choose the appropriate duplicate-batch action.
+4. Open **Recognition** or **Review** and start identification when required.
+5. In **Review**, confirm the photo and title. Adjust Price, Tags, or Discount only
+   when needed.
+6. Select **✓ Approve & Next**. SnapIMS opens the next unfinished physical sequence,
+   wrapping only at the end.
+7. Use **Edit details** only for exceptions.
+8. Use **Batch Editor** for controlled batch-wide review and corrections.
+9. Open **Publish** for validation, CSV round trip, external-review recording, and
+   Shopify simulation.
 
-## Guacamole Login
+The v0.10.1 Publish screen remains simulation-only. It does not include a live
+Shopify Draft action.
 
-Retrieve the generated Guacamole administrator credential:
+## Recognition recovery
 
-```bash
-sudo cat /etc/guacamole/snapims-admin.env
-```
+### Failed escalation after a valid baseline
 
-Log in as `snapims-admin`, then open one of the configured connections:
+SnapIMS preserves the baseline attempt and records the failed escalation as a
+partial-route warning. Review the preserved attempt; do not assume the item has no
+recognition result.
 
-- `Linux Mint Desktop`: full desktop over local RDP, clipboard enabled, Guacamole drive file transfer enabled where supported;
-- `SSH Terminal`: local SSH session with SFTP file transfer enabled where supported.
+### Retry This Item
 
-The RDP and SSH connections use the Linux operator username by default and prompt for that Linux account password when connecting.
+**Retry this item** queues a durable routed request and returns immediately. The
+request can be inspected in Recognition and Diagnostics. Duplicate clicks do not
+start parallel work for the same Item.
 
-## SnapIMS Administrator
+### Application restart
 
-Create the first SnapIMS administrator in `.env`:
+Interrupted recognition requests and Item leases become paused/recoverable. Resume
+from Recognition. Do not delete recognition rows or reset Item IDs.
 
-```bash
-snapims auth generate-secret
-snapims auth hash-password
-```
+## Concurrent or stale editing
 
-Set:
+### Quick Approve conflict
 
-```bash
-SNAPIMS_AUTH_SECRET=<generated secret>
-SNAPIMS_ADMIN_USERNAME=admin
-SNAPIMS_ADMIN_PASSWORD_HASH=<generated hash>
-```
+When the same Item was changed in another tab or session, Quick Approve is rejected
+with:
 
-Restart:
+`This item changed in another session. Reload before saving.`
 
-```bash
-snapims restart
-```
+Reload the Item, review the current authoritative values, and approve again. No
+partial stale overwrite is applied.
 
-Reset a SnapIMS password by generating a new hash, replacing `SNAPIMS_ADMIN_PASSWORD_HASH`, and restarting.
+### Batch Editor save state
 
-## Remote Desktop Troubleshooting
+Batch Editor serializes saves per Item. A yellow/dirty field remains unsaved until
+the newest value is acknowledged. A red field indicates a save conflict or error.
+Do not navigate away while dirty or in-flight changes remain; the browser warning
+is intentional.
 
-```bash
-which guacd
-systemctl status guacd
-systemctl status snapims-guacamole-tomcat
-systemctl status xrdp
-ss -ltn
-snapims status
-snapims doctor
-```
+## Recognition attempt acceptance
 
-If `remote.canadavhs.ca` does not load, check `~/.cloudflared/config.yml`,
-Cloudflare Access, and the dashboard Public Hostname for
-`remote.canadavhs.ca -> http://127.0.0.1:8080`.
+**Accept recognition metadata** applies the selected recognition identity/metadata
+while preserving the current operator-approved Price and Discount. Commercial
+values change only through the normal editable Price and Discount controls.
 
-Do not direct operators to `desktop.ims.canadavhs.ca`; it remains unresolved
-infrastructure backlog unless separately configured and verified.
+## Controlled Tags and keyboard use
+
+- `Alt+P` opens the command palette.
+- `Escape` closes the command palette or an open Tag suggestion list.
+- Arrow keys move through Tag suggestions.
+- Enter selects the active Tag suggestion.
+- Visible focus outlines identify the active control.
+
+## Shopify retry safety
+
+The existing backend draft-upload service now reconciles intended photos by stable
+SnapIMS photo identity. Unrelated Shopify media no longer satisfies completion.
+The operator-facing Publish workflow remains simulation-only in this patch.
+
+## Diagnostics
+
+Use **Diagnostics** for redacted technical details and correlation information.
+Operator pages show safe summaries. Raw SQL errors, secrets, internal paths, and
+unredacted provider responses should not appear in browser messages.
+
+## End-of-batch check
+
+- No unfinished Items unless deliberately deferred.
+- No failed or blocked Items without a documented recovery decision.
+- Price and Discount values confirmed.
+- Controlled Tags confirmed.
+- Publish simulation reviewed.
+- CSV changes previewed before apply.
+- Any checkpoint restore verified before continuing.
+- No dirty Batch Editor fields.

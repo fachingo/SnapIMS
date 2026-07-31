@@ -31,8 +31,8 @@
   <footer>SnapIMS {{ version }} · Exception-handling inventory workstation</footer>
   {% if show_nav is not defined or show_nav %}
   <dialog id="command-palette" class="command-palette">
-    <div class="palette-head"><strong>Quick Command Palette</strong><button type="button" data-command-close>×</button></div>
-    <input id="command-search" autocomplete="off" placeholder="Type a command…">
+    <div class="palette-head"><strong>Quick Command Palette</strong><button type="button" data-command-close aria-label="Close command palette">×</button></div>
+    <input id="command-search" autocomplete="off" placeholder="Type a command…" aria-label="Search commands">
     <div class="command-list">
       <a data-command href="/import">Open Import</a>
       <a data-command href="/review">Open Review</a>

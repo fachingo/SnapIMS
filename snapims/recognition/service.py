@@ -5,6 +5,7 @@ import os
 import re
 import threading
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -21,6 +22,61 @@ _ACTIVE: dict[str, threading.Thread] = {}
 _ACTIVE_REQUESTS: dict[str, threading.Thread] = {}
 _PAUSED_BATCHES: set[str] = set()
 _LOCK = threading.Lock()
+_LEASE_SECONDS = 15 * 60
+
+
+def _lease_timestamp(offset_seconds: int = 0) -> str:
+    return (datetime.now().astimezone() + timedelta(seconds=offset_seconds)).isoformat(
+        timespec="microseconds"
+    )
+
+
+def claim_item_recognition_lease(
+    db_file: Path,
+    item_id: str,
+    *,
+    owner_kind: str,
+    owner_id: str,
+    lease_seconds: int = _LEASE_SECONDS,
+) -> bool:
+    """Atomically claim one normal recognition mutation for an Item ID."""
+    if owner_kind not in {"BATCH", "REQUEST"}:
+        raise ValueError("Unsupported recognition lease owner")
+    timestamp = _lease_timestamp()
+    expires_at = _lease_timestamp(max(30, lease_seconds))
+    with db.transaction(db_file) as connection:
+        connection.execute(
+            "DELETE FROM recognition_item_leases WHERE status='PAUSED' OR expires_at<=?",
+            (timestamp,),
+        )
+        cursor = connection.execute(
+            """INSERT OR IGNORE INTO recognition_item_leases(
+                   item_id,owner_kind,owner_id,status,acquired_at,expires_at,updated_at
+               ) VALUES(?,?,?,'ACTIVE',?,?,?)""",
+            (item_id, owner_kind, owner_id, timestamp, expires_at, timestamp),
+        )
+    return cursor.rowcount == 1
+
+
+def release_item_recognition_lease(
+    db_file: Path, item_id: str, *, owner_kind: str, owner_id: str
+) -> None:
+    with db.transaction(db_file) as connection:
+        connection.execute(
+            "DELETE FROM recognition_item_leases WHERE item_id=? AND owner_kind=? AND owner_id=?",
+            (item_id, owner_kind, owner_id),
+        )
+
+
+def pause_active_recognition_leases(db_file: Path) -> int:
+    timestamp = _lease_timestamp()
+    with db.transaction(db_file) as connection:
+        cursor = connection.execute(
+            """UPDATE recognition_item_leases
+               SET status='PAUSED',expires_at=?,updated_at=? WHERE status='ACTIVE'""",
+            (timestamp, timestamp),
+        )
+    return cursor.rowcount
 
 
 def classify_recognition_error(exc: Exception) -> tuple[str, str]:
@@ -558,18 +614,49 @@ def route_item_recognition(
             and escalation_model in configuration.compatible_models()
         ):
             escalated = recognizer_for("openai", model_name=escalation_model)
-            escalation_id, _ = run_recognition(
-                db_file,
-                item_id,
-                escalated,
-                tier="escalation",
-                trigger="+".join(triggers),
-                forced_by="system-router",
-                image_profile="expanded",
-                request_id=request_id,
-                route_reason="; ".join(triggers),
-            )
-            attempt_ids.append(escalation_id)
+            try:
+                escalation_id, _ = run_recognition(
+                    db_file,
+                    item_id,
+                    escalated,
+                    tier="escalation",
+                    trigger="+".join(triggers),
+                    forced_by="system-router",
+                    image_profile="expanded",
+                    request_id=request_id,
+                    route_reason="; ".join(triggers),
+                )
+            except Exception as exc:
+                code, message = classify_recognition_error(exc)
+                db.update_item(
+                    db_file,
+                    item_id,
+                    {
+                        "recognition_status": "COMPLETE",
+                        "recognition_error": (
+                            "Escalation failed; the valid baseline attempt was preserved. "
+                            f"{message}"
+                        ),
+                    },
+                    source="RECOGNITION_PARTIAL_ROUTE",
+                )
+                try_emit_event(
+                    db_file,
+                    component="recognition",
+                    event_type="recognition.escalation_failed_baseline_preserved",
+                    severity="WARNING",
+                    item_id=item_id,
+                    provider="openai",
+                    model_name=escalation_model,
+                    recognition_tier="escalation",
+                    status="COMPLETE_WITH_WARNING",
+                    outcome=code,
+                    safe_summary=message,
+                    detail={"baseline_result_id": first_id, "routing_triggers": triggers},
+                    paths=DataPaths.from_root(db_file.parent.parent).ensure(),
+                )
+            else:
+                attempt_ids.append(escalation_id)
     return attempt_ids
 
 
@@ -582,6 +669,21 @@ def _request_worker(db_file: Path, request_id: str) -> None:
         return
     request = dict(row)
     timestamp = db.now()
+    item_id = str(request["item_id"])
+    if not claim_item_recognition_lease(
+        db_file, item_id, owner_kind="REQUEST", owner_id=request_id
+    ):
+        with db.transaction(db_file) as connection:
+            connection.execute(
+                """UPDATE recognition_requests SET status='PAUSED',updated_at=?,
+                       error_code='ITEM_BUSY',
+                       error_message='Another recognition operation already owns this item.'
+                   WHERE request_id=?""",
+                (timestamp, request_id),
+            )
+        with _LOCK:
+            _ACTIVE_REQUESTS.pop(request_id, None)
+        return
     try:
         with db.transaction(db_file) as connection:
             connection.execute(
@@ -646,6 +748,9 @@ def _request_worker(db_file: Path, request_id: str) -> None:
                 source="RECOGNITION",
             )
     finally:
+        release_item_recognition_lease(
+            db_file, item_id, owner_kind="REQUEST", owner_id=request_id
+        )
         with _LOCK:
             _ACTIVE_REQUESTS.pop(request_id, None)
 
@@ -720,6 +825,7 @@ def mark_interrupted_requests_paused(db_file: Path) -> int:
                WHERE status IN ('QUEUED','RUNNING')""",
             (db.now(),),
         )
+    pause_active_recognition_leases(db_file)
     return cursor.rowcount
 
 
@@ -836,6 +942,22 @@ def _recognition_worker(
                 status="IDENTIFYING",
                 current_item_id=item["item_id"],
             )
+            lease_owner = f"{batch_id}:{item['item_id']}"
+            if not claim_item_recognition_lease(
+                db_file,
+                str(item["item_id"]),
+                owner_kind="BATCH",
+                owner_id=lease_owner,
+            ):
+                db.upsert_recognition_job(
+                    db_file,
+                    batch_id,
+                    status="PAUSED",
+                    error_code="ITEM_BUSY",
+                    error_message="An item is already being recognized by another durable request.",
+                    error_at=db.now(),
+                )
+                return
             try:
                 route_item_recognition(
                     db_file,
@@ -848,45 +970,96 @@ def _recognition_worker(
                     image_profile=image_profile,
                 )
             except Exception as exc:
-                failed += 1
                 code, message = classify_recognition_error(exc)
                 safe = safe_exception(exc)
-                db.update_item(
-                    db_file,
-                    item["item_id"],
-                    {"recognition_status": "FAILED", "recognition_error": message},
-                    source="RECOGNITION",
+                history = db.recognition_history(db_file, str(item["item_id"]))
+                valid_attempt = next(
+                    (attempt for attempt in history if attempt["attempt_state"] != "FAILED"),
+                    None,
                 )
-                db.upsert_recognition_job(
-                    db_file,
-                    batch_id,
-                    error_code=code,
-                    error_message=message,
-                    error_at=db.now(),
-                )
-                try_emit_event(
-                    db_file,
-                    component="recognition",
-                    event_type="recognition.failed",
-                    severity="ERROR",
-                    operation_id=operation_id,
-                    batch_id=batch_id,
-                    item_id=str(item["item_id"]),
-                    provider=provider_name,
-                    model_name=getattr(provider, "model_name", lambda: "")(),
-                    attempt_number=len(
-                        db.recognition_history(db_file, str(item["item_id"]))
+                if valid_attempt is not None:
+                    recognized += 1
+                    db.update_item(
+                        db_file,
+                        item["item_id"],
+                        {
+                            "recognition_status": "COMPLETE",
+                            "recognition_error": (
+                                "A later route failed; an earlier valid attempt was preserved. "
+                                f"{message}"
+                            ),
+                        },
+                        source="RECOGNITION_PARTIAL_ROUTE",
                     )
-                    + 1,
-                    status="FAILED",
-                    outcome=code,
-                    error_class=safe["error_class"],
-                    safe_summary=message,
-                    paths=paths,
-                )
+                    db.upsert_recognition_job(
+                        db_file,
+                        batch_id,
+                        error_code="PARTIAL_ROUTE_FAILURE",
+                        error_message=message,
+                        error_at=db.now(),
+                    )
+                    try_emit_event(
+                        db_file,
+                        component="recognition",
+                        event_type="recognition.partial_route_failure",
+                        severity="WARNING",
+                        operation_id=operation_id,
+                        batch_id=batch_id,
+                        item_id=str(item["item_id"]),
+                        provider=provider_name,
+                        model_name=getattr(provider, "model_name", lambda: "")(),
+                        status="COMPLETE_WITH_WARNING",
+                        outcome="PARTIAL_ROUTE_FAILURE",
+                        error_class=safe["error_class"],
+                        safe_summary=message,
+                        detail={"preserved_result_id": valid_attempt["recognition_result_id"]},
+                        paths=paths,
+                    )
+                else:
+                    failed += 1
+                    db.update_item(
+                        db_file,
+                        item["item_id"],
+                        {"recognition_status": "FAILED", "recognition_error": message},
+                        source="RECOGNITION",
+                    )
+                    db.upsert_recognition_job(
+                        db_file,
+                        batch_id,
+                        error_code=code,
+                        error_message=message,
+                        error_at=db.now(),
+                    )
+                    try_emit_event(
+                        db_file,
+                        component="recognition",
+                        event_type="recognition.failed",
+                        severity="ERROR",
+                        operation_id=operation_id,
+                        batch_id=batch_id,
+                        item_id=str(item["item_id"]),
+                        provider=provider_name,
+                        model_name=getattr(provider, "model_name", lambda: "")(),
+                        attempt_number=len(
+                            db.recognition_history(db_file, str(item["item_id"]))
+                        )
+                        + 1,
+                        status="FAILED",
+                        outcome=code,
+                        error_class=safe["error_class"],
+                        safe_summary=message,
+                        paths=paths,
+                    )
             else:
                 recognized += 1
                 db.upsert_recognition_job(db_file, batch_id, last_success_at=db.now())
+            finally:
+                release_item_recognition_lease(
+                    db_file,
+                    str(item["item_id"]),
+                    owner_kind="BATCH",
+                    owner_id=lease_owner,
+                )
             completed = recognized + failed
             db.upsert_recognition_job(
                 db_file,
@@ -1099,48 +1272,21 @@ def pause_batch_recognition(db_file: Path, batch_id: str) -> bool:
     return True
 
 
-def retry_failed_item(db_file: Path, item_id: str, provider_name: str = "openai") -> None:
-    require_provider_allowed(provider_name)
-    providers = recognizer_registry()
-    if provider_name not in providers:
-        raise KeyError(f"Unknown or disabled provider: {provider_name}")
-    provider = providers[provider_name]
-    available, reason = provider.available()
-    if not available:
-        raise RuntimeError(reason)
-    db.update_item(
+def retry_failed_item(
+    db_file: Path, item_id: str, provider_name: str = "openai"
+) -> bool:
+    """Queue the durable Phase-4 routed retry and return immediately."""
+    request_id = uuid4().hex
+    return queue_item_recognition(
         db_file,
         item_id,
-        {"recognition_status": "PENDING", "recognition_error": ""},
-        source="SYSTEM_RECOVERY",
+        request_id=request_id,
+        idempotency_key=f"retry:{item_id}:{request_id}",
+        provider_name=provider_name,
+        trigger="FAILED_ITEM_RETRY",
+        forced_by="operator",
+        image_profile="standard",
     )
-    item_before = db.get_item(db_file, item_id)
-    try_emit_event(
-        db_file,
-        component="recognition",
-        event_type="recognition.retried",
-        operation_id=f"recognition:{item_before['batch_id']}" if item_before else "",
-        batch_id=str(item_before["batch_id"]) if item_before else "",
-        item_id=item_id,
-        provider=provider_name,
-        status="RETRYING",
-        paths=DataPaths.from_root(db_file.parent.parent).ensure(),
-    )
-    run_recognition(db_file, item_id, provider)
-    item = db.get_item(db_file, item_id)
-    if item:
-        batch_id = item["batch_id"]
-        items, recognized, failed = _job_counts(db_file, batch_id)
-        status = "COMPLETE_WITH_FAILURES" if failed else "COMPLETE"
-        values: dict[str, Any] = {
-            "status": status,
-            "completed": recognized + failed,
-            "recognized": recognized,
-            "failed": failed,
-        }
-        if not failed:
-            values.update(error_code="", error_message="", error_at=None)
-        db.upsert_recognition_job(db_file, batch_id, **values)
 
 
 def skip_batch_recognition(db_file: Path, batch_id: str) -> None:
@@ -1373,6 +1519,7 @@ def accept_item(
     title_override: str | None = None,
     tag_ids: list[str] | None = None,
     replace_approved: bool = False,
+    expected_revision: int | None = None,
 ) -> list[str]:
     item = db.get_item(db_file, item_id)
     if item is None:
@@ -1397,6 +1544,11 @@ def accept_item(
         if current is None:
             raise KeyError(f"Unknown Item ID: {item_id}")
         current_item = dict(current)
+        if (
+            expected_revision is not None
+            and int(current_item["record_revision"]) != expected_revision
+        ):
+            raise RuntimeError("This item changed in another session. Reload before saving.")
         accept_item_in_connection(
             connection,
             db_file,

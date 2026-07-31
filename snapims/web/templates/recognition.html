@@ -5,7 +5,7 @@
   <div><p class="eyebrow">RECOGNITION CONTROL</p><h1>Recognition</h1><p>Route bounded attempts, compare immutable evidence, and keep operator approval authoritative.</p></div>
   <a class="button" href="/settings#recognition">Model settings</a>
 </div>
-{% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}
+{% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}{% if message %}<div class="alert error">{{ message }}</div>{% endif %}
 <section class="metric-grid">
   <article><b>{{ totals.attempts }}</b><span>Filtered attempts</span></article>
   <article><b>{{ '%.4f'|format(totals.cost_cad) }}</b><span>Estimated CAD</span></article>

@@ -73,3 +73,11 @@ Guacamole credentials are separate. The installer stores the generated Guacamole
 ## Release Status
 
 Version 0.10.0 is a **minor** infrastructure release. Production 1.0.0 still requires final live OpenAI, Shopify, physical CSV reconciliation, and operator acceptance gates.
+
+
+## v0.10.1 Patch Candidate
+
+The v0.10.1 audit-remediation code is staged but the active package version must
+remain 0.10.0 until `scripts/verify_v0101.py` and targeted browser verification
+pass. Run `scripts/finalize_v0101.py` only after those gates succeed. The patch
+does not add a live Shopify Publish action and does not claim v1.0 readiness.

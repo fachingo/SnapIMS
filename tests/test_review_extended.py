@@ -63,7 +63,13 @@ def test_no_second_confirmation_in_http_flow(tmp_path: Path, data_paths) -> None
     with TestClient(app) as client:
         response = client.post(
             "/review/approve",
-            data={"batch_id": result.batch_id, "item_id": item["item_id"], "price": "9.99", "discount": "0"},
+            data={
+                "batch_id": result.batch_id,
+                "item_id": item["item_id"],
+                "price": "9.99",
+                "discount": "0",
+                "revision": str(item["record_revision"]),
+            },
             follow_redirects=False,
         )
     assert response.status_code == 303

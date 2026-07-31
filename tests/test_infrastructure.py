@@ -167,7 +167,10 @@ def test_csrf_origin_session_binding_and_security_headers(
         "SNAPIMS_ADMIN_PASSWORD_HASH", hash_password("correct horse battery")
     )
 
-    with TestClient(app) as first, TestClient(app) as second:
+    with (
+        TestClient(app, auto_csrf=False) as first,
+        TestClient(app, auto_csrf=False) as second,
+    ):
         login_page = first.get("/login")
         token = _csrf(login_page.text)
         assert login_page.headers["cache-control"] == "no-store"

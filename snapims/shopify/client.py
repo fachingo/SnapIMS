@@ -178,18 +178,35 @@ class ShopifyClient:
             self.transport.upload(target["url"], target["parameters"], path)
         return [target["resourceUrl"] for target in targets]
 
-    def attach_media(self, product_id: str, resource_urls: list[str], title: str) -> None:
-        media = [{"originalSource": url, "alt": f"{title} - image {index}", "mediaContentType": "IMAGE"} for index, url in enumerate(resource_urls, start=1)]
+    def attach_media(
+        self, product_id: str, resource_urls: list[str], media_identifiers: list[str]
+    ) -> None:
+        if len(resource_urls) != len(media_identifiers):
+            raise ShopifyAPIError("Shopify media identity count did not match staged uploads")
+        media = [
+            {"originalSource": url, "alt": identifier, "mediaContentType": "IMAGE"}
+            for url, identifier in zip(resource_urls, media_identifiers, strict=True)
+        ]
         self._call(
             """mutation AttachMedia($product:ProductUpdateInput!,$media:[CreateMediaInput!]){productUpdate(product:$product,media:$media){product{id} userErrors{field message}}}""",
             {"product": {"id": product_id}, "media": media},
             "productUpdate",
         )
 
-    def media_status(self, product_id: str) -> list[str]:
+    def media_records(self, product_id: str) -> list[dict[str, str]]:
         payload = self.transport.graphql(
-            """query MediaStatus($id:ID!){product(id:$id){media(first:100){nodes{preview{status}}}}}""",
+            """query MediaStatus($id:ID!){product(id:$id){media(first:100){nodes{id alt preview{status}}}}}""",
             {"id": product_id},
         )
         nodes = payload.get("data", {}).get("product", {}).get("media", {}).get("nodes", [])
-        return [str(node.get("preview", {}).get("status", "UNKNOWN")) for node in nodes]
+        return [
+            {
+                "id": str(node.get("id") or ""),
+                "alt": str(node.get("alt") or ""),
+                "status": str(node.get("preview", {}).get("status", "UNKNOWN")),
+            }
+            for node in nodes
+        ]
+
+    def media_status(self, product_id: str) -> list[str]:
+        return [record["status"] for record in self.media_records(product_id)]
