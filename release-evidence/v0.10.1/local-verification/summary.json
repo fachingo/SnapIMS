@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-29T23:10:37.367454-06:00",
+  "generated_at": "2026-07-30T20:54:26.418116-06:00",
   "version": "0.10.1",
   "results": [
     {
@@ -11,8 +11,8 @@
         "-q",
         "tests/test_v0101_regressions.py"
       ],
-      "status": "FAIL",
-      "exit": 1
+      "status": "PASS",
+      "exit": 0
     },
     {
       "name": "full-pytest",
@@ -22,8 +22,8 @@
         "pytest",
         "-q"
       ],
-      "status": "FAIL",
-      "exit": 1
+      "status": "PASS",
+      "exit": 0
     },
     {
       "name": "ruff",
@@ -34,8 +34,8 @@
         "check",
         "."
       ],
-      "status": "FAIL",
-      "exit": 1
+      "status": "PASS",
+      "exit": 0
     },
     {
       "name": "mypy",
@@ -107,8 +107,22 @@
     },
     {
       "name": "database",
-      "status": "FAIL",
-      "error": "IntegrityError: recognition attempts are immutable"
+      "status": "PASS",
+      "schema": 13,
+      "integrity": "ok",
+      "foreign_key_failures": 0,
+      "manifest": {
+        "ok": true,
+        "problems": [],
+        "schema_version": 13
+      },
+      "counts": {
+        "batches": 4,
+        "items": 32,
+        "photos": 173,
+        "recognition_results": 13
+      },
+      "database": "/home/isaiah/SnapIMS-data/database/inventory.sqlite3"
     },
     {
       "name": "hygiene",

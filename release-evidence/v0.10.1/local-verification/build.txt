@@ -16,107 +16,107 @@ writing top-level names to snapims.egg-info/top_level.txt
 reading manifest file 'snapims.egg-info/SOURCES.txt'
 writing manifest file 'snapims.egg-info/SOURCES.txt'
 running check
-creating snapims-0.10.0
-creating snapims-0.10.0/snapims
-creating snapims-0.10.0/snapims.egg-info
-creating snapims-0.10.0/snapims/catalog
-creating snapims-0.10.0/snapims/recognition
-creating snapims-0.10.0/snapims/shopify
-creating snapims-0.10.0/snapims/web
-creating snapims-0.10.0/snapims/web/static
-creating snapims-0.10.0/snapims/web/templates
-creating snapims-0.10.0/tests
-copying files to snapims-0.10.0...
-copying README.md -> snapims-0.10.0
-copying pyproject.toml -> snapims-0.10.0
-copying snapims/__init__.py -> snapims-0.10.0/snapims
-copying snapims/auth.py -> snapims-0.10.0/snapims
-copying snapims/bulk.py -> snapims-0.10.0/snapims
-copying snapims/cli.py -> snapims-0.10.0/snapims
-copying snapims/config.py -> snapims-0.10.0/snapims
-copying snapims/db.py -> snapims-0.10.0/snapims
-copying snapims/demo.py -> snapims-0.10.0/snapims
-copying snapims/folder_picker.py -> snapims-0.10.0/snapims
-copying snapims/images.py -> snapims-0.10.0/snapims
-copying snapims/interpreter.py -> snapims-0.10.0/snapims
-copying snapims/inventory.py -> snapims-0.10.0/snapims
-copying snapims/manager.py -> snapims-0.10.0/snapims
-copying snapims/manifests.py -> snapims-0.10.0/snapims
-copying snapims/models.py -> snapims-0.10.0/snapims
-copying snapims/money.py -> snapims-0.10.0/snapims
-copying snapims/observability.py -> snapims-0.10.0/snapims
-copying snapims/pipeline.py -> snapims-0.10.0/snapims
-copying snapims/processor.py -> snapims-0.10.0/snapims
-copying snapims/protocol.py -> snapims-0.10.0/snapims
-copying snapims/provider_probes.py -> snapims-0.10.0/snapims
-copying snapims/qr.py -> snapims-0.10.0/snapims
-copying snapims/runtime.py -> snapims-0.10.0/snapims
-copying snapims/settings.py -> snapims-0.10.0/snapims
-copying snapims/sorter.py -> snapims-0.10.0/snapims
-copying snapims.egg-info/PKG-INFO -> snapims-0.10.0/snapims.egg-info
-copying snapims.egg-info/SOURCES.txt -> snapims-0.10.0/snapims.egg-info
-copying snapims.egg-info/dependency_links.txt -> snapims-0.10.0/snapims.egg-info
-copying snapims.egg-info/entry_points.txt -> snapims-0.10.0/snapims.egg-info
-copying snapims.egg-info/requires.txt -> snapims-0.10.0/snapims.egg-info
-copying snapims.egg-info/top_level.txt -> snapims-0.10.0/snapims.egg-info
-copying snapims/catalog/__init__.py -> snapims-0.10.0/snapims/catalog
-copying snapims/catalog/admin.py -> snapims-0.10.0/snapims/catalog
-copying snapims/catalog/db.py -> snapims-0.10.0/snapims/catalog
-copying snapims/catalog/models.py -> snapims-0.10.0/snapims/catalog
-copying snapims/catalog/normalization.py -> snapims-0.10.0/snapims/catalog
-copying snapims/catalog/service.py -> snapims-0.10.0/snapims/catalog
-copying snapims/catalog/wikipedia.py -> snapims-0.10.0/snapims/catalog
-copying snapims/recognition/__init__.py -> snapims-0.10.0/snapims/recognition
-copying snapims/recognition/base.py -> snapims-0.10.0/snapims/recognition
-copying snapims/recognition/providers.py -> snapims-0.10.0/snapims/recognition
-copying snapims/recognition/service.py -> snapims-0.10.0/snapims/recognition
-copying snapims/shopify/__init__.py -> snapims-0.10.0/snapims/shopify
-copying snapims/shopify/client.py -> snapims-0.10.0/snapims/shopify
-copying snapims/shopify/service.py -> snapims-0.10.0/snapims/shopify
-copying snapims/web/__init__.py -> snapims-0.10.0/snapims/web
-copying snapims/web/app.py -> snapims-0.10.0/snapims/web
-copying snapims/web/static/app.css -> snapims-0.10.0/snapims/web/static
-copying snapims/web/static/app.js -> snapims-0.10.0/snapims/web/static
-copying snapims/web/static/favicon.svg -> snapims-0.10.0/snapims/web/static
-copying snapims/web/templates/base.html -> snapims-0.10.0/snapims/web/templates
-copying snapims/web/templates/batch_editor.html -> snapims-0.10.0/snapims/web/templates
-copying snapims/web/templates/csv_diff.html -> snapims-0.10.0/snapims/web/templates
-copying snapims/web/templates/diagnostics.html -> snapims-0.10.0/snapims/web/templates
-copying snapims/web/templates/home.html -> snapims-0.10.0/snapims/web/templates
-copying snapims/web/templates/import.html -> snapims-0.10.0/snapims/web/templates
-copying snapims/web/templates/login.html -> snapims-0.10.0/snapims/web/templates
-copying snapims/web/templates/publish.html -> snapims-0.10.0/snapims/web/templates
-copying snapims/web/templates/recognition.html -> snapims-0.10.0/snapims/web/templates
-copying snapims/web/templates/review.html -> snapims-0.10.0/snapims/web/templates
-copying snapims/web/templates/settings.html -> snapims-0.10.0/snapims/web/templates
-copying tests/test_catalog_admin.py -> snapims-0.10.0/tests
-copying tests/test_catalog_live_wikipedia.py -> snapims-0.10.0/tests
-copying tests/test_catalog_module.py -> snapims-0.10.0/tests
-copying tests/test_csv.py -> snapims-0.10.0/tests
-copying tests/test_csv_extended.py -> snapims-0.10.0/tests
-copying tests/test_db_migration.py -> snapims-0.10.0/tests
-copying tests/test_infrastructure.py -> snapims-0.10.0/tests
-copying tests/test_observability.py -> snapims-0.10.0/tests
-copying tests/test_processor.py -> snapims-0.10.0/tests
-copying tests/test_protocol.py -> snapims-0.10.0/tests
-copying tests/test_protocol_extended.py -> snapims-0.10.0/tests
-copying tests/test_provider_probes.py -> snapims-0.10.0/tests
-copying tests/test_recognition_extended.py -> snapims-0.10.0/tests
-copying tests/test_review.py -> snapims-0.10.0/tests
-copying tests/test_review_extended.py -> snapims-0.10.0/tests
-copying tests/test_secure_settings.py -> snapims-0.10.0/tests
-copying tests/test_settings_web.py -> snapims-0.10.0/tests
-copying tests/test_shopify.py -> snapims-0.10.0/tests
-copying tests/test_v0101_regressions.py -> snapims-0.10.0/tests
-copying tests/test_v010_phase4_recognition.py -> snapims-0.10.0/tests
-copying tests/test_v060_operator_workstation.py -> snapims-0.10.0/tests
-copying tests/test_v061_stabilization.py -> snapims-0.10.0/tests
-copying tests/test_v070_workstation.py -> snapims-0.10.0/tests
-copying tests/test_web.py -> snapims-0.10.0/tests
-copying snapims.egg-info/SOURCES.txt -> snapims-0.10.0/snapims.egg-info
-Writing snapims-0.10.0/setup.cfg
+creating snapims-0.10.1
+creating snapims-0.10.1/snapims
+creating snapims-0.10.1/snapims.egg-info
+creating snapims-0.10.1/snapims/catalog
+creating snapims-0.10.1/snapims/recognition
+creating snapims-0.10.1/snapims/shopify
+creating snapims-0.10.1/snapims/web
+creating snapims-0.10.1/snapims/web/static
+creating snapims-0.10.1/snapims/web/templates
+creating snapims-0.10.1/tests
+copying files to snapims-0.10.1...
+copying README.md -> snapims-0.10.1
+copying pyproject.toml -> snapims-0.10.1
+copying snapims/__init__.py -> snapims-0.10.1/snapims
+copying snapims/auth.py -> snapims-0.10.1/snapims
+copying snapims/bulk.py -> snapims-0.10.1/snapims
+copying snapims/cli.py -> snapims-0.10.1/snapims
+copying snapims/config.py -> snapims-0.10.1/snapims
+copying snapims/db.py -> snapims-0.10.1/snapims
+copying snapims/demo.py -> snapims-0.10.1/snapims
+copying snapims/folder_picker.py -> snapims-0.10.1/snapims
+copying snapims/images.py -> snapims-0.10.1/snapims
+copying snapims/interpreter.py -> snapims-0.10.1/snapims
+copying snapims/inventory.py -> snapims-0.10.1/snapims
+copying snapims/manager.py -> snapims-0.10.1/snapims
+copying snapims/manifests.py -> snapims-0.10.1/snapims
+copying snapims/models.py -> snapims-0.10.1/snapims
+copying snapims/money.py -> snapims-0.10.1/snapims
+copying snapims/observability.py -> snapims-0.10.1/snapims
+copying snapims/pipeline.py -> snapims-0.10.1/snapims
+copying snapims/processor.py -> snapims-0.10.1/snapims
+copying snapims/protocol.py -> snapims-0.10.1/snapims
+copying snapims/provider_probes.py -> snapims-0.10.1/snapims
+copying snapims/qr.py -> snapims-0.10.1/snapims
+copying snapims/runtime.py -> snapims-0.10.1/snapims
+copying snapims/settings.py -> snapims-0.10.1/snapims
+copying snapims/sorter.py -> snapims-0.10.1/snapims
+copying snapims.egg-info/PKG-INFO -> snapims-0.10.1/snapims.egg-info
+copying snapims.egg-info/SOURCES.txt -> snapims-0.10.1/snapims.egg-info
+copying snapims.egg-info/dependency_links.txt -> snapims-0.10.1/snapims.egg-info
+copying snapims.egg-info/entry_points.txt -> snapims-0.10.1/snapims.egg-info
+copying snapims.egg-info/requires.txt -> snapims-0.10.1/snapims.egg-info
+copying snapims.egg-info/top_level.txt -> snapims-0.10.1/snapims.egg-info
+copying snapims/catalog/__init__.py -> snapims-0.10.1/snapims/catalog
+copying snapims/catalog/admin.py -> snapims-0.10.1/snapims/catalog
+copying snapims/catalog/db.py -> snapims-0.10.1/snapims/catalog
+copying snapims/catalog/models.py -> snapims-0.10.1/snapims/catalog
+copying snapims/catalog/normalization.py -> snapims-0.10.1/snapims/catalog
+copying snapims/catalog/service.py -> snapims-0.10.1/snapims/catalog
+copying snapims/catalog/wikipedia.py -> snapims-0.10.1/snapims/catalog
+copying snapims/recognition/__init__.py -> snapims-0.10.1/snapims/recognition
+copying snapims/recognition/base.py -> snapims-0.10.1/snapims/recognition
+copying snapims/recognition/providers.py -> snapims-0.10.1/snapims/recognition
+copying snapims/recognition/service.py -> snapims-0.10.1/snapims/recognition
+copying snapims/shopify/__init__.py -> snapims-0.10.1/snapims/shopify
+copying snapims/shopify/client.py -> snapims-0.10.1/snapims/shopify
+copying snapims/shopify/service.py -> snapims-0.10.1/snapims/shopify
+copying snapims/web/__init__.py -> snapims-0.10.1/snapims/web
+copying snapims/web/app.py -> snapims-0.10.1/snapims/web
+copying snapims/web/static/app.css -> snapims-0.10.1/snapims/web/static
+copying snapims/web/static/app.js -> snapims-0.10.1/snapims/web/static
+copying snapims/web/static/favicon.svg -> snapims-0.10.1/snapims/web/static
+copying snapims/web/templates/base.html -> snapims-0.10.1/snapims/web/templates
+copying snapims/web/templates/batch_editor.html -> snapims-0.10.1/snapims/web/templates
+copying snapims/web/templates/csv_diff.html -> snapims-0.10.1/snapims/web/templates
+copying snapims/web/templates/diagnostics.html -> snapims-0.10.1/snapims/web/templates
+copying snapims/web/templates/home.html -> snapims-0.10.1/snapims/web/templates
+copying snapims/web/templates/import.html -> snapims-0.10.1/snapims/web/templates
+copying snapims/web/templates/login.html -> snapims-0.10.1/snapims/web/templates
+copying snapims/web/templates/publish.html -> snapims-0.10.1/snapims/web/templates
+copying snapims/web/templates/recognition.html -> snapims-0.10.1/snapims/web/templates
+copying snapims/web/templates/review.html -> snapims-0.10.1/snapims/web/templates
+copying snapims/web/templates/settings.html -> snapims-0.10.1/snapims/web/templates
+copying tests/test_catalog_admin.py -> snapims-0.10.1/tests
+copying tests/test_catalog_live_wikipedia.py -> snapims-0.10.1/tests
+copying tests/test_catalog_module.py -> snapims-0.10.1/tests
+copying tests/test_csv.py -> snapims-0.10.1/tests
+copying tests/test_csv_extended.py -> snapims-0.10.1/tests
+copying tests/test_db_migration.py -> snapims-0.10.1/tests
+copying tests/test_infrastructure.py -> snapims-0.10.1/tests
+copying tests/test_observability.py -> snapims-0.10.1/tests
+copying tests/test_processor.py -> snapims-0.10.1/tests
+copying tests/test_protocol.py -> snapims-0.10.1/tests
+copying tests/test_protocol_extended.py -> snapims-0.10.1/tests
+copying tests/test_provider_probes.py -> snapims-0.10.1/tests
+copying tests/test_recognition_extended.py -> snapims-0.10.1/tests
+copying tests/test_review.py -> snapims-0.10.1/tests
+copying tests/test_review_extended.py -> snapims-0.10.1/tests
+copying tests/test_secure_settings.py -> snapims-0.10.1/tests
+copying tests/test_settings_web.py -> snapims-0.10.1/tests
+copying tests/test_shopify.py -> snapims-0.10.1/tests
+copying tests/test_v0101_regressions.py -> snapims-0.10.1/tests
+copying tests/test_v010_phase4_recognition.py -> snapims-0.10.1/tests
+copying tests/test_v060_operator_workstation.py -> snapims-0.10.1/tests
+copying tests/test_v061_stabilization.py -> snapims-0.10.1/tests
+copying tests/test_v070_workstation.py -> snapims-0.10.1/tests
+copying tests/test_web.py -> snapims-0.10.1/tests
+copying snapims.egg-info/SOURCES.txt -> snapims-0.10.1/snapims.egg-info
+Writing snapims-0.10.1/setup.cfg
 Creating tar archive
-removing 'snapims-0.10.0' (and everything under it)
+removing 'snapims-0.10.1' (and everything under it)
 running egg_info
 writing snapims.egg-info/PKG-INFO
 writing dependency_links to snapims.egg-info/dependency_links.txt
@@ -263,10 +263,10 @@ copying build/lib/snapims/bulk.py -> build/bdist.linux-x86_64/wheel/./snapims
 copying build/lib/snapims/runtime.py -> build/bdist.linux-x86_64/wheel/./snapims
 copying build/lib/snapims/qr.py -> build/bdist.linux-x86_64/wheel/./snapims
 running install_egg_info
-Copying snapims.egg-info to build/bdist.linux-x86_64/wheel/./snapims-0.10.0-py3.12.egg-info
+Copying snapims.egg-info to build/bdist.linux-x86_64/wheel/./snapims-0.10.1-py3.12.egg-info
 running install_scripts
-creating build/bdist.linux-x86_64/wheel/snapims-0.10.0.dist-info/WHEEL
-creating '/home/isaiah/Projects/SnapIMS/dist/.tmp-faruwkaj/snapims-0.10.0-py3-none-any.whl' and adding 'build/bdist.linux-x86_64/wheel' to it
+creating build/bdist.linux-x86_64/wheel/snapims-0.10.1.dist-info/WHEEL
+creating '/home/isaiah/Projects/SnapIMS/dist/.tmp-8824csv2/snapims-0.10.1-py3-none-any.whl' and adding 'build/bdist.linux-x86_64/wheel' to it
 adding 'snapims/__init__.py'
 adding 'snapims/auth.py'
 adding 'snapims/bulk.py'
@@ -321,13 +321,13 @@ adding 'snapims/web/templates/publish.html'
 adding 'snapims/web/templates/recognition.html'
 adding 'snapims/web/templates/review.html'
 adding 'snapims/web/templates/settings.html'
-adding 'snapims-0.10.0.dist-info/METADATA'
-adding 'snapims-0.10.0.dist-info/WHEEL'
-adding 'snapims-0.10.0.dist-info/entry_points.txt'
-adding 'snapims-0.10.0.dist-info/top_level.txt'
-adding 'snapims-0.10.0.dist-info/RECORD'
+adding 'snapims-0.10.1.dist-info/METADATA'
+adding 'snapims-0.10.1.dist-info/WHEEL'
+adding 'snapims-0.10.1.dist-info/entry_points.txt'
+adding 'snapims-0.10.1.dist-info/top_level.txt'
+adding 'snapims-0.10.1.dist-info/RECORD'
 removing build/bdist.linux-x86_64/wheel
-Successfully built snapims-0.10.0.tar.gz and snapims-0.10.0-py3-none-any.whl
+Successfully built snapims-0.10.1.tar.gz and snapims-0.10.1-py3-none-any.whl
 * Getting build dependencies for sdist...
 * Building sdist...
 * Building wheel from sdist

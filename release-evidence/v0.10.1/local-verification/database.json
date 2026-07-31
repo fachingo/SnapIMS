@@ -1,4 +1,18 @@
 {
-  "status": "FAIL",
-  "error": "IntegrityError: recognition attempts are immutable"
+  "status": "PASS",
+  "schema": 13,
+  "integrity": "ok",
+  "foreign_key_failures": 0,
+  "manifest": {
+    "ok": true,
+    "problems": [],
+    "schema_version": 13
+  },
+  "counts": {
+    "batches": 4,
+    "items": 32,
+    "photos": 173,
+    "recognition_results": 13
+  },
+  "database": "/home/isaiah/SnapIMS-data/database/inventory.sqlite3"
 }
