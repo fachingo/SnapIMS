@@ -1,0 +1,85 @@
+ ARCHITECTURE.md                                    |  19 +-
+ BROWSER_VERIFICATION.md                            |  42 ++-
+ DEPLOYMENT_GUIDE.md                                |  16 +-
+ DEVELOPER_GUIDE.md                                 |  18 +-
+ DOCUMENTATION_VERIFICATION.md                      |  29 +-
+ END_OF_BATCH_CHECKLIST.md                          |  26 +-
+ IMPORT_FIXTURE_MATRIX.md                           |   2 +-
+ INSTALLATION_GUIDE.md                              |  35 +-
+ OPERATOR_GUIDE.md                                  | 112 ++----
+ PERFORMANCE_REPORT.md                              |  53 ++-
+ PRODUCTION_READINESS.md                            |  42 +--
+ README.md                                          |  67 ++--
+ RECOVERY_PROCEDURES.md                             |  28 +-
+ RELEASE_NOTES.md                                   |  81 ++---
+ ROLLBACK.md                                        |   8 +-
+ SCREENSHOT_INDEX.md                                |  23 +-
+ SNAPIMS_PRE_1_0_ROADMAP_V0130.md                   |   5 -
+ SnapIMS_Operator_Guide_v0.13.0.docx                | Bin 1930839 -> 0 bytes
+ SnapIMS_Operator_Guide_v0.13.0.pdf                 | Bin 1478109 -> 0 bytes
+ TEST_RESULTS.md                                    |  43 ++-
+ browser-evidence/v0.13.0/01-home-desktop.png       | Bin 161441 -> 0 bytes
+ .../v0.13.0/02-import-folders-desktop.png          | Bin 238990 -> 0 bytes
+ browser-evidence/v0.13.0/03-import-progress.png    | Bin 353218 -> 0 bytes
+ .../v0.13.0/04-import-preview-desktop.png          | Bin 2471241 -> 0 bytes
+ .../v0.13.0/04a-import-preview-viewport.png        | Bin 215211 -> 0 bytes
+ .../v0.13.0/04b-import-preview-commit.png          | Bin 101254 -> 0 bytes
+ browser-evidence/v0.13.0/05-import-complete.png    | Bin 2463395 -> 0 bytes
+ .../v0.13.0/06-bulk-editor-identities.png          | Bin 459372 -> 0 bytes
+ browser-evidence/v0.13.0/07-import-mobile.png      | Bin 173307 -> 0 bytes
+ browser-evidence/v0.13.0/08-restart-durability.png | Bin 442050 -> 0 bytes
+ browser-evidence/v0.13.0/browser-verification.json |  27 --
+ browser-evidence/v0.13.0/server.log                | 121 -------
+ dist/snapims-0.13.0-py3-none-any.whl               | Bin 291265 -> 0 bytes
+ .../SnapIMS_v0.13.0_Complete_Operating_Manual.docx | Bin 1932257 -> 0 bytes
+ docs/SnapIMS_v0.13.0_Complete_Operating_Manual.pdf | Bin 1509366 -> 0 bytes
+ docs/SnapIMS_v0.13.0_Day-to-Day_Guide.docx         | Bin 1339939 -> 0 bytes
+ docs/SnapIMS_v0.13.0_Day-to-Day_Guide.pdf          | Bin 1015181 -> 0 bytes
+ docs/SnapIMS_v0.13.0_Operator_Guide.docx           | Bin 1930839 -> 0 bytes
+ docs/SnapIMS_v0.13.0_Operator_Guide.pdf            | Bin 1478109 -> 0 bytes
+ install_v0130.sh                                   |  85 -----
+ pyproject.toml                                     |   2 +-
+ .../v0.13.0/installer-verification.json            | 107 ------
+ release-evidence/v0.13.0/performance.json          |  48 ---
+ release-evidence/v0.13.0/test-results.json         |  34 --
+ scripts/benchmark_import_v0130.py                  | 195 ----------
+ scripts/browser_verify_v0130.py                    | 216 -----------
+ scripts/build_guides_v0130.py                      | 397 ---------------------
+ scripts/build_manifest_v0130.py                    |  84 -----
+ scripts/generate_import_fixture_sets_v0130.py      | 202 -----------
+ scripts/verify_release_v0130.py                    | 333 -----------------
+ snapims/__init__.py                                |   2 +-
+ snapims/__pycache__/__init__.cpython-313.pyc       | Bin 414 -> 414 bytes
+ snapims/__pycache__/bulk.cpython-313.pyc           | Bin 12685 -> 13783 bytes
+ snapims/__pycache__/cli.cpython-313.pyc            | Bin 41709 -> 43824 bytes
+ snapims/__pycache__/db.cpython-313.pyc             | Bin 164612 -> 175395 bytes
+ snapims/__pycache__/import_v0130.cpython-313.pyc   | Bin 58764 -> 62564 bytes
+ snapims/__pycache__/manager.cpython-313.pyc        | Bin 29898 -> 31506 bytes
+ snapims/__pycache__/processor.cpython-313.pyc      | Bin 45870 -> 46376 bytes
+ snapims/bulk.py                                    |  20 +-
+ snapims/catalog/__pycache__/db.cpython-313.pyc     | Bin 32588 -> 33666 bytes
+ snapims/catalog/db.py                              |  30 +-
+ snapims/cli.py                                     |  31 +-
+ snapims/db.py                                      | 356 ++++++++++++++----
+ snapims/import_v0130.py                            | 136 +++++--
+ snapims/manager.py                                 |  77 ++--
+ .../pricing/__pycache__/database.cpython-313.pyc   | Bin 19648 -> 19949 bytes
+ .../pricing/__pycache__/throttle.cpython-313.pyc   | Bin 7230 -> 7288 bytes
+ .../pricing/__pycache__/workflow.cpython-313.pyc   | Bin 81747 -> 82040 bytes
+ snapims/pricing/database.py                        |  11 +-
+ snapims/pricing/throttle.py                        |   5 +-
+ snapims/pricing/workflow.py                        |  11 +-
+ snapims/processor.py                               |   7 +
+ snapims/web/__pycache__/app.cpython-313.pyc        | Bin 170012 -> 171125 bytes
+ snapims/web/app.py                                 |  84 ++++-
+ snapims/web/static/app.css                         |   1 +
+ snapims/web/static/app.js                          |  46 ++-
+ snapims/web/templates/batch_editor.html            |  25 +-
+ snapims/web/templates/publish.html                 |   3 +-
+ .../test_import_v0130.cpython-313-pytest-9.0.2.pyc | Bin 60594 -> 60588 bytes
+ ..._v0101_regressions.cpython-313-pytest-9.0.2.pyc | Bin 24240 -> 24240 bytes
+ ...test_v0130_release.cpython-313-pytest-9.0.2.pyc | Bin 8267 -> 8267 bytes
+ tests/test_import_v0130.py                         |   4 +-
+ tests/test_v0101_regressions.py                    |   4 +-
+ tests/test_v0130_release.py                        |   4 +-
+ 84 files changed, 963 insertions(+), 2394 deletions(-)

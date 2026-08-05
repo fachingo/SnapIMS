@@ -1,0 +1,147 @@
+ M ARCHITECTURE.md
+ M BROWSER_VERIFICATION.md
+ M DEPLOYMENT_GUIDE.md
+ M DEVELOPER_GUIDE.md
+ M DOCUMENTATION_VERIFICATION.md
+ M END_OF_BATCH_CHECKLIST.md
+ M IMPORT_FIXTURE_MATRIX.md
+ M INSTALLATION_GUIDE.md
+ M OPERATOR_GUIDE.md
+ M PERFORMANCE_REPORT.md
+ M PRODUCTION_READINESS.md
+ M README.md
+ M RECOVERY_PROCEDURES.md
+ M RELEASE_NOTES.md
+ M ROLLBACK.md
+ M SCREENSHOT_INDEX.md
+ D SNAPIMS_PRE_1_0_ROADMAP_V0130.md
+ D SnapIMS_Operator_Guide_v0.13.0.docx
+ D SnapIMS_Operator_Guide_v0.13.0.pdf
+ M TEST_RESULTS.md
+ D browser-evidence/v0.13.0/01-home-desktop.png
+ D browser-evidence/v0.13.0/02-import-folders-desktop.png
+ D browser-evidence/v0.13.0/03-import-progress.png
+ D browser-evidence/v0.13.0/04-import-preview-desktop.png
+ D browser-evidence/v0.13.0/04a-import-preview-viewport.png
+ D browser-evidence/v0.13.0/04b-import-preview-commit.png
+ D browser-evidence/v0.13.0/05-import-complete.png
+ D browser-evidence/v0.13.0/06-bulk-editor-identities.png
+ D browser-evidence/v0.13.0/07-import-mobile.png
+ D browser-evidence/v0.13.0/08-restart-durability.png
+ D browser-evidence/v0.13.0/browser-verification.json
+ D browser-evidence/v0.13.0/server.log
+ D dist/snapims-0.13.0-py3-none-any.whl
+ D docs/SnapIMS_v0.13.0_Complete_Operating_Manual.docx
+ D docs/SnapIMS_v0.13.0_Complete_Operating_Manual.pdf
+ D docs/SnapIMS_v0.13.0_Day-to-Day_Guide.docx
+ D docs/SnapIMS_v0.13.0_Day-to-Day_Guide.pdf
+ D docs/SnapIMS_v0.13.0_Operator_Guide.docx
+ D docs/SnapIMS_v0.13.0_Operator_Guide.pdf
+ D install_v0130.sh
+ M pyproject.toml
+ D release-evidence/v0.13.0/installer-verification.json
+ D release-evidence/v0.13.0/performance.json
+ D release-evidence/v0.13.0/test-results.json
+ D scripts/benchmark_import_v0130.py
+ D scripts/browser_verify_v0130.py
+ D scripts/build_guides_v0130.py
+ D scripts/build_manifest_v0130.py
+ D scripts/generate_import_fixture_sets_v0130.py
+ D scripts/verify_release_v0130.py
+ M snapims/__init__.py
+ M snapims/__pycache__/__init__.cpython-313.pyc
+ M snapims/__pycache__/bulk.cpython-313.pyc
+ M snapims/__pycache__/cli.cpython-313.pyc
+ M snapims/__pycache__/db.cpython-313.pyc
+ M snapims/__pycache__/import_v0130.cpython-313.pyc
+ M snapims/__pycache__/manager.cpython-313.pyc
+ M snapims/__pycache__/processor.cpython-313.pyc
+ M snapims/bulk.py
+ M snapims/catalog/__pycache__/db.cpython-313.pyc
+ M snapims/catalog/db.py
+ M snapims/cli.py
+ M snapims/db.py
+ M snapims/import_v0130.py
+ M snapims/manager.py
+ M snapims/pricing/__pycache__/database.cpython-313.pyc
+ M snapims/pricing/__pycache__/throttle.cpython-313.pyc
+ M snapims/pricing/__pycache__/workflow.cpython-313.pyc
+ M snapims/pricing/database.py
+ M snapims/pricing/throttle.py
+ M snapims/pricing/workflow.py
+ M snapims/processor.py
+ M snapims/web/__pycache__/app.cpython-313.pyc
+ M snapims/web/app.py
+ M snapims/web/static/app.css
+ M snapims/web/static/app.js
+ M snapims/web/templates/batch_editor.html
+ M snapims/web/templates/publish.html
+ M tests/__pycache__/test_import_v0130.cpython-313-pytest-9.0.2.pyc
+ M tests/__pycache__/test_v0101_regressions.cpython-313-pytest-9.0.2.pyc
+ M tests/__pycache__/test_v0130_release.cpython-313-pytest-9.0.2.pyc
+ M tests/test_import_v0130.py
+ M tests/test_v0101_regressions.py
+ M tests/test_v0130_release.py
+?? ISSUE_REGISTER_V0132.csv
+?? ISSUE_TRACEABILITY_V0132.md
+?? LOCAL_SOURCE_INVENTORY.md
+?? SKIPPED_EXTERNAL_TESTS.md
+?? SNAPIMS_PRE_1_0_ROADMAP_V0132.md
+?? SnapIMS_Operator_Guide_v0.13.2.docx
+?? SnapIMS_Operator_Guide_v0.13.2.pdf
+?? V1_PRODUCTION_ACCEPTANCE_GAPS.md
+?? browser-evidence/v0.13.2/
+?? build/
+?? dist/snapims-0.13.2-py3-none-any.whl
+?? docs/SnapIMS_v0.13.2_Complete_Operating_Manual.docx
+?? docs/SnapIMS_v0.13.2_Complete_Operating_Manual.pdf
+?? docs/SnapIMS_v0.13.2_Day-to-Day_Guide.docx
+?? docs/SnapIMS_v0.13.2_Day-to-Day_Guide.pdf
+?? docs/SnapIMS_v0.13.2_Operator_Guide.docx
+?? docs/SnapIMS_v0.13.2_Operator_Guide.pdf
+?? install_v0132.sh
+?? release-evidence/v0.13.2/
+?? scripts/__pycache__/
+?? scripts/benchmark_import_v0132.py
+?? scripts/browser_verify_v0132.py
+?? scripts/build_guides_v0132.py
+?? scripts/build_manifest_v0132.py
+?? scripts/generate_import_fixture_sets_v0132.py
+?? scripts/verify_release_v0132.py
+?? snapims.egg-info/
+?? snapims/__pycache__/folder_picker.cpython-313.pyc
+?? snapims/__pycache__/sqlite_utils.cpython-313.pyc
+?? snapims/migrations/0015_v0132_reliability.sql
+?? snapims/pricing/__pycache__/job.cpython-313.pyc
+?? snapims/pricing/__pycache__/service.cpython-313.pyc
+?? snapims/sqlite_utils.py
+?? tests/__pycache__/conftest.cpython-313.pyc
+?? tests/__pycache__/test_catalog_admin.cpython-313.pyc
+?? tests/__pycache__/test_catalog_live_wikipedia.cpython-313.pyc
+?? tests/__pycache__/test_catalog_module.cpython-313.pyc
+?? tests/__pycache__/test_csv.cpython-313.pyc
+?? tests/__pycache__/test_csv_extended.cpython-313.pyc
+?? tests/__pycache__/test_db_migration.cpython-313.pyc
+?? tests/__pycache__/test_import_v0130.cpython-313.pyc
+?? tests/__pycache__/test_infrastructure.cpython-313.pyc
+?? tests/__pycache__/test_observability.cpython-313.pyc
+?? tests/__pycache__/test_processor.cpython-313.pyc
+?? tests/__pycache__/test_protocol.cpython-313.pyc
+?? tests/__pycache__/test_protocol_extended.cpython-313.pyc
+?? tests/__pycache__/test_provider_probes.cpython-313.pyc
+?? tests/__pycache__/test_recognition_extended.cpython-313.pyc
+?? tests/__pycache__/test_review.cpython-313.pyc
+?? tests/__pycache__/test_review_extended.cpython-313.pyc
+?? tests/__pycache__/test_secure_settings.cpython-313.pyc
+?? tests/__pycache__/test_settings_web.cpython-313.pyc
+?? tests/__pycache__/test_shopify.cpython-313.pyc
+?? tests/__pycache__/test_v0101_regressions.cpython-313.pyc
+?? tests/__pycache__/test_v010_phase4_recognition.cpython-313.pyc
+?? tests/__pycache__/test_v0130_release.cpython-313.pyc
+?? tests/__pycache__/test_v0132_reliability.cpython-313-pytest-9.0.2.pyc
+?? tests/__pycache__/test_v0132_reliability.cpython-313.pyc
+?? tests/__pycache__/test_v060_operator_workstation.cpython-313.pyc
+?? tests/__pycache__/test_v061_stabilization.cpython-313.pyc
+?? tests/__pycache__/test_v070_workstation.cpython-313.pyc
+?? tests/__pycache__/test_web.cpython-313.pyc
+?? tests/test_v0132_reliability.py

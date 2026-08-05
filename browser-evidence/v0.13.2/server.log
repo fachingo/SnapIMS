@@ -1,0 +1,47 @@
+INFO:     Started server process [10597]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8878 (Press CTRL+C to quit)
+INFO:     127.0.0.1:60204 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /recognition HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /review HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /publish HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /diagnostics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /batch-editor?batch_id=20260804-194624-BROWSER-QA&page_size=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "POST /api/batches/20260804-194624-BROWSER-QA/bulk HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /batch-editor?batch_id=20260804-194624-BROWSER-QA&page_size=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "POST /api/batches/20260804-194624-BROWSER-QA/bulk HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /batch-editor?batch_id=20260804-194624-BROWSER-QA&page_size=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "POST /api/batches/20260804-194624-BROWSER-QA/bulk HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /batch-editor?batch_id=20260804-194624-BROWSER-QA&page_size=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "POST /api/batches/20260804-194624-BROWSER-QA/bulk HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /batch-editor?batch_id=20260804-194624-BROWSER-QA&page_size=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /batch-editor?batch_id=BATCH-V0132-5000&page_size=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /batch-editor?batch_id=20260804-194624-BROWSER-QA&page_size=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "POST /import/preview HTTP/1.1" 303 See Other
+INFO:     127.0.0.1:60208 - "GET /import?job_id=6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import?job_id=6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import?job_id=6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import/job/6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import/job/6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import/job/6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import/job/6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import/job/6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import/job/6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import/job/6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import/job/6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import/job/6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import/job/6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import/job/6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import/job/6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import/job/6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import/job/6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60208 - "GET /import?job_id=6f5ae98abf0e4c0ea08a8b5f517433ac HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [10597]

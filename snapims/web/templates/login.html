@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<main class="panel login-panel">
+  <h1>SnapIMS login</h1>
+  {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+  {% if auth_disabled %}
+  <div class="alert">Authentication is not enabled. Set `SNAPIMS_AUTH_SECRET` and `SNAPIMS_ADMIN_PASSWORD_HASH` in `.env`, then restart SnapIMS.</div>
+  {% else %}
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Username<input name="username" autocomplete="username" required></label>
+    <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
+    <button type="submit">Log in</button>
+  </form>
+  {% endif %}
+</main>
+{% endblock %}

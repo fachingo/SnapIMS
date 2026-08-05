@@ -1,0 +1,1 @@
+{"status":"ok","version":"0.13.2","components":{"process":{"state":"alive","required":true},"inventory_database":{"state":"healthy","required":true,"integrity":"ok","foreign_key_violations":0,"schema":{"ok":true,"problems":[],"schema_version":15}},"catalog":{"state":"healthy","required":false,"safe_summary":""}},"schema":{"ok":true,"problems":[],"schema_version":15}}

@@ -1,0 +1,68 @@
+{% extends "base.html" %}{% block title %}Diagnostics · SnapIMS{% endblock %}{% block content %}
+<div class="page-heading"><div><p class="eyebrow">DIAGNOSTICS</p><h1>System health</h1><p>Operational facts without exposing credentials.</p></div><div class="actions"><a class="button" href="#live-activity">Live Activity</a><button type="button" data-copy-diagnostics>Copy Diagnostic Summary</button><form method="post" action="/diagnostics/support-bundle"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Export support bundle</button></form></div></div>
+<div class="metric-grid">
+  <article><b>{{ integrity }}</b><span>SQLite integrity</span></article><article><b>{{ foreign }}</b><span>Foreign-key violations</span></article>
+  <article><b>{{ 'PASS' if manifest.ok else 'FAIL' }}</b><span>Schema manifest</span></article><article><b>{{ schema }}</b><span>Schema version</span></article>
+  <article><b>{{ version }}</b><span>Application version</span></article><article><b>{{ test_contaminated_items }}</b><span>Test-sourced items</span></article>
+</div>
+{% if not manifest.ok %}<div class="alert error"><strong>Schema verification failed.</strong><ul>{% for problem in manifest.problems %}<li>{{ problem }}</li>{% endfor %}</ul></div>{% endif %}
+<section class="panel"><h2>Workspace and recovery</h2><table>
+<tr><th>Data root</th><td><code>{{ paths.root }}</code></td></tr><tr><th>Database</th><td><code>{{ paths.db_file }}</code></td></tr>
+<tr><th>Database size</th><td>{{ storage.database_bytes }} bytes</td></tr><tr><th>WAL size</th><td>{{ storage.wal_bytes }} bytes</td></tr>
+<tr><th>Last database backup</th><td><code>{{ last_backup }}</code></td></tr><tr><th>Checkpoints</th><td>{{ checkpoint_info.count }} · {{ checkpoint_info.bytes }} bytes · {{ checkpoint_info.protected }} protected</td></tr>
+<tr><th>CSV stages</th><td>{{ stage_info }}</td></tr><tr><th>Import journal</th><td>{{ import_info }}</td></tr>
+</table></section>
+{% set pricing = pricing_diagnostics() %}
+<section class="panel" id="pricing-diagnostics"><div class="section-head"><div><p class="eyebrow">SELECTIVE PRICING</p><h2>Pricing runtime and queue</h2></div><form method="post" action="/pricing/diagnostics/probe"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Test Pricing Browser and eBay</button></form></div>
+<div class="metric-grid compact"><article><b>{{ pricing.schema_version }}</b><span>Pricing schema</span></article><article><b>{{ pricing.queue.PENDING }}</b><span>Pending</span></article><article><b>{{ pricing.queue.RUNNING }}</b><span>Running</span></article><article><b>{{ pricing.queue.EVIDENCE_READY }}</b><span>Evidence ready</span></article><article><b>{{ pricing.queue.FAILED + pricing.queue.VERIFICATION_REQUIRED }}</b><span>Attention</span></article><article><b>{{ pricing.cache_entries }}</b><span>Cached titles</span></article><article><b>{{ pricing.cache_hits }}</b><span>Cache hits</span></article><article><b>{{ pricing.cache_misses }}</b><span>Cache misses</span></article><article><b>{{ pricing.average_job_duration_ms }}</b><span>Average job ms</span></article></div>
+<table><tr><th>Playwright import</th><td>{{ 'PASS' if pricing.playwright_importable else 'FAIL' }}</td></tr><tr><th>Configured/system browser</th><td>{{ pricing.configured_browser_path or 'Playwright managed browser' }} · {{ 'FOUND' if pricing.browser_path_exists else 'not confirmed by path check' }}</td></tr><tr><th>Concurrency</th><td>{{ pricing.settings.max_simultaneous_tabs }}</td></tr><tr><th>Delay</th><td>{{ pricing.settings.delay_min_seconds }}–{{ pricing.settings.delay_max_seconds }} seconds</td></tr><tr><th>Maximum valid listings</th><td>{{ pricing.settings.max_sold_listings }}</td></tr><tr><th>Cache expiry</th><td>{{ pricing.settings.cache_expiry_days }} days</td></tr>{% if pricing.runtime_probe %}<tr><th>Last browser probe</th><td>{{ pricing.runtime_probe.browser_status }} · {{ pricing.runtime_probe.probed_at }}</td></tr><tr><th>Last eBay probe</th><td>{{ pricing.runtime_probe.ebay_status }} · {{ pricing.runtime_probe.message }}</td></tr>{% endif %}{% if pricing.last_success %}<tr><th>Last successful lookup</th><td>{{ pricing.last_success.finished_at }}</td></tr>{% endif %}{% if pricing.last_failure %}<tr><th>Last failed lookup</th><td>{{ pricing.last_failure.error_code }} · {{ pricing.last_failure.error_message }}</td></tr>{% endif %}</table></section>
+{% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}{% if message %}<div class="alert error">{{ message }}</div>{% endif %}
+<section class="panel" id="live-activity">
+  <div class="section-head"><div><p class="eyebrow">LIVE ACTIVITY</p><h2>Durable operational events</h2><p class="muted">Observable facts only. The list polls for new events and remains bounded to 100 rows.</p></div><span class="status-pill" data-activity-poll-state>Live</span></div>
+  <div class="metric-grid compact">
+    <article><b>{{ active_operations|length }}</b><span>Active operations</span></article>
+    <article><b>{{ activity_queue_depth.recognition }}</b><span>Recognition queue</span></article>
+    <article><b>{{ activity_queue_depth.catalog }}</b><span>Catalog queue</span></article>
+    <article><b>{{ activity_queue_depth.bulk }}</b><span>Bulk queue</span></article>
+  </div>
+  {% if active_operations %}
+  <h3>Active operations</h3>
+  <div class="activity-active">{% for operation in active_operations %}<article data-started-at="{{ operation.occurred_at }}"><strong>{{ operation.component }} · {{ operation.status }}</strong><code>{{ operation.operation_id }}</code><span>{{ operation.batch_id or operation.item_id or operation.event_type }}</span><span data-operation-elapsed>calculating…</span></article>{% endfor %}</div>
+  {% endif %}
+  <form method="get" action="/diagnostics#live-activity" class="activity-filters">
+    <label>Source<input name="activity_source" value="{{ activity_source }}" placeholder="recognition, catalog, shopify…"></label>
+    <label>Severity<select name="activity_severity"><option value="">All levels</option>{% for level in ['DEBUG','INFO','WARNING','ERROR','CRITICAL'] %}<option value="{{ level }}" {% if activity_severity==level %}selected{% endif %}>{{ level }}</option>{% endfor %}</select></label>
+    <label>Operation ID<input name="activity_operation" value="{{ activity_operation }}" placeholder="Correlation ID"></label>
+    <button>Apply filters</button><a class="button" href="/diagnostics#live-activity">Clear</a>
+  </form>
+  <div class="activity-table-wrap"><table class="activity-table"><thead><tr><th>Time</th><th>Severity / source</th><th>Event and correlation</th><th>Outcome</th><th>Safe detail</th></tr></thead>
+    <tbody data-live-activity data-last-event-id="{{ activity_events[0].event_id if activity_events else 0 }}" data-source="{{ activity_source }}" data-severity="{{ activity_severity }}" data-operation="{{ activity_operation }}">
+    {% for event in activity_events %}
+      <tr data-event-id="{{ event.event_id }}">
+        <td><time>{{ event.occurred_at }}</time>{% if event.duration_ms %}<small>{{ event.duration_ms }} ms</small>{% endif %}</td>
+        <td><strong class="activity-{{ event.severity|lower }}">{{ event.severity }}</strong><small>{{ event.component }}</small></td>
+        <td><strong>{{ event.event_type }}</strong>{% if event.operation_id %}<code>{{ event.operation_id }}</code>{% endif %}{% if event.batch_id or event.item_id or event.order_id %}<small>{{ event.batch_id }} {{ event.item_id }} {{ event.order_id }}</small>{% endif %}{% if event.retry_of_event_id %}<small>retry of #{{ event.retry_of_event_id }}</small>{% endif %}{% if event.recovery_of_event_id %}<small>recovery of #{{ event.recovery_of_event_id }}</small>{% endif %}</td>
+        <td>{{ event.status or '—' }}{% if event.outcome %}<small>{{ event.outcome }}</small>{% endif %}{% if event.attempt_number %}<small>attempt {{ event.attempt_number }}</small>{% endif %}</td>
+        <td>{% if event.safe_summary %}<span>{{ event.safe_summary }}</span>{% endif %}<details><summary>Technical detail</summary><pre>{{ event.detail|tojson(indent=2) }}</pre></details><button type="button" class="icon" data-copy-event data-event-json="{{ event|tojson|forceescape }}">Copy event</button></td>
+      </tr>
+    {% else %}<tr data-empty-activity><td colspan="5">No events match these filters.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
+<section class="panel"><div class="section-head"><div><p class="eyebrow">LOCAL MOVIE CATALOG</p><h2>Catalog health and recovery</h2></div><div class="actions"><form method="post" action="/diagnostics/catalog/backup"><button>Create backup</button></form><form method="post" action="/diagnostics/catalog/rebuild-index"><button>Rebuild search index</button></form><form method="post" action="/diagnostics/catalog/retry-failed"><button>Retry failed jobs</button></form></div></div>
+<div class="metric-grid compact"><article><b>{{ 'PASS' if catalog.available and catalog.integrity=='ok' else 'CHECK' }}</b><span>Catalog integrity</span></article><article><b>{{ catalog.schema_version }}</b><span>Catalog schema</span></article><article><b>{{ catalog.movies or 0 }}</b><span>Movies</span></article><article><b>{{ links.linked_items }}</b><span>Linked items</span></article><article><b>{{ links.stale_links }}</b><span>Stale links</span></article><article><b>{{ catalog.database_size_bytes or 0 }}</b><span>Catalog bytes</span></article></div>
+<p><code>{{ paths.catalog_db_file }}</code>{% if catalog_error %} · {{ catalog_error }}{% endif %}</p>
+<table><thead><tr><th>Item</th><th>Proposed title</th><th>Status</th><th>Candidates</th><th>Attempts</th><th>Last error</th></tr></thead><tbody>{% for job in catalog_jobs %}<tr><td>{{ job.item_id }}</td><td>{{ job.proposed_title }}</td><td>{{ job.status }}</td><td>{{ job.candidate_count }}</td><td>{{ job.attempt_count }}</td><td>{{ job.last_error }}</td></tr>{% else %}<tr><td colspan="6">No catalog jobs yet.</td></tr>{% endfor %}</tbody></table></section>
+<section class="panel"><h2>Recognition configuration</h2><p>Test-provider mode: <strong>{{ 'ENABLED — development only' if test_provider_mode else 'Disabled' }}</strong></p><table>{% for name,state in providers.items() %}<tr><th>{{ name|title }}</th><td>{{ state[1] }}</td></tr>{% endfor %}</table></section>
+<section class="panel"><h2>Media and measured AI payload</h2><div class="metric-grid compact">
+<article><b>{{ media_totals.total_photos }}</b><span>Total photos</span></article><article><b>{{ media_totals.command_images }}</b><span>QR command photos</span></article>
+<article><b>{{ media_totals.excluded_images }}</b><span>Excluded photos</span></article><article><b>{{ media_totals.ai_ineligible_product_images }}</b><span>AI-ineligible products</span></article>
+<article><b>{{ media_totals.provider_selected_images }}</b><span>Images sent to providers</span></article><article><b>{{ media_totals.provider_payload_bytes }}</b><span>Provider payload bytes</span></article>
+<article><b>{{ media_totals.original_bytes }}</b><span>Original bytes</span></article><article><b>{{ media_totals.preview_bytes }}</b><span>Preview bytes</span></article>
+</div></section>
+<section class="panel"><h2>Recent recognition jobs</h2><table><thead><tr><th>Batch</th><th>Status</th><th>Provider</th><th>Progress</th><th>Last error</th></tr></thead><tbody>{% for job in jobs %}<tr><td>{{ job.batch_id }}</td><td>{{ job.status }}</td><td>{{ job.provider or '—' }}</td><td>{{ job.completed }}/{{ job.total }}</td><td>{{ job.error_message }}</td></tr>{% else %}<tr><td colspan="5">No jobs recorded.</td></tr>{% endfor %}</tbody></table></section>
+<section class="panel"><h2>Recent CSV stages</h2><table><thead><tr><th>Batch</th><th>File</th><th>Status</th><th>Rows</th><th>Expiry</th></tr></thead><tbody>{% for stage in csv_stages %}<tr><td>{{ stage.batch_id }}</td><td>{{ stage.filename }}</td><td>{{ stage.status }}</td><td>{{ stage.row_count }}</td><td>{{ stage.expires_at }}</td></tr>{% else %}<tr><td colspan="5">No CSV stages recorded.</td></tr>{% endfor %}</tbody></table></section>
+<section class="panel"><h2>Import recovery journal</h2><table><thead><tr><th>Batch</th><th>Status</th><th>Updated</th><th>Error</th></tr></thead><tbody>{% for entry in imports %}<tr><td>{{ entry.batch_id }}</td><td>{{ entry.status }}</td><td>{{ entry.updated_at }}</td><td>{{ entry.error_message }}</td></tr>{% else %}<tr><td colspan="4">No import journal records.</td></tr>{% endfor %}</tbody></table></section>
+<section class="panel"><h2>Recent transactional operations</h2><table><thead><tr><th>Type</th><th>Batch</th><th>Status</th><th>Completed</th><th>Error</th></tr></thead><tbody>{% for operation in operations %}<tr><td>{{ operation.operation_type }}</td><td>{{ operation.batch_id }}</td><td>{{ operation.status }}</td><td>{{ operation.completed_at or '—' }}</td><td>{{ operation.error_message }}</td></tr>{% else %}<tr><td colspan="5">No bulk operations recorded.</td></tr>{% endfor %}</tbody></table></section>
+<textarea id="diagnostic-summary" class="diagnostic-summary" readonly>{{ diagnostic_summary }}</textarea>
+{% endblock %}

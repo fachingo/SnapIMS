@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}Review · SnapIMS{% endblock %}
+{% block content %}
+<div class="review-toolbar">
+  <form method="get" action="/review">
+    <label>Batch
+      <select name="batch_id" data-auto-submit>
+        {% for batch in batches %}<option value="{{ batch.batch_id }}" {% if batch.batch_id==batch_id %}selected{% endif %}>{{ batch.batch_id }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Queue
+      <select name="queue" data-auto-submit>
+        <option value="UNRESOLVED" {% if queue=='UNRESOLVED' %}selected{% endif %}>Unresolved</option>
+        <option value="DONE" {% if queue=='DONE' %}selected{% endif %}>Done</option>
+        <option value="FAILED" {% if queue=='FAILED' %}selected{% endif %}>Failed</option>
+        <option value="BLOCKED" {% if queue=='BLOCKED' %}selected{% endif %}>Blocked</option>
+        <option value="ALL" {% if queue=='ALL' %}selected{% endif %}>All</option>
+      </select>
+    </label>
+    <a class="button" href="/batch-editor?batch_id={{ batch_id }}">Batch Editor</a>
+    <a class="button pricing-review-shortcut" href="/pricing?batch_id={{ batch_id }}">Pricing Review</a>
+  </form>
+</div>
+  {% if batch_id %}
+  <form method="post" action="/pricing/batch-mode" class="inline-form review-pricing-mode-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="batch_id" value="{{ batch_id }}">
+    <label>Pricing mode
+      <select name="mode" data-auto-submit>
+        {% set current_pricing_mode = pricing_batch_mode(batch_id) %}
+        <option value="MANUAL_FIXED" {% if current_pricing_mode=='MANUAL_FIXED' %}selected{% endif %}>Manual / fixed price</option>
+        <option value="SELECTIVE" {% if current_pricing_mode=='SELECTIVE' %}selected{% endif %}>Selective pricing</option>
+        <option value="DEFAULT_QUEUE" {% if current_pricing_mode=='DEFAULT_QUEUE' %}selected{% endif %}>Pricing Review by default</option>
+      </select>
+    </label>
+    <button type="submit">Save pricing mode</button>
+  </form>
+  {% endif %}
+{% if not batches %}
+<section class="empty"><h1>No batches yet</h1><a class="button primary" href="/import">Import a batch</a></section>
+{% else %}
+<section class="status-strip" id="recognition-status" data-batch="{{ batch_id }}" data-running="{{ 'true' if job and job.status in ['RUNNING','IDENTIFYING'] else 'false' }}">
+  <strong>{{ status_text }}</strong>
+  <div>
+    {% if status_action in ['identify','continue'] %}
+    <form method="post" action="/review/identify">
+      <input type="hidden" name="batch_id" value="{{ batch_id }}">
+      <select name="provider" aria-label="Recognition provider">
+        {% for name, provider in providers.items() %}<option value="{{ name }}">{{ name|title }}</option>{% endfor %}
+      </select>
+      <button class="primary">{{ 'Identify items' if status_action=='identify' else 'Continue identification' }}</button>
+    </form>
+    {% elif status_action=='complete' %}<a class="button primary" href="/publish?batch_id={{ batch_id }}">Continue to Publish</a>
+    {% elif status_action in ['blocked','manual'] %}<form method="post" action="/review/manual"><input type="hidden" name="batch_id" value="{{ batch_id }}"><button class="primary">Continue With Manual Review</button></form>
+    {% endif %}
+  </div>
+</section>
+{% if job and status_action in ['failure','blocked'] %}
+<section class="panel failure-panel">
+  <div>
+    <p class="eyebrow">{{ 'RECOGNITION BLOCKED' if status_action=='blocked' else 'RECOGNITION FAILURE' }}</p>
+    <h2>{{ job.error_message or 'Recognition did not complete.' }}</h2>
+    <p><strong>{{ job.error_code or 'UNKNOWN' }}</strong>{% if job.provider %} · {{ job.provider }}{% endif %}{% if job.model_name %} · {{ job.model_name }}{% endif %}</p>
+    <p>{{ job.completed }} complete · {{ job.failed }} failed · Updated {{ job.error_at or job.updated_at }}</p>
+  </div>
+  <div class="recovery-grid">
+    <form method="post" action="/review/retry-batch">
+      <input type="hidden" name="batch_id" value="{{ batch_id }}">
+      <label>Provider<select name="provider">{% for name, provider in providers.items() %}<option value="{{ name }}">{{ name|title }}</option>{% endfor %}</select></label>
+      <button class="primary">Retry Batch</button>
+    </form>
+    {% if status_action=='failure' %}
+    <form method="post" action="/review/retry-batch">
+      <input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="failed_only" value="true">
+      <select name="provider" aria-label="Provider for failed items">{% for name, provider in providers.items() %}<option value="{{ name }}">{{ name|title }}</option>{% endfor %}</select>
+      <button>Retry Failed Items Only</button>
+    </form>
+    {% endif %}
+    <form method="post" action="/review/manual"><input type="hidden" name="batch_id" value="{{ batch_id }}"><button>Continue With Manual Review</button></form>
+    <form method="post" action="/review/skip-recognition"><input type="hidden" name="batch_id" value="{{ batch_id }}"><button>Skip Recognition for This Batch</button></form>
+    <a class="button" href="/settings">Configure recognition</a><a class="button" href="/diagnostics">Open diagnostics</a>
+  </div>
+  <details><summary>Technical detail</summary><pre>{{ job.error_message }}</pre></details>
+</section>
+{% endif %}
+<div class="health-strip">
+  <span>{{ health.total }} items</span><span>{{ health.approved }} reviewed</span><span>{{ health.unfinished }} unfinished</span>
+  <span>{{ health.failed }} failed</span><span>{{ health.blocked }} blocked</span><span>{{ health.low_confidence }} low confidence</span>
+  <span>{{ health.publish_blockers }} publish blockers</span>{% if health.test_sourced %}<span>{{ health.test_sourced }} test-sourced</span>{% endif %}
+</div>
+{% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}
+{% if message %}<div class="alert error">{{ message }}</div>{% endif %}
+{% if errors %}<div class="alert error"><strong>Changes not saved</strong><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
+{% if current %}
+<section class="physical-header">
+  <strong>Batch item {{ physical.position }} of {{ physical.total }}</strong>
+  <span>{{ current.value_state|title }} · {{ physical.unfinished }} unfinished</span><code>{{ current.item_id }}</code>
+</section>
+<section class="workstation" id="workstation">
+  <div class="photo-pane">
+    {% if photos %}
+      <img src="/media/{{ photos[photo_index-1].photo_id }}" alt="Photograph {{ photo_index }} of {{ photos|length }} for {{ current.item_id }}">
+      <div class="photo-meta"><span>{{ photos[photo_index-1].original_name }}</span><span>{{ photos[photo_index-1].image_role }}</span><a href="/media/{{ photos[photo_index-1].photo_id }}?original=true" target="_blank">Open original</a></div>
+      <div class="photo-tabs">{% for image in photos %}<a class="{{ 'active' if loop.index==photo_index else '' }}" href="/review?batch_id={{ batch_id }}&queue={{ queue }}&item_id={{ current.item_id }}&photo={{ loop.index }}">{{ image.image_role|title if image.image_role else ('Front' if loop.index==1 else 'Photo ' ~ loop.index) }}</a>{% endfor %}</div>
+    {% else %}<div class="photo-missing">No photograph</div>{% endif %}
+  </div>
+  <div class="record-pane">
+  {% if edit %}
+    <p class="eyebrow">EXCEPTION EDITOR</p><h1>Edit item</h1>
+    {% if suggestion and not current.title %}<div class="suggestion-note"><strong>AI suggestion:</strong> {{ suggestion.suggested_title }}{% if suggestion.confidence is not none %} · {{ (suggestion.confidence*100)|round|int }}%{% endif %}. Entering or saving it makes it a working value.</div>{% endif %}
+    <form method="post" action="/review/save" class="editor-grid">
+      <input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><input type="hidden" name="queue" value="{{ queue }}"><input type="hidden" name="revision" value="{{ current.record_revision }}">
+      <fieldset class="span-2 editor-section"><legend>Required</legend>
+        <label>Title<input autofocus name="title" value="{{ current.title or (catalog_status.canonical_title if catalog_status and catalog_status.canonical_title else '') }}" placeholder="{{ suggestion.suggested_title if suggestion else 'Required' }}"></label>
+        <label>Price CAD<input name="price" type="number" data-pricing-price-input min="0" step="0.01" value="{{ '%.2f'|format(current.price_cents/100) if current.price_cents is not none else '' }}" placeholder="{{ '%.2f'|format(suggestion.suggested_price_cents/100) if suggestion and suggestion.suggested_price_cents is not none else '0.00' }}"></label>
+        <div class="tag-picker span-2" data-tag-picker data-selected="{{ current.tag_ids|join(',') }}">
+          <span class="tag-picker-label">Tags</span><input type="hidden" name="tag_ids" data-tag-value value="{{ current.tag_ids|join(',') }}">
+          <div class="tag-pills" data-tag-pills></div><input type="text" data-tag-input autocomplete="off" placeholder="Add approved tag" aria-label="Add approved tag">
+          <div class="tag-suggestions" data-tag-suggestions role="listbox" hidden></div>
+        </div>
+        <label>Quantity<input name="quantity" type="number" min="0" value="{{ current.quantity }}"></label>
+        <label>Shelf<input name="shelf" value="{{ current.shelf }}"></label>
+        <label>Condition<select name="condition">{% for option in conditions %}<option {% if option==current.condition %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+        <label>Discount %<input name="discount" type="number" min="0" max="100" step="0.01" value="{{ current.discount_percent }}"></label>
+      </fieldset>
+      <fieldset class="span-2 editor-section"><legend>Common optional</legend>
+        <label>Release year<input name="release_year" value="{{ current.release_year or (catalog_status.primary_release_year if catalog_status and catalog_status.primary_release_year else '') }}" placeholder="{{ suggestion.release_year if suggestion else '' }}"></label><label>Barcode<input name="barcode" value="{{ current.barcode }}"></label>
+        <label>Studio / distributor<input name="distributor" value="{{ current.distributor }}" placeholder="{{ suggestion.distributor if suggestion else '' }}"></label><label>Edition / format<input name="edition" value="{{ current.edition }}" placeholder="{{ suggestion.edition if suggestion else '' }}"></label>
+        <label>Location-change reason<input name="location_reason" placeholder="Required only when shelf changes"></label>
+        <label class="check"><input type="checkbox" name="rare" value="true" {% if current.rare %}checked{% endif %}> Rare</label><label class="check"><input type="checkbox" name="review" value="true" {% if current.review %}checked{% endif %}> Physical Review</label>
+        <label class="span-2">Condition notes<textarea name="condition_notes">{{ current.condition_notes }}</textarea></label>
+      </fieldset>
+      <details class="span-2 editor-section"><summary>Advanced product fields</summary><div class="editor-grid nested-grid">
+        <label>Vendor<input name="vendor" value="{{ current.vendor }}"></label><label>Product type<input name="product_type" value="{{ current.product_type }}"></label>
+        <label class="span-2">Description<textarea name="description">{{ current.description }}</textarea></label>
+        <label>Inventory mode<select name="pool_mode">{% for option in pool_modes %}<option {% if option==current.pool_mode %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+      </div></details>
+      {% set editor_pstate = pricing_item_state(current.item_id, batch_id) %}
+      <div class="span-2 pricing-disposition">
+        <label>Pricing
+          <select name="pricing_disposition">
+            {% set editor_default = editor_pstate.disposition or pricing_default_disposition(batch_id) %}
+            <option value="MANUAL" {% if editor_default=='MANUAL' %}selected{% endif %}>Use manual / current price</option>
+            <option value="QUEUE" {% if editor_default=='QUEUE' %}selected{% endif %}>Queue for Pricing Review</option>
+            <option value="SKIP" {% if editor_default=='SKIP' %}selected{% endif %}>Skip market pricing</option>
+          </select>
+        </label>
+      </div>
+      <div class="span-2 action-row"><button class="primary">{{ 'Save changes' if current.review_status=='DONE' else 'Save edits & next' }}</button><a class="button" href="/review?batch_id={{ batch_id }}&queue={{ queue }}&item_id={{ current.item_id }}">Cancel changes</a></div>
+    </form>
+  {% else %}
+    <div class="identity">
+      <p class="eyebrow">{{ current.value_state }}{% if current.suggestion_source_kind=='TEST' %} · TEST SOURCE{% endif %}</p>
+      <h1>{{ display_title }}</h1>
+      <p>{% if current.title %}Saved working title{% elif suggestion %}AI suggestion — not saved until approval{% else %}Manual title required before approval{% endif %}</p>
+      {% if catalog_status %}<div class="catalog-match catalog-{{ catalog_status.status|lower|replace('_','-') }}"><strong>Catalog match: {{ catalog_status.label|upper }}</strong>{% if catalog_status.canonical_title %}<span>{{ catalog_status.canonical_title }}{% if catalog_status.primary_release_year %} ({{ catalog_status.primary_release_year }}){% endif %}</span>{% elif catalog_status.candidate_count %}<span>{{ catalog_status.candidate_count }} possible films</span>{% elif catalog_status.error %}<span>{{ catalog_status.error }}</span>{% endif %}{% if catalog_status.movie_id %}<code>{{ catalog_status.movie_id }}</code>{% endif %}</div>{% endif %}
+      {% if suggestion %}<div class="confidence"><strong>{{ (suggestion.confidence * 100)|round|int }}%</strong><span>Latest suggestion confidence</span></div>{% elif current.review_status=='DONE' %}<div class="confidence"><strong>Manual</strong><span>No AI confidence</span></div>{% endif %}
+    </div>
+    <form id="quick-approve-form" method="post" action="/review/approve" class="quick-approve" data-quick-review>
+      <input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><input type="hidden" name="revision" value="{{ current.record_revision }}">
+      <input type="hidden" name="pricing_price_touched" value="false">
+      <div class="quick-fields quick-fields-four">
+        <label>Title<input id="quick-title" name="title" type="text" autocomplete="off" required value="{{ current.title or (catalog_status.canonical_title if catalog_status and catalog_status.canonical_title else '') or (suggestion.suggested_title if suggestion else '') }}" placeholder="Title required"></label>
+        <label>Price CAD<input id="quick-price" name="price" type="text" data-pricing-price-input inputmode="decimal" autocomplete="off" value="{{ '%.2f'|format((current.price_cents if current.price_cents is not none else (suggestion.suggested_price_cents if suggestion and suggestion.suggested_price_cents is not none else 0))/100) }}"></label>
+        <div class="tag-picker" data-tag-picker data-selected="{{ current.tag_ids|join(',') }}">
+          <span class="tag-picker-label">Tags</span><input type="hidden" name="tag_ids" data-tag-value value="{{ current.tag_ids|join(',') }}">
+          <div class="tag-pills" data-tag-pills></div><input type="text" data-tag-input autocomplete="off" placeholder="Add approved tag" aria-label="Add approved tag">
+          <div class="tag-suggestions" data-tag-suggestions role="listbox" hidden></div>
+        </div>
+        <label>Discount %<input id="quick-discount" name="discount" type="number" min="0" max="100" step="0.01" value="{{ current.discount_percent if current.discount_percent else (suggestion.suggested_discount_percent if suggestion else 0) }}"></label>
+      </div>
+      {% set pstate = pricing_item_state(current.item_id, batch_id) %}
+      <div class="pricing-disposition">
+        <label>Pricing
+          <select name="pricing_disposition">
+            {% set default_disposition = pstate.disposition or pricing_default_disposition(batch_id) %}
+            <option value="MANUAL" {% if default_disposition=='MANUAL' %}selected{% endif %}>Use manual / current price</option>
+            <option value="QUEUE" {% if default_disposition=='QUEUE' %}selected{% endif %}>Queue for Pricing Review</option>
+            <option value="SKIP" {% if default_disposition=='SKIP' %}selected{% endif %}>Skip market pricing</option>
+          </select>
+        </label>
+        {% if current.review_status=='DONE' and current.title %}<a class="button" href="{{ pstate.search_url }}" target="_blank" rel="noopener">Open eBay Sold</a>{% endif %}
+      </div>
+      <button id="approve-next-button" class="approve" type="submit" {% if not current.title and not suggestion %}aria-describedby="manual-required"{% endif %}>✓ Approve & Next</button>
+    </form>
+    {% if not current.title and not suggestion and not (catalog_status and catalog_status.canonical_title) %}<p id="manual-required" class="alert warning">Type the title above, then press Enter once to approve and open the next tape.</p>{% endif %}
+    {% if current.review_status=='DONE' and current.title %}
+    <div class="action-row pricing-review-actions">
+      <form method="post" action="/pricing/item/{{ current.item_id }}/queue"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Run Pricing Lookup</button></form>
+      <a class="button" href="/pricing/item/{{ current.item_id }}">Review Pricing Evidence</a>
+    </div>
+    {% endif %}
+    {% if catalog_candidates and catalog_job %}<details class="catalog-candidates" open><summary>Resolve ambiguous movie match</summary><p>The photograph remains authoritative. Select only the matching film, or edit the title.</p>{% for candidate in catalog_candidates %}<form method="post" action="/catalog/jobs/{{ catalog_job.job_id }}/select" class="candidate-row"><input type="hidden" name="candidate_id" value="{{ candidate.candidate_id }}"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="queue" value="{{ queue }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><span><strong>{{ candidate.canonical_title }}</strong>{% if candidate.release_year %} ({{ candidate.release_year }}){% endif %}<small>{{ candidate.media_type }} · evidence {{ '%.2f'|format(candidate.score) }}</small></span><button type="submit">Use this movie</button></form>{% endfor %}</details>{% endif %}
+    <div class="secondary-actions">
+      <a class="button" href="/review?batch_id={{ batch_id }}&queue={{ queue }}&item_id={{ current.item_id }}&edit=true">Edit details</a>
+      {% if current.review_status!='DONE' %}<form method="post" action="/review/later"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><button>Later</button></form>{% endif %}
+      {% if current.recognition_status in ['FAILED','BLOCKED'] %}<form method="post" action="/review/retry"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><select name="provider" aria-label="Retry provider">{% for name, provider in providers.items() %}<option value="{{ name }}">{{ name|title }}</option>{% endfor %}</select><button>Retry this item</button></form>{% endif %}
+    </div>
+    <details class="advanced"><summary>Run Recognition Again · compare without replacing approved fields</summary>
+      <form method="post" action="/recognition/run-item" class="form-grid" data-prevent-double-submit>
+        <input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><input type="hidden" name="request_id" value="{{ recognition_request_id }}">
+        <label>Provider<select name="provider">{% for name in providers %}<option value="{{ name }}">{{ name|title }}</option>{% endfor %}</select></label>
+        <label>Tested model<select name="model_name"><option value="">Configured role model</option>{% for model in compatible_models %}<option value="{{ model }}">{{ model }}</option>{% endfor %}</select></label>
+        <label>Tier<select name="tier"><option value="baseline">Baseline</option><option value="escalation">Escalation</option><option value="frontier">Frontier</option></select></label>
+        <label>Images<select name="image_profile"><option value="standard">Standard derivatives</option><option value="front">Front only</option><option value="expanded">Expanded derivatives</option><option value="originals">Originals · explicit</option></select></label>
+        <button>Queue immutable attempt</button>
+      </form>
+      {% if suggestion %}<form method="post" action="/recognition/clear"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><button>Clear current suggestion</button></form>{% endif %}
+    </details>
+  {% endif %}
+  </div>
+</section>
+<div class="review-navigation"><form method="post" action="/review/navigate"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="queue" value="{{ queue }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><button name="direction" value="previous">← Previous</button><button name="direction" value="next">Next →</button></form></div>
+<details class="panel"><summary>Recognition details and provenance</summary>
+  {% if suggestion %}<p><strong>Current suggestion: {{ suggestion.suggested_title or 'UNKNOWN' }}</strong></p><p><strong>{{ suggestion.provider }}</strong>{% if suggestion.model_name %} · {{ suggestion.model_name }}{% endif %} · {{ suggestion.tier|title }} · {{ suggestion.source_kind or 'LIVE' }} · {{ suggestion.created_at }}</p><p>{{ suggestion.image_profile }} · {{ suggestion.input_image_count }} images · {{ suggestion.input_image_bytes }} bytes · {{ suggestion.input_tokens }}/{{ suggestion.output_tokens }} tokens · {{ suggestion.latency_ms }} ms · estimated CA${{ '%.6f'|format(suggestion.estimated_cost_cad) }} (configured {{ suggestion.configured_price_version }}, not billing truth)</p>{% else %}<p>No current recognition suggestion is selected.</p>{% endif %}
+  {% if history %}<table><thead><tr><th>Attempt</th><th>Proposal</th><th>Route</th><th>State</th><th>Action</th></tr></thead><tbody>{% for attempt in history %}<tr><td>#{{ attempt.recognition_result_id }}<small>{{ attempt.provider }} · {{ attempt.model_name or 'default' }} · {{ attempt.created_at }}</small></td><td>{{ attempt.suggested_title or 'UNKNOWN' }}<small>{{ (attempt.confidence*100)|round|int }}% · {{ attempt.latency_ms }} ms · CA${{ '%.6f'|format(attempt.estimated_cost_cad) }}</small></td><td>{{ attempt.tier }}<small>{{ attempt.trigger }} · {{ attempt.image_profile }}</small></td><td>{{ attempt.attempt_state }}{% if attempt.is_current %}<small>Current</small>{% endif %}</td><td>{% if not attempt.is_current %}<form method="post" action="/recognition/select"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><input type="hidden" name="recognition_result_id" value="{{ attempt.recognition_result_id }}"><button>Select for review</button></form>{% elif attempt.attempt_state!='FAILED' %}<form method="post" action="/recognition/accept"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="item_id" value="{{ current.item_id }}"><input type="hidden" name="recognition_result_id" value="{{ attempt.recognition_result_id }}"><button>Accept recognition metadata</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table>{% endif %}
+  {% if catalog_status and catalog_status.source_url %}<p><strong>Catalog source:</strong> <a href="{{ catalog_status.source_url }}" rel="noreferrer" target="_blank">Wikipedia source page</a></p>{% endif %}
+  {% if item_history %}<table><thead><tr><th>Time</th><th>Field</th><th>Source</th></tr></thead><tbody>{% for change in item_history[:20] %}<tr><td>{{ change.occurred_at }}</td><td>{{ change.field_name }}</td><td>{{ change.source }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+</details>
+{% else %}<section class="empty"><h2>No items in this queue</h2><p>Choose another queue or continue to the logical next step.</p></section>{% endif %}
+{% endif %}
+<script id="tag-definitions-json" type="application/json">{{ tag_definitions|tojson }}</script>
+{% endblock %}

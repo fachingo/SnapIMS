@@ -1,0 +1,22 @@
+SnapIMS .............. STOPPED
+Health ............... FAIL
+Cloudflare Tunnel .... STOPPED
+Guacamole ............ UNAVAILABLE
+guacd ................ STOPPED
+Tomcat ............... STOPPED
+xrdp desktop ......... STOPPED
+Authentication ....... WARN
+Database ............. PASS
+OpenAI ............... FAIL
+Port ................. 8767
+Version .............. 0.13.2
+PID .................. 0
+Project path ......... /tmp/snapims-v0132-final-clean/release
+Python executable .... /tmp/snapims-v0132-final-clean/release/.venv/bin/python
+Data directory ....... /tmp/snapims-v0132-final-clean/data
+Inventory schema ..... 15 / 15
+Cloudflare detail .... cloudflared executable not found: cloudflared
+Service ownership ..... app=snapims, tunnel=snapims, guacd=systemd, tomcat=systemd, xrdp=external
+Guacamole detail ..... guacd executable not found
+Guacamole warning .... Guacamole config not found: /etc/guacamole/guacamole.properties; Guacamole user mapping not found: /etc/guacamole/user-mapping.xml
+Authentication detail  disabled

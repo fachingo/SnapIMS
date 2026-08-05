@@ -1,0 +1,16 @@
+Looking in indexes: https://reader:****@packages.applied-caas-gateway1.internal.api.openai.org/artifactory/api/pypi/pypi-public/simple
+Processing /tmp/snapims-v0132-clean-install/release/dist/snapims-0.13.2-py3-none-any.whl
+Installing collected packages: snapims
+Successfully installed snapims-0.13.2
+SnapIMS 0.13.2: database initialization complete
+
+SnapIMS v0.13.2 installed.
+Application directory: /tmp/snapims-v0132-clean-install/release
+Data directory: /tmp/snapims-v0132-clean-install/data
+Batch Home Directory: /tmp/snapims-v0132-clean-install/data/batches
+Next commands:
+  source "/tmp/snapims-v0132-clean-install/release/.venv/bin/activate"
+  snapims version
+  export PATH="$HOME/.local/bin:$PATH"
+  snapims version
+  snapims up

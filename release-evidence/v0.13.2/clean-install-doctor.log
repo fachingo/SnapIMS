@@ -1,0 +1,20 @@
+PASS  Python
+PASS  venv
+PASS  dependencies
+PASS  SQLite
+PASS  logs directory
+PASS  config
+PASS  write permissions
+PASS  port availability
+WARN  authentication disabled
+WARN  OpenAI API key not configured
+WARN  Cloudflare tunnel - cloudflared executable not found: cloudflared
+FAIL  Guacamole web application - guacd executable not found
+WARN  Guacamole config - Guacamole config not found: /etc/guacamole/guacamole.properties; Guacamole user mapping not found: /etc/guacamole/user-mapping.xml
+FAIL  guacd service - guacd is not running
+FAIL  Tomcat service - snapims-guacamole-tomcat is not running
+PASS  Guacamole HTTP port
+FAIL  guacd port 4822 - is not listening
+FAIL  RDP desktop backend - is not listening on 127.0.0.1:3389
+FAIL  SSH backend - is not listening on 127.0.0.1:22
+Doctor result: required checks failed: Guacamole web application, guacd service, Tomcat service, guacd port 4822, RDP desktop backend, SSH backend

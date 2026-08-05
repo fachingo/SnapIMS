@@ -1,0 +1,11 @@
+WARNING: The directory '/home/oai/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Looking in indexes: https://reader:****@packages.applied-caas-gateway1.internal.api.openai.org/artifactory/api/pypi/pypi-public/simple
+Processing /mnt/data/work_v0132/SnapIMS-v0.13.2
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: snapims
+  Building wheel for snapims (pyproject.toml): started
+  Building wheel for snapims (pyproject.toml): finished with status 'done'
+  Created wheel for snapims: filename=snapims-0.13.2-py3-none-any.whl size=297257 sha256=fb126a8ac0a22cb75f8e1eb3af0d08efc48ef56c159d9f13da1b69e12e281db6
+  Stored in directory: /tmp/pip-ephem-wheel-cache-2w9clwk4/wheels/cc/52/71/ea3850b2f45ec3434e37f559bd3c1956b6332e37632c556d13
+Successfully built snapims

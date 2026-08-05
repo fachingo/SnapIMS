@@ -1,0 +1,2 @@
+[console_scripts]
+snapims = snapims.cli:main

@@ -1,0 +1,5 @@
+schema 15
+items 2
+batches 1
+before_items 2
+backups 0

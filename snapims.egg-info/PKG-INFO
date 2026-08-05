@@ -1,0 +1,77 @@
+Metadata-Version: 2.4
+Name: snapims
+Version: 0.13.2
+Summary: Photo-first, exception-driven inventory ingestion for physical media
+Author: Isaiah Newman
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.110
+Requires-Dist: uvicorn>=0.29
+Requires-Dist: jinja2>=3.1
+Requires-Dist: python-multipart>=0.0.9
+Requires-Dist: Pillow>=10.0
+Requires-Dist: pillow-heif>=0.16
+Requires-Dist: opencv-python-headless>=4.9
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: openai>=1.30
+Requires-Dist: qrcode>=7.4
+Requires-Dist: itsdangerous>=2.2
+Requires-Dist: playwright<2,>=1.48
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: httpx>=0.27; extra == "dev"
+Requires-Dist: playwright>=1.45; extra == "dev"
+Requires-Dist: ruff>=0.6; extra == "dev"
+Requires-Dist: mypy>=1.11; extra == "dev"
+Requires-Dist: python-docx>=1.1; extra == "dev"
+Requires-Dist: build>=1.2; extra == "dev"
+Requires-Dist: pytest-cov>=5.0; extra == "dev"
+
+# SnapIMS v0.13.2
+
+SnapIMS is a local, photo-first inventory workstation for Canada VHS. v0.13.2 is a patch release that stabilizes the folder-based Import workflow, corrects Batch Editor consistency problems, prevents mixed-version launches, and bounds large-batch rendering.
+
+## Daily workflow
+
+1. Create one immediate child folder inside `~/SnapIMS-data/batches`.
+2. Name the folder with the desired default batch display name.
+3. Place product photographs in capture order.
+4. Photograph `NEXT ITEM` (`CVHS1:ITEM:NEXT`) between tapes.
+5. Open Import, select the folder, and optionally enter any free-text location.
+6. Preview, verify grouping, and Commit.
+7. Continue through Recognition, Review, Batch Editor, and Publish.
+
+Legacy START, END, LOCATION, RARE, REVIEW, and CONTINUE QR photographs are ignored as non-blocking legacy commands. They do not control grouping.
+
+## Install
+
+```bash
+unzip SnapIMS-v0.13.2-full-source.zip
+cd SnapIMS-v0.13.2
+chmod +x install_v0132.sh
+./install_v0132.sh
+export PATH="$HOME/.local/bin:$PATH"
+snapims version
+snapims up
+```
+
+The installer pins `~/.local/bin/snapims` and the user service to the extracted v0.13.2 release. `snapims status` prints the resolved project path, venv executable, data directory, PID, application version, and inventory schema.
+
+## Core commands
+
+```bash
+snapims up
+snapims down
+snapims restart
+snapims status
+snapims doctor
+snapims logs
+```
+
+## Data safety
+
+Application code and operator data are separate. The default data root is `~/SnapIMS-data`. Original source photographs are never renamed, deleted, recompressed, or modified. Display-name edits do not rename source folders or change immutable Batch/Item IDs.
+
+## Verification
+
+See `TEST_RESULTS.md`, `BROWSER_VERIFICATION.md`, `PERFORMANCE_REPORT.md`, `ISSUE_TRACEABILITY_V0132.md`, and `PRODUCTION_READINESS.md`.

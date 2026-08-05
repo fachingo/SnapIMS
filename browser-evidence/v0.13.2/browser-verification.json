@@ -1,0 +1,189 @@
+{
+  "version": "0.13.2",
+  "base_url": "http://snapims.test:8878",
+  "data_dir": "/tmp/snapims-v0132-browser-data",
+  "browsers": [
+    {
+      "browser": "chromium",
+      "network_mode": "local HTTP relayed because browser policy blocks localhost navigation",
+      "checks": [
+        {
+          "name": "chromium / loads",
+          "ok": true,
+          "detail": "200"
+        },
+        {
+          "name": "chromium / has content",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "chromium /import loads",
+          "ok": true,
+          "detail": "200"
+        },
+        {
+          "name": "chromium /import has content",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "chromium /recognition loads",
+          "ok": true,
+          "detail": "200"
+        },
+        {
+          "name": "chromium /recognition has content",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "chromium /review loads",
+          "ok": true,
+          "detail": "200"
+        },
+        {
+          "name": "chromium /review has content",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "chromium /publish loads",
+          "ok": true,
+          "detail": "200"
+        },
+        {
+          "name": "chromium /publish has content",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "chromium /settings loads",
+          "ok": true,
+          "detail": "200"
+        },
+        {
+          "name": "chromium /settings has content",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "chromium /diagnostics loads",
+          "ok": true,
+          "detail": "200"
+        },
+        {
+          "name": "chromium /diagnostics has content",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "chromium editor rows",
+          "ok": true,
+          "detail": "5"
+        },
+        {
+          "name": "chromium Tags Fill Down",
+          "ok": true,
+          "detail": "[2, 2]"
+        },
+        {
+          "name": "chromium Location Fill Down",
+          "ok": true,
+          "detail": "['Processing Table', 'Processing Table']"
+        },
+        {
+          "name": "chromium Review Fill Down",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "chromium Rare Fill Down",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "chromium ArrowRight crosses Tags",
+          "ok": true,
+          "detail": "True"
+        },
+        {
+          "name": "chromium ArrowLeft crosses Tags",
+          "ok": true,
+          "detail": "True"
+        },
+        {
+          "name": "chromium hidden selections clear",
+          "ok": true,
+          "detail": "1 selected -> 0 selected"
+        },
+        {
+          "name": "chromium 5000-item page bounded",
+          "ok": true,
+          "detail": "rows=100 bytes=430721"
+        },
+        {
+          "name": "chromium 5000-item render under 1s",
+          "ok": true,
+          "detail": "0.414s"
+        },
+        {
+          "name": "chromium mobile body fits",
+          "ok": true,
+          "detail": "body=390 viewport=390"
+        },
+        {
+          "name": "chromium mobile grid scrolls",
+          "ok": true,
+          "detail": "table=1836 wrap=328"
+        },
+        {
+          "name": "chromium 100-item folder listed",
+          "ok": true,
+          "detail": "1"
+        },
+        {
+          "name": "chromium Preview returns under 1s",
+          "ok": true,
+          "detail": "0.040s status=303"
+        },
+        {
+          "name": "chromium refresh during Preview",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "chromium 100-item Preview ready",
+          "ok": true,
+          "detail": "READY"
+        },
+        {
+          "name": "chromium 100-item grouping exact",
+          "ok": true,
+          "detail": "100"
+        },
+        {
+          "name": "chromium one decode/scan per image",
+          "ok": true,
+          "detail": "decode=202 qr=202"
+        },
+        {
+          "name": "chromium Preview page bounded to 20",
+          "ok": true,
+          "detail": "20"
+        }
+      ],
+      "console_errors": [],
+      "page_errors": [],
+      "failed_requests": [],
+      "http_errors": [],
+      "large_editor": {
+        "render_seconds": 0.4141117519998261,
+        "html_bytes": 430721,
+        "rows": 100
+      },
+      "passed": true
+    }
+  ],
+  "passed": true
+}

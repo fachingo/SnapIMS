@@ -1,0 +1,14 @@
+[Unit]
+Description=SnapIMS inventory application v0.13.2
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/tmp/snapims-v0132-clean-install/release
+Environment=SNAPIMS_PROJECT_PATH=/tmp/snapims-v0132-clean-install/release
+Environment=SNAPIMS_DATA_DIR=/tmp/snapims-v0132-clean-install/data
+ExecStart=/tmp/snapims-v0132-clean-install/home/.local/bin/snapims serve
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

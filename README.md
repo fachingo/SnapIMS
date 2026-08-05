@@ -1,117 +1,48 @@
-# SnapIMS
+# SnapIMS v0.13.2
 
-SnapIMS is a locally runnable, photo-first inventory intake system for Canada VHS. It reads a camera roll as a chronological command stream, preserves every source file, groups product photographs only at `CVHS1:ITEM:NEXT` boundaries, and creates an auditable SQLite/CSV inventory workspace.
+SnapIMS is a local, photo-first inventory workstation for Canada VHS. v0.13.2 is a patch release that stabilizes the folder-based Import workflow, corrects Batch Editor consistency problems, prevents mixed-version launches, and bounds large-batch rendering.
 
-This repository is a working prototype based on **Canada VHS Inventory System Version 2.0 — QR-Delimited Workflow**. Timestamp-gap grouping is not implemented and must not be reintroduced. Capture time is used only to restore deterministic camera order.
+## Daily workflow
 
-## What works
+1. Create one immediate child folder inside `~/SnapIMS-data/batches`.
+2. Name the folder with the desired default batch display name.
+3. Place product photographs in capture order.
+4. Photograph `NEXT ITEM` (`CVHS1:ITEM:NEXT`) between tapes.
+5. Open Import, select the folder, and optionally enter any free-text location.
+6. Preview, verify grouping, and Commit.
+7. Continue through Recognition, Review, Batch Editor, and Publish.
 
-- EXIF/subsecond ordering with deterministic filename and filesystem fallbacks
-- Strict recognition of the existing `CVHS1` QR vocabulary, including all A1–J10 shelves and Q1
-- NEXT-only state machine with duplicate, out-of-order, mid-item, CONT, and unknown-code safeguards
-- SHA-256 original preservation, GPS-free processed JPEGs, collision-safe names, resume markers, and duplicate batch detection
-- Required manifests, warnings, command audit copies, work CSV, and SQLite records
-- CSV export/re-import strictly by immutable Item ID
-- Streamlit dashboard, importer/preview, command review, image grid, item editor, validation, database browser, recognition, Shopify dry-run, and logs
-- Mock recognition plus provider-neutral OpenAI, Gemini, and local-OCR adapter boundaries
-- Shopify draft-product boundary with SKU checks, staged media, inventory activation, checkpoints, dry-run default, and deliberate live confirmation
-- Synthetic QR-delimited demo generation and automated end-to-end tests
+Legacy START, END, LOCATION, RARE, REVIEW, and CONTINUE QR photographs are ignored as non-blocking legacy commands. They do not control grouping.
 
-## Linux Mint installation
-
-SnapIMS supports Python 3.10 or newer. From the extracted project directory:
+## Install
 
 ```bash
-sudo apt update
-sudo apt install -y python3 python3-venv python3-pip
-chmod +x scripts/install_linux_mint.sh scripts/run_snapims.sh
-./scripts/install_linux_mint.sh
+unzip SnapIMS-v0.13.2-full-source.zip
+cd SnapIMS-v0.13.2
+chmod +x install_v0132.sh
+./install_v0132.sh
+export PATH="$HOME/.local/bin:$PATH"
+snapims version
+snapims up
 ```
 
-The installer creates an isolated `.venv`, initializes `~/SnapIMS-data`, and adds **SnapIMS** to the Linux Mint application menu. Routine use after installation does not require a terminal.
+The installer pins `~/.local/bin/snapims` and the user service to the extracted v0.13.2 release. `snapims status` prints the resolved project path, venv executable, data directory, PID, application version, and inventory schema.
 
-If `python3 --version` is older than 3.10, install a supported Python release and run:
+## Core commands
 
 ```bash
-PYTHON_BIN=python3.11 ./scripts/install_linux_mint.sh
+snapims up
+snapims down
+snapims restart
+snapims status
+snapims doctor
+snapims logs
 ```
 
-## Launch
+## Data safety
 
-Open **SnapIMS** from the Linux Mint application menu, or run the exact launch command:
+Application code and operator data are separate. The default data root is `~/SnapIMS-data`. Original source photographs are never renamed, deleted, recompressed, or modified. Display-name edits do not rename source folders or change immutable Batch/Item IDs.
 
-```bash
-./scripts/run_snapims.sh
-```
+## Verification
 
-Streamlit opens the local interface in the default browser. It does not expose the application to the public internet by default.
-
-## First end-to-end test
-
-Generate a realistic synthetic camera roll:
-
-```bash
-.venv/bin/snapims demo demo-data/camera-roll
-```
-
-Then launch SnapIMS, open **Import batch**, enter the absolute path to `demo-data/camera-roll`, choose **Dry-run parser preview**, and then **Preserve and import batch**. See [DEMO.md](DEMO.md) for the expected files and database checks.
-
-The equivalent command-line smoke path is:
-
-```bash
-.venv/bin/snapims --data-dir demo-data/workspace preview demo-data/camera-roll
-.venv/bin/snapims --data-dir demo-data/workspace import demo-data/camera-roll --batch-name DEMO
-.venv/bin/snapims --data-dir demo-data/workspace integrity
-```
-
-## Data directory
-
-The default root is `~/SnapIMS-data`; override it in `.env` or the Streamlit sidebar.
-
-```text
-data-root/
-├── incoming/
-├── originals/<batch-id>/
-├── processed/<batch-id>/images/
-├── processed/<batch-id>/commands/
-├── processed/<batch-id>/thumbnails/
-├── processed/<batch-id>/batch_manifest.json
-├── processed/<batch-id>/image_manifest.csv
-├── processed/<batch-id>/commands.csv
-├── processed/<batch-id>/inventory_work.csv
-├── processed/<batch-id>/warnings.txt
-├── database/inventory.sqlite3
-├── exports/
-├── backups/
-└── logs/snapims.log
-```
-
-Every source image—including deliberately excluded pre-START/post-END images—is retained byte-for-byte under `originals`. Command images are copied to the command audit directory and never become product images.
-
-## Configuration and secrets
-
-Copy `.env.example` to `.env` only when configuration is needed:
-
-```bash
-cp .env.example .env
-```
-
-Do not commit `.env`. AI keys and the Shopify token are read only from environment variables. SnapIMS runs without them. Shopify defaults to simulation and draft-only mode; a live draft requires valid credentials plus the exact in-app confirmation.
-
-## Developer verification
-
-```bash
-.venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/pytest -q
-.venv/bin/ruff check .
-.venv/bin/mypy snapims --ignore-missing-imports
-```
-
-## Documentation
-
-- [DEMO.md](DEMO.md) — synthetic batch and operator walkthrough
-- [ARCHITECTURE.md](ARCHITECTURE.md) — component and safety design
-- [DATABASE.md](DATABASE.md) — schema, migrations, events, backup, and integrity
-- [PROJECT_STATUS.md](PROJECT_STATUS.md) — verified scope and honest limitations
-
-The authoritative source documents and QR-card PDF are retained under `docs/reference/` for traceability.
+See `TEST_RESULTS.md`, `BROWSER_VERIFICATION.md`, `PERFORMANCE_REPORT.md`, `ISSUE_TRACEABILITY_V0132.md`, and `PRODUCTION_READINESS.md`.

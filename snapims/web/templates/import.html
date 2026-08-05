@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Import · SnapIMS{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">IMPORT · FOLDER WORKFLOW</p>
+    <h1>Import one folder as one batch</h1>
+    <p>Folder boundaries define the batch. Photograph <code>CVHS1:ITEM:NEXT</code> between tapes; no other QR card controls routine Import.</p>
+  </div>
+</div>
+
+{% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}
+{% if message %}<div class="alert error"><strong>Import needs attention</strong><p>{{ message }}</p></div>{% endif %}
+
+<section class="panel import-home-card">
+  <div>
+    <p class="eyebrow">BATCH HOME DIRECTORY</p>
+    <h2>{{ batch_home }}</h2>
+    <p>Create one immediate child folder for each batch. SnapIMS never scans the rest of your operating-system home directory.</p>
+  </div>
+  <div class="next-only-card">
+    <strong>Only active command</strong>
+    <code>CVHS1:ITEM:NEXT</code>
+    <span>The first product photo starts Item 1; the end of the folder closes the final Item.</span>
+    <a class="button" href="/import/next-item-card.png" download>Download NEXT ITEM card</a>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="section-head">
+    <div><p class="eyebrow">AVAILABLE BATCH FOLDERS</p><h2>Select a folder</h2></div>
+    <span>{{ folders|length }} folder{{ '' if folders|length == 1 else 's' }}</span>
+  </div>
+  {% if folders %}
+  <div class="batch-folder-grid">
+    {% for folder in folders %}
+    <article class="batch-folder-card">
+      <div class="folder-card-title">
+        <div><strong>{{ folder.name }}</strong><code>{{ folder.path }}</code></div>
+        <span class="status-pill {{ folder.state|lower|replace(' ', '-') }}">{{ folder.state }}</span>
+      </div>
+      {% if folder.batch_id %}
+      <p>Imported as immutable Batch ID <code>{{ folder.batch_id }}</code>.</p>
+      <a class="button" href="/batch-editor?batch_id={{ folder.batch_id }}">Open Batch Editor</a>
+      {% elif folder.job_id and folder.state in ['In progress', 'Ready to resume', 'Needs attention'] %}
+      <a class="button primary" href="/import?job_id={{ folder.job_id }}">Open current Preview</a>
+      {% else %}
+      <form method="post" action="/import/preview" data-prevent-double-submit>
+        <input type="hidden" name="folder_path" value="{{ folder.path }}">
+        <label>Batch name
+          <input value="{{ folder.name }}" readonly aria-label="Derived batch name">
+        </label>
+        <label>Batch location <span class="muted">optional</span>
+          <input name="batch_location" placeholder="A6, Warehouse Wall, Processing Table, or blank">
+        </label>
+        <p><small>Blank or “None” means unassigned. Free-text locations are accepted.</small></p>
+        <button class="primary">Preview batch</button>
+      </form>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty compact-empty">
+    <h3>No batch folders found</h3>
+    <p>Create a folder directly inside <code>{{ batch_home }}</code>, place the photographs in it, then reload this page.</p>
+  </div>
+  {% endif %}
+</section>
+
+{% if job %}
+<section class="panel import-job-card" data-import-job="{{ job.job_id }}" data-import-status="{{ job.status }}">
+  <div class="section-head">
+    <div>
+      <p class="eyebrow">IMPORT JOB</p>
+      <h2>{{ job.folder_name }}</h2>
+      <code>{{ job.job_id }}</code>
+    </div>
+    <span class="status-pill {{ job.status|lower|replace('_', '-') }}" data-import-status-label>{{ job.status|replace('_', ' ') }}</span>
+  </div>
+  <div class="progress-shell" aria-live="polite">
+    <div class="progress-track"><span data-import-progress style="width: {{ ((job.processed_count / job.total_count * 100) if job.total_count else 0)|round|int }}%"></span></div>
+    <div class="progress-details">
+      <strong data-import-stage>{{ job.stage }}</strong>
+      <span><b data-import-processed>{{ job.processed_count }}</b> of <b data-import-total>{{ job.total_count }}</b> photos</span>
+      <span><b data-import-elapsed>{{ '%.1f'|format(job.elapsed_seconds) }}</b>s elapsed</span>
+    </div>
+  </div>
+  <div class="metric-grid compact import-metrics">
+    <article><b>{{ job.cache_hits }}</b><span>Cache hits</span></article>
+    <article><b>{{ job.cache_misses }}</b><span>Cache misses</span></article>
+    <article><b>{{ job.decode_count }}</b><span>Image decodes</span></article>
+    <article><b>{{ job.qr_scan_count }}</b><span>QR scans</span></article>
+    <article><b>{{ job.full_hash_count }}</b><span>Full hashes</span></article>
+  </div>
+  {% if job.error_message %}<div class="alert error" data-import-error>{{ job.error_message }}</div>{% else %}<div class="alert error" data-import-error hidden></div>{% endif %}
+  {% if job.status in ['QUEUED','RUNNING','COMMIT_QUEUED','COMMITTING'] %}
+  <p class="muted">This page may be refreshed or closed. Progress is stored in SQLite and resumes after restart.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if preview and preview.folder_path %}
+<section class="panel preview-summary">
+  <div class="section-head">
+    <div><p class="eyebrow">PREVIEW · NOT YET IMPORTED</p><h2>{{ preview.batch_name }}</h2></div>
+    <span>{{ preview.location_display }}</span>
+  </div>
+  <dl class="batch-identity-grid">
+    <div><dt>Source folder name</dt><dd>{{ preview.folder_name }}</dd></div>
+    <div><dt>Current batch display name</dt><dd>{{ preview.batch_name }}</dd></div>
+    <div><dt>Batch location</dt><dd>{{ preview.location_display }}</dd></div>
+    <div><dt>Source path</dt><dd><code>{{ preview.folder_path }}</code></dd></div>
+  </dl>
+  <div class="metric-grid compact">
+    <article><b>{{ preview.item_count }}</b><span>Items</span></article>
+    <article><b>{{ preview.product_photo_count }}</b><span>Product photos</span></article>
+    <article><b>{{ preview.next_count }}</b><span>NEXT cards</span></article>
+    <article><b>{{ preview.legacy_count }}</b><span>Legacy ignored</span></article>
+    <article><b>{{ preview.warning_count }}</b><span>Warnings</span></article>
+  </div>
+  {% if preview.warnings %}
+  <div class="alert warning-box"><strong>Non-blocking Import notes</strong><ul>{% for warning in preview.warnings %}<li>{{ warning }}</li>{% endfor %}</ul></div>
+  {% endif %}
+</section>
+
+<section class="preview-items">
+  {% for item in preview_items %}
+  <article class="panel preview-item-card">
+    <div class="section-head"><div><p class="eyebrow">ITEM {{ item.sequence }}</p><h2>{{ item.photo_count }} product photo{{ '' if item.photo_count == 1 else 's' }}</h2></div>{% if item.sequence > 1 %}<span>Boundary confirmed by NEXT or correction</span>{% endif %}</div>
+    <div class="preview-photo-grid">
+      {% for photo in item.photos %}
+      <div class="preview-photo-card">
+        {% if photo.thumbnail_available %}<img loading="lazy" src="/import/thumbnail/{{ photo.cache_id }}" alt="Preview of {{ photo.name }}">{% else %}<div class="no-thumb">Preview unavailable</div>{% endif %}
+        <strong>{{ photo.name }}</strong>
+        <small>Interpreted as {{ photo.kind|replace('_',' ') }}</small>
+        <form method="post" action="/import/correction" class="photo-interpret-form">
+          <input type="hidden" name="job_id" value="{{ job.job_id }}">
+          <input type="hidden" name="source_path" value="{{ photo.source_path }}">
+          <input type="hidden" name="operation" value="interpret">
+          <select name="action" aria-label="Interpret {{ photo.name }}">
+            <option value="auto" {% if photo.correction_action == 'auto' %}selected{% endif %}>Automatic</option>
+            <option value="product" {% if photo.correction_action == 'product' %}selected{% endif %}>Treat as Product Photo</option>
+            <option value="next" {% if photo.correction_action == 'next' %}selected{% endif %}>Treat as NEXT ITEM</option>
+            <option value="ignore" {% if photo.correction_action == 'ignore' %}selected{% endif %}>Ignore Photo</option>
+          </select>
+          <button>Apply</button>
+        </form>
+        <div class="photo-correction-actions">
+          {% if not (item.sequence == 1 and loop.first) %}
+          <form method="post" action="/import/correction"><input type="hidden" name="job_id" value="{{ job.job_id }}"><input type="hidden" name="source_path" value="{{ photo.source_path }}"><input type="hidden" name="action" value="product"><input type="hidden" name="operation" value="split"><button>Split Item Before This Photo</button></form>
+          {% endif %}
+          {% if item.sequence > 1 and loop.first %}
+          <form method="post" action="/import/correction"><input type="hidden" name="job_id" value="{{ job.job_id }}"><input type="hidden" name="source_path" value="{{ photo.source_path }}"><input type="hidden" name="action" value="product"><input type="hidden" name="operation" value="merge"><button>Merge With Previous Item</button></form>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+  {% endfor %}
+</section>
+{% if preview_page_count > 1 %}
+<nav class="panel pagination" aria-label="Import Preview pages">
+  {% if preview_page > 1 %}<a class="button" href="/import?job_id={{ job.job_id }}&page={{ preview_page - 1 }}">Previous 20 Items</a>{% endif %}
+  <span>Items page {{ preview_page }} of {{ preview_page_count }}</span>
+  {% if preview_page < preview_page_count %}<a class="button" href="/import?job_id={{ job.job_id }}&page={{ preview_page + 1 }}">Next 20 Items</a>{% endif %}
+</nav>
+{% endif %}
+
+<section class="panel commit-panel">
+  {% if preview.can_commit and job.status in ['READY','NEEDS_ATTENTION'] %}
+  <form method="post" action="/import/commit" data-prevent-double-submit>
+    <input type="hidden" name="job_id" value="{{ job.job_id }}">
+    <button class="primary">Import {{ preview.item_count }} Item{{ '' if preview.item_count == 1 else 's' }}</button>
+  </form>
+  <p>Commit verifies source metadata, hashes each file once, preserves originals, and writes the batch in one durable transaction.</p>
+  {% elif job.status == 'IMPORTED' %}
+  <div class="alert success"><strong>Batch imported</strong><p>Immutable Batch ID: <code>{{ job.result_batch_id }}</code></p><a class="button primary" href="/recognition?batch_id={{ job.result_batch_id }}">Continue to Recognition</a> <a class="button" href="/batch-editor?batch_id={{ job.result_batch_id }}">Open Batch Editor</a></div>
+  {% else %}
+  <button class="primary" disabled>Import unavailable</button>
+  {% endif %}
+</section>
+{% elif job and job.status == 'IMPORTED' %}
+<section class="panel"><div class="alert success"><strong>Batch imported</strong><p>Immutable Batch ID: <code>{{ job.result_batch_id }}</code></p><a class="button primary" href="/recognition?batch_id={{ job.result_batch_id }}">Continue to Recognition</a></div></section>
+{% endif %}
+{% endblock %}

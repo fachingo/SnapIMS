@@ -1,0 +1,5 @@
+sss                                                                      [100%]
+=========================== short test summary info ============================
+SKIPPED [1] ../SnapIMS-v0.13.0/tests/test_catalog_live_wikipedia.py:12: Set SNAPIMS_LIVE_WIKIPEDIA_TEST=1 to run the bounded live English Wikipedia integration test.
+SKIPPED [1] tests/test_import_v0130.py:366: could not import 'pillow_heif': No module named 'pillow_heif'
+SKIPPED [1] ../SnapIMS-v0.13.0/tests/test_infrastructure.py:583: launcher installer intentionally refuses root; verify as the operator user

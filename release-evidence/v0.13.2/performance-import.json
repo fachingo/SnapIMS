@@ -1,0 +1,48 @@
+{
+  "environment": {
+    "python": "3.13.5",
+    "platform": "linux",
+    "cpu_count": 5,
+    "actual_target_mac_available": false
+  },
+  "typical_20_item_42_photo": {
+    "files": 42,
+    "preview_request_return_ms": 79.845,
+    "cold_preview_ms": 479,
+    "warm_preview_ms": 18,
+    "cold_decodes": 42,
+    "cold_qr_scans": 42,
+    "warm_decodes": 0,
+    "warm_qr_scans": 0,
+    "warm_cache_hits": 42,
+    "location_only_request_return_ms": 15.393,
+    "commit_ms": 1517.286,
+    "full_hashes_at_commit": 42
+  },
+  "synthetic_100_item_202_photo": {
+    "files": 202,
+    "preview_request_return_ms": 8.793,
+    "cold_preview_ms": 2388,
+    "warm_preview_ms": 40,
+    "cold_decodes": 202,
+    "cold_qr_scans": 202,
+    "warm_decodes": 0,
+    "warm_qr_scans": 0,
+    "warm_cache_hits": 202
+  },
+  "memory": {
+    "rss_before_mb": 147.99,
+    "rss_after_typical_mb": 168.77,
+    "rss_after_synthetic_mb": 167.56,
+    "observed_peak_proxy_mb": 168.77
+  },
+  "baseline_v0.12.3": {
+    "runs_ms": [
+      1517.6263839998683,
+      1526.7466959999183
+    ],
+    "item_count": 20,
+    "max_rss_kb": 187564
+  },
+  "cold_preview_improvement_percent": 68.44
+}
