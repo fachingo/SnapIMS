@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Confirm Bulk Pricing · SnapIMS{% endblock %}
+{% block content %}
+<section class="pricing-heading">
+  <div><p class="eyebrow">BULK PRICING CHECKPOINT</p><h1>Confirm {{ action|replace('_',' ')|title }}</h1><p>This operation will affect exactly {{ item_ids|length }} selected Item{{ '' if item_ids|length==1 else 's' }}.</p></div>
+  <a class="button" href="/pricing?batch_id={{ batch_id }}">Cancel</a>
+</section>
+<section class="panel">
+  {% if action=='FIXED' %}<div class="alert warning"><strong>Fixed price:</strong> ${{ fixed_price }} CAD</div>{% endif %}
+  <div class="table-scroll"><table class="pricing-table"><thead><tr><th>Item</th><th>Approved title</th><th>Current price</th><th>Pricing status</th><th>Evidence</th></tr></thead><tbody>
+  {% for row in rows %}<tr><td><code>{{ row.item.item_id }}</code><small>{{ row.item.batch_id }}</small></td><td>{{ row.state.approved_title or row.item.title }}</td><td>{% if row.item.price_cents is not none %}${{ '%.2f'|format(row.item.price_cents/100) }}{% else %}—{% endif %}</td><td>{{ row.state.status|replace('_',' ')|title }}</td><td>{% if row.evidence %}{{ row.evidence.tapes_averaged }} tape{{ '' if row.evidence.tapes_averaged==1 else 's' }} averaged{% else %}—{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <form method="post" action="/pricing/bulk" class="bulk-confirm-actions">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="action" value="{{ action }}">
+    <input type="hidden" name="fixed_price" value="{{ fixed_price }}">
+    <input type="hidden" name="batch_id" value="{{ batch_id }}">
+    <input type="hidden" name="request_id" value="{{ request_id }}">
+    <input type="hidden" name="confirmed" value="true">
+    {% for item_id in item_ids %}<input type="hidden" name="item_ids" value="{{ item_id }}">{% endfor %}
+    <a class="button" href="/pricing?batch_id={{ batch_id }}">Back without changes</a>
+    <button class="primary" data-prevent-double-submit>Confirm {{ action|replace('_',' ')|title }} for {{ item_ids|length }} Items</button>
+  </form>
+</section>
+{% endblock %}

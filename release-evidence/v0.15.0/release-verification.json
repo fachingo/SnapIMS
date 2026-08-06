@@ -1,0 +1,8 @@
+{
+  "release": "0.15.0",
+  "required_files": "PASS",
+  "compile": "PASS",
+  "javascript": "PASS",
+  "installer_syntax": "PASS",
+  "browser": "PASS"
+}

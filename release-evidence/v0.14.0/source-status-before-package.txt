@@ -1,0 +1,132 @@
+ M .env.example
+ M ARCHITECTURE.md
+ M BROWSER_VERIFICATION.md
+ M DEPLOYMENT_GUIDE.md
+ M DEVELOPER_GUIDE.md
+ M DOCUMENTATION_VERIFICATION.md
+ M END_OF_BATCH_CHECKLIST.md
+ M IMPORT_FIXTURE_MATRIX.md
+ M INSTALLATION_GUIDE.md
+ D ISSUE_REGISTER_V0132.csv
+ D ISSUE_TRACEABILITY_V0132.md
+ M LOCAL_SOURCE_INVENTORY.md
+ M OPERATOR_GUIDE.md
+ M PERFORMANCE_REPORT.md
+ M PRODUCTION_READINESS.md
+ M README.md
+ M RECOVERY_PROCEDURES.md
+ M RELEASE_NOTES.md
+ M ROLLBACK.md
+ M SCREENSHOT_INDEX.md
+ M SKIPPED_EXTERNAL_TESTS.md
+ D SNAPIMS_PRE_1_0_ROADMAP_V0132.md
+ D SnapIMS_Operator_Guide_v0.13.2.docx
+ D SnapIMS_Operator_Guide_v0.13.2.pdf
+ M TEST_RESULTS.md
+ M V1_PRODUCTION_ACCEPTANCE_GAPS.md
+ D browser-evidence/v0.13.2/browser-verification.json
+ D browser-evidence/v0.13.2/chromium-batch-editor-controls.png
+ D browser-evidence/v0.13.2/chromium-batch-editor.png
+ D browser-evidence/v0.13.2/chromium-import-commit.png
+ D browser-evidence/v0.13.2/chromium-import-correction.png
+ D browser-evidence/v0.13.2/chromium-import-preview.png
+ D browser-evidence/v0.13.2/chromium-import-top.png
+ D browser-evidence/v0.13.2/chromium-mobile-editor-top.png
+ D browser-evidence/v0.13.2/chromium-mobile-editor.png
+ D browser-evidence/v0.13.2/server.log
+ D docs/SnapIMS_v0.13.2_Complete_Operating_Manual.docx
+ D docs/SnapIMS_v0.13.2_Complete_Operating_Manual.pdf
+ D docs/SnapIMS_v0.13.2_Day-to-Day_Guide.docx
+ D docs/SnapIMS_v0.13.2_Day-to-Day_Guide.pdf
+ D docs/SnapIMS_v0.13.2_Operator_Guide.docx
+ D docs/SnapIMS_v0.13.2_Operator_Guide.pdf
+ D install_v0132.sh
+ M pyproject.toml
+ D release-evidence/v0.13.2/QA_REQUIREMENTS_SOURCE.md
+ D release-evidence/v0.13.2/QA_V0130_ISSUE_REGISTER.csv
+ D release-evidence/v0.13.2/QA_V0130_STRESS_REPORT.md
+ D release-evidence/v0.13.2/clean-install-doctor.log
+ D release-evidence/v0.13.2/clean-install-service.txt
+ D release-evidence/v0.13.2/clean-install-status.txt
+ D release-evidence/v0.13.2/clean-install.log
+ D release-evidence/v0.13.2/final-clean-install.log
+ D release-evidence/v0.13.2/final-clean-status.txt
+ D release-evidence/v0.13.2/final-restart-health-1.json
+ D release-evidence/v0.13.2/final-restart-health-2.json
+ D release-evidence/v0.13.2/focused-final-tests.log
+ D release-evidence/v0.13.2/full-pytest-fd-late-samples.tsv
+ D release-evidence/v0.13.2/full-pytest-fd-monitor.json
+ D release-evidence/v0.13.2/full-pytest-monitored.done
+ D release-evidence/v0.13.2/full-pytest-monitored.log
+ D release-evidence/v0.13.2/full-pytest-summary.txt
+ D release-evidence/v0.13.2/full-pytest-verbose.log
+ D release-evidence/v0.13.2/full-pytest.log
+ D release-evidence/v0.13.2/performance-import.json
+ D release-evidence/v0.13.2/release-static-verification.json
+ D release-evidence/v0.13.2/restart-health-1.json
+ D release-evidence/v0.13.2/restart-health-2.json
+ D release-evidence/v0.13.2/restart-server-1.log
+ D release-evidence/v0.13.2/restart-server-2.log
+ D release-evidence/v0.13.2/skip-reasons.txt
+ D release-evidence/v0.13.2/source-changes.patch
+ D release-evidence/v0.13.2/source-diff-stat.txt
+ D release-evidence/v0.13.2/source-status-before-package.txt
+ D release-evidence/v0.13.2/static-checks.txt
+ D release-evidence/v0.13.2/upgrade-install.log
+ D release-evidence/v0.13.2/upgrade-launcher-rewritten.sh
+ D release-evidence/v0.13.2/upgrade-preservation.txt
+ D release-evidence/v0.13.2/upgrade-service-rewritten.txt
+ D release-evidence/v0.13.2/wheel-build.log
+ D scripts/benchmark_import_v0132.py
+ D scripts/browser_verify_v0132.py
+ D scripts/build_guides_v0132.py
+ D scripts/build_manifest_v0132.py
+ D scripts/generate_import_fixture_sets_v0132.py
+ D scripts/verify_release_v0132.py
+ M snapims/__init__.py
+ M snapims/cli.py
+ M snapims/config.py
+ M snapims/provider_probes.py
+ M snapims/settings.py
+ M snapims/shopify/client.py
+ M snapims/shopify/service.py
+ M snapims/web/app.py
+ M snapims/web/static/app.css
+ M snapims/web/static/app.js
+ M snapims/web/templates/settings.html
+ M tests/test_provider_probes.py
+ M tests/test_settings_web.py
+ M tests/test_v0101_regressions.py
+?? ISSUE_REGISTER_V0140.csv
+?? ISSUE_TRACEABILITY_V0140.md
+?? SHOPIFY_SETUP_GUIDE.md
+?? SNAPIMS_PRE_1_0_ROADMAP_V0140.md
+?? SnapIMS_Operator_Guide_v0.14.0.docx
+?? SnapIMS_Operator_Guide_v0.14.0.pdf
+?? browser-evidence/v0.14.0/
+?? dist/
+?? docs/SnapIMS_v0.14.0_Complete_Operating_Manual.docx
+?? docs/SnapIMS_v0.14.0_Complete_Operating_Manual.pdf
+?? docs/SnapIMS_v0.14.0_Day-to-Day_Guide.docx
+?? docs/SnapIMS_v0.14.0_Day-to-Day_Guide.pdf
+?? docs/SnapIMS_v0.14.0_Operator_Guide.docx
+?? docs/SnapIMS_v0.14.0_Operator_Guide.pdf
+?? install_v0140.sh
+?? release-evidence/v0.14.0/
+?? scripts/__pycache__/
+?? scripts/benchmark_import_v0140.py
+?? scripts/browser_verify_v0140.py
+?? scripts/build_guides_v0140.py
+?? scripts/build_manifest_v0140.py
+?? scripts/generate_import_fixture_sets_v0140.py
+?? scripts/verify_release_v0140.py
+?? snapims.egg-info/
+?? snapims/__pycache__/
+?? snapims/catalog/__pycache__/
+?? snapims/pricing/__pycache__/
+?? snapims/recognition/__pycache__/
+?? snapims/shopify/__pycache__/
+?? snapims/shopify/auth.py
+?? snapims/web/__pycache__/
+?? tests/__pycache__/
+?? tests/test_shopify_auth_v0140.py

@@ -1,0 +1,362 @@
+{% extends "base.html" %}
+{% block title %}Settings · SnapIMS{% endblock %}
+{% macro csrf() %}<input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% endmacro %}
+{% macro field(section, key, label, type="text", help="") %}
+  {% set item = settings[section][key] %}
+  <label>{{ label }}
+    <input
+      name="{{ key }}"
+      type="{{ type }}"
+      value="{{ form_values.get(key, item.value) if not item.secret else '' }}"
+      {% if item.externally_managed %}disabled{% endif %}
+      {% if item.secret %}autocomplete="off" placeholder="{{ 'Configured — enter a replacement' if item.configured else 'Not configured' }}"{% endif %}
+    >
+    <small>
+      Source: {{ item.provenance }}{% if item.externally_managed %} · externally managed; SnapIMS will not overwrite it{% endif %}
+      {% if help %} · {{ help }}{% endif %}
+    </small>
+  </label>
+{% endmacro %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow">SETTINGS</p><h1>Secure configuration</h1></div>
+</div>
+{% if message %}<div class="alert success">{{ message }}</div>{% endif %}
+{% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+{% if test_result %}
+<div class="alert {{ 'success' if test_result.status == 'PASS' else 'warning' }}">
+  <strong>{{ test_result.status }}</strong> — {{ test_result.summary }}
+</div>
+{% endif %}
+
+<nav class="subnav" aria-label="Settings sections">
+  <a href="#general">General</a>
+  <a href="#recognition">Recognition</a>
+  <a href="#shopify">Shopify</a>
+  <a href="#movie">Movie Data</a>
+  <a href="#infrastructure">Infrastructure</a>
+  <a href="#security">Security</a>
+  <a href="#backup">Backup &amp; Retention</a>
+</nav>
+
+<section class="panel" id="general">
+  <h2>General</h2>
+  <form method="post" action="/settings">
+    {{ csrf() }}
+    <label>Configured incoming folder
+      <input name="incoming_folder" value="{{ incoming }}">
+      <small>Folder must already exist and be readable.</small>
+    </label>
+    <button class="primary">Save general settings</button>
+  </form>
+  <h3>Recent import folders</h3>
+  <ul>{% for folder in recent %}<li><code>{{ folder }}</code></li>{% else %}<li>No successful imports yet.</li>{% endfor %}</ul>
+</section>
+
+<section class="panel" id="recognition">
+  <p class="eyebrow">STEP 1</p><h2>Recognition</h2>
+  <p>Connection tests use submitted values in memory. Secret inputs are blank in every response and are discarded unless you explicitly save them.</p>
+  <form method="post" action="/settings/recognition/secrets" data-prevent-double-submit>
+    {{ csrf() }}
+    {{ field("recognition", "OPENAI_API_KEY", "OpenAI API key", "password") }}
+    <label>Current administrator password
+      <input type="password" name="current_password" autocomplete="current-password" required>
+    </label>
+    <button>Save OpenAI key securely</button>
+  </form>
+  <form method="post" action="/settings/recognition/test" data-prevent-double-submit>
+    {{ csrf() }}
+    <div class="form-grid">
+      {{ field("recognition", "OPENAI_API_KEY", "Unsaved OpenAI key for this test", "password") }}
+      <label>Manual model ID
+        <input name="model_id" value="{{ form_values.get('model_id', '') }}" placeholder="gpt-…">
+      </label>
+    </div>
+    <button name="test_action" value="discover">Test key &amp; discover models</button>
+    <button name="test_action" value="probe">Run bounded image + strict-schema probe</button>
+  </form>
+  {% if test_result.kind == "openai_models" %}
+  <details open><summary>Discovered model IDs</summary>
+    <div class="code-list">{% for model in test_result.models %}<code>{{ model }}</code>{% endfor %}</div>
+  </details>
+  {% elif test_result.kind == "openai_probe" %}
+  <p><strong>{{ test_result.model_id }}</strong>: {{ 'compatible' if test_result.compatible else 'not compatible' }}.</p>
+  {% endif %}
+  <p>Only models that passed the bounded image and strict-schema probe can be assigned to a role.</p>
+  <p>Compatible registry: {% for model in compatible_models %}<code>{{ model }}</code>{% else %}<em>No models tested yet.</em>{% endfor %}</p>
+  <form method="post" action="/settings/recognition/save">
+    {{ csrf() }}
+    <div class="form-grid">
+      {{ field("recognition", "SNAPIMS_RECOGNITION_PROVIDER", "Provider") }}
+      {{ field("recognition", "SNAPIMS_OPENAI_BASELINE_MODEL", "Baseline model") }}
+      {{ field("recognition", "SNAPIMS_OPENAI_ESCALATION_MODEL", "Escalation model") }}
+      {{ field("recognition", "SNAPIMS_OPENAI_FRONTIER_MODEL", "Optional frontier model") }}
+      {{ field("recognition", "SNAPIMS_RECOGNITION_CONFIDENCE", "Confidence threshold", "number") }}
+      {{ field("recognition", "SNAPIMS_RECOGNITION_CONTRADICTION_RULES", "Contradiction rules") }}
+      {{ field("recognition", "SNAPIMS_RECOGNITION_MAX_ATTEMPTS", "Maximum attempts", "number") }}
+      {{ field("recognition", "SNAPIMS_RECOGNITION_TIMEOUT_SECONDS", "Timeout seconds", "number") }}
+      {{ field("recognition", "SNAPIMS_RECOGNITION_RETRY_LIMIT", "Retry limit", "number") }}
+      {{ field("recognition", "SNAPIMS_RECOGNITION_IMAGE_COUNT", "Image count", "number") }}
+      {{ field("recognition", "SNAPIMS_RECOGNITION_IMAGE_PROFILE", "Image profile") }}
+      {{ field("recognition", "SNAPIMS_RECOGNITION_PROMPT_VERSION", "Prompt version") }}
+      {{ field("recognition", "SNAPIMS_CAD_TOKEN_PRICE_TABLE", "CAD token price table (JSON)") }}
+      {{ field("recognition", "SNAPIMS_CAD_TOKEN_PRICE_VERSION", "Price table version") }}
+    </div>
+    <button class="primary">Save tested recognition configuration</button>
+  </form>
+  <h3>Provider runtime</h3>
+  <table><tbody>{% for name,state in providers.items() %}<tr><th>{{ name }}</th><td>{{ 'Available' if state[0] else 'Unavailable' }}</td><td>{{ state[1] }}</td></tr>{% endfor %}</tbody></table>
+</section>
+
+<section class="panel" id="shopify">
+  <p class="eyebrow">STEP 2</p><h2>Shopify connection</h2>
+  <p>Connect the installed Shopify Dev Dashboard app once. SnapIMS requests and refreshes short-lived access tokens automatically; you do not paste an Admin API access token.</p>
+
+  <div class="status-grid">
+    <div><strong>Authentication mode</strong><br><code>{{ shopify_token_status.mode }}</code></div>
+    <div><strong>Token status</strong><br>{{ shopify_token_status.state }}</div>
+    <div><strong>Expires</strong><br>{{ shopify_token_status.expires_at or 'Not available' }}</div>
+    <div><strong>Draft-only publishing</strong><br>Enabled</div>
+  </div>
+
+  {% if shopify_auth_mode == 'legacy_static_token' %}
+  <div class="alert warning">
+    A legacy static Admin API token is configured. It remains available as a deprecated fallback until Client ID and Client Secret are saved successfully.
+  </div>
+  {% endif %}
+
+  <h3>1. Store and Dev Dashboard credentials</h3>
+  <form method="post" action="/settings/shopify/test" data-prevent-double-submit>
+    {{ csrf() }}
+    <div class="form-grid">
+      {{ field("shopify", "SHOPIFY_STORE_DOMAIN", "Shopify store domain", "text", "Use the permanent .myshopify.com domain, without https:// or a trailing path") }}
+      {{ field("shopify", "SHOPIFY_API_VERSION", "Admin API version") }}
+      {{ field("shopify", "SHOPIFY_CLIENT_ID", "Client ID", "text", "Shopify Dev Dashboard → SnapIMS → Settings") }}
+      {{ field("shopify", "SHOPIFY_CLIENT_SECRET", "Client Secret", "password", "Often begins with shpss_. The generated access token is never entered manually") }}
+      <label>Current SnapIMS administrator password
+        <input type="password" name="current_password" autocomplete="current-password">
+        <small>Required only when saving or changing credentials.</small>
+      </label>
+    </div>
+    <button name="test_only" value="true">Test credentials without saving</button>
+    <button class="primary" name="save_after_test" value="true">Test and save securely</button>
+  </form>
+
+  {% if test_result.kind == "shopify" and test_result.shop %}
+  <h3>2. Verified connection</h3>
+  <dl>
+    <dt>Store</dt><dd>{{ test_result.shop.name }}</dd>
+    <dt>Permanent domain</dt><dd>{{ test_result.shop.myshopify_domain }}</dd>
+    <dt>Shop ID</dt><dd><code>{{ test_result.shop.id }}</code></dd>
+    <dt>Authentication</dt><dd>{{ test_result.authentication_mode }}</dd>
+    <dt>Access token</dt><dd>{{ test_result.token_state }}{% if test_result.token_expires_at %} · expires {{ test_result.token_expires_at }}{% endif %}</dd>
+  </dl>
+
+  <h3>Required permissions</h3>
+  <table><thead><tr><th>Capability</th><th>Status</th></tr></thead><tbody>
+    {% for capability, missing in test_result.missing_by_capability.items() %}
+    <tr><td>{{ capability }}</td><td>{% for scope in missing %}<code>Missing {{ scope }}</code>{% else %}Ready{% endfor %}</td></tr>
+    {% endfor %}
+  </tbody></table>
+
+  <h3>3. Inventory location</h3>
+  <p>Select the Shopify inventory location by name. SnapIMS stores the Location GID internally.</p>
+  <form method="post" action="/settings/shopify/location">
+    {{ csrf() }}
+    <div class="choice-list">
+      {% for location in test_result.locations %}
+      <label class="choice-card">
+        <input type="radio" name="SHOPIFY_LOCATION_ID" value="{{ location.id }}" {% if settings.shopify.SHOPIFY_LOCATION_ID.value == location.id %}checked{% endif %} {% if not location.is_active %}disabled{% endif %} required>
+        <strong>{{ location.name }}</strong>
+        <small>{{ 'Active' if location.is_active else 'Inactive' }} · {{ 'Fulfills online orders' if location.fulfills_online_orders else 'Does not fulfill online orders' }} · <code>{{ location.id }}</code></small>
+      </label>
+      {% else %}<div class="alert warning">No Shopify locations were returned. Confirm the app has <code>read_locations</code> and the store has an active location.</div>{% endfor %}
+    </div>
+    {% if test_result.locations %}<button class="primary">Save selected inventory location</button>{% endif %}
+  </form>
+
+  <h3>4. Storefront publication</h3>
+  <p>Select the publication used when an operator deliberately promotes drafts live. Draft creation does not use this setting.</p>
+  <form method="post" action="/settings/shopify/publication">
+    {{ csrf() }}
+    <div class="choice-list">
+      {% for publication in test_result.publications %}
+      <label class="choice-card">
+        <input type="radio" name="SHOPIFY_PUBLICATION_ID" value="{{ publication.id }}" {% if settings.shopify.SHOPIFY_PUBLICATION_ID.value == publication.id %}checked{% endif %} required>
+        <strong>{{ publication.name }}</strong>
+        <small>{{ publication.catalog_title or 'Shopify publication' }} · {{ 'Auto-publish enabled' if publication.auto_publish else 'Manual publication' }} · <code>{{ publication.id }}</code></small>
+      </label>
+      {% else %}<div class="alert warning">No publications were returned. Confirm the app has <code>read_publications</code> and <code>write_publications</code>.</div>{% endfor %}
+    </div>
+    {% if test_result.publications %}<button class="primary">Save storefront publication</button>{% endif %}
+  </form>
+  {% endif %}
+
+  <h3>Connection controls</h3>
+  <div class="button-row">
+    <form method="post" action="/settings/shopify/test" data-prevent-double-submit>
+      {{ csrf() }}
+      <input type="hidden" name="SHOPIFY_STORE_DOMAIN" value="{{ settings.shopify.SHOPIFY_STORE_DOMAIN.value }}">
+      <input type="hidden" name="SHOPIFY_CLIENT_ID" value="{{ settings.shopify.SHOPIFY_CLIENT_ID.value }}">
+      <input type="hidden" name="SHOPIFY_API_VERSION" value="{{ settings.shopify.SHOPIFY_API_VERSION.value }}">
+      <button>Retest saved connection</button>
+    </form>
+    <form method="post" action="/settings/shopify/refresh" data-prevent-double-submit>
+      {{ csrf() }}
+      <label>Administrator password
+        <input type="password" name="current_password" autocomplete="current-password" required>
+      </label>
+      <button>Refresh access token now</button>
+    </form>
+  </div>
+
+  <details>
+    <summary>Advanced connection removal</summary>
+    <p>Removing the connection deletes saved Shopify credentials and cached access only. Inventory, Shopify IDs, publish attempts, and reconciliation history remain intact.</p>
+    <form method="post" action="/settings/shopify/remove" data-prevent-double-submit>
+      {{ csrf() }}
+      <div class="form-grid">
+        <label>Current administrator password<input type="password" name="current_password" autocomplete="current-password" required></label>
+        <label>Type REMOVE to confirm<input name="confirmation" required></label>
+      </div>
+      <button class="danger">Remove Shopify connection</button>
+    </form>
+  </details>
+
+  <p><strong>Publish safety:</strong> SnapIMS is draft-first. Live storefront publication requires a separate typed confirmation in Publish.</p>
+  <p><a href="/publish">Open the complete simulation, draft review, and live publication workflow</a>.</p>
+</section>
+
+<section class="panel" id="movie">
+  <p class="eyebrow">STEP 3</p><h2>Movie Data</h2>
+  <form method="post" action="/settings/movie/test" data-prevent-double-submit>
+    {{ csrf() }}
+    <div class="form-grid">
+      {{ field("movie", "SNAPIMS_WIKIPEDIA_USER_AGENT", "Unsaved Wikimedia User-Agent", "text", "include a contact URL or email") }}
+      <label>Candidate title<input name="candidate_title" value="{{ form_values.get('candidate_title', '') }}" required></label>
+      <label>Candidate year<input name="candidate_year" type="number" value="{{ form_values.get('candidate_year', '') }}"></label>
+      {{ field("movie", "SNAPIMS_WIKIPEDIA_TIMEOUT_SECONDS", "Timeout seconds", "number") }}
+      {{ field("movie", "SNAPIMS_WIKIPEDIA_MAX_RETRIES", "Retry limit", "number") }}
+      {{ field("movie", "SNAPIMS_WIKIPEDIA_MIN_INTERVAL_SECONDS", "Minimum request interval", "number") }}
+    </div>
+    <button>Test candidate search and provenance</button>
+  </form>
+  {% if test_result.kind == "movie" and test_result.candidates %}
+  <h3>Candidate provenance preview</h3>
+  <pre>{{ test_result.candidates | tojson(indent=2) }}</pre>
+  {% endif %}
+  <form method="post" action="/settings/movie/secrets">
+    {{ csrf() }}
+    {{ field("movie", "SNAPIMS_MOVIE_PROVIDER_API_KEY", "Optional provider credential", "password") }}
+    <label>Current administrator password<input type="password" name="current_password" autocomplete="current-password" required></label>
+    <button>Save provider credential securely</button>
+  </form>
+  <form method="post" action="/settings/movie/save">
+    {{ csrf() }}
+    <div class="form-grid">
+      {{ field("movie", "SNAPIMS_MOVIE_PROVIDER", "Candidate provider") }}
+      {{ field("movie", "SNAPIMS_MOVIE_FIELD_PROFILE", "Approved field profile") }}
+      {{ field("movie", "SNAPIMS_MOVIE_LANGUAGE", "Language") }}
+      {{ field("movie", "SNAPIMS_MOVIE_REGION", "Region") }}
+      {{ field("movie", "SNAPIMS_MOVIE_CACHE_SECONDS", "Cache seconds", "number") }}
+      {{ field("movie", "SNAPIMS_MOVIE_REFRESH_DAYS", "Refresh days", "number") }}
+      {{ field("movie", "SNAPIMS_WIKIPEDIA_USER_AGENT", "Wikimedia User-Agent") }}
+      {{ field("movie", "SNAPIMS_MOVIE_REQUEST_CONCURRENCY", "Request concurrency", "number", "bounded to four; one is recommended") }}
+      {{ field("movie", "SNAPIMS_WIKIPEDIA_MIN_INTERVAL_SECONDS", "Minimum request interval", "number") }}
+      {{ field("movie", "SNAPIMS_WIKIPEDIA_TIMEOUT_SECONDS", "Timeout seconds", "number") }}
+      {{ field("movie", "SNAPIMS_WIKIPEDIA_MAX_RETRIES", "Retry limit", "number") }}
+      {{ field("movie", "SNAPIMS_MOVIE_DUMP_LOCATION", "Catalog dump location") }}
+      {{ field("movie", "SNAPIMS_MOVIE_DUMP_POLICY", "Dump storage policy") }}
+    </div>
+    <button class="primary">Save Movie Data settings</button>
+  </form>
+  <p>Catalog database: <code>{{ infrastructure.catalog_db }}</code>. Bootstrap and maintenance status is available in <a href="/diagnostics">Diagnostics</a>.</p>
+</section>
+
+<section class="panel" id="infrastructure">
+  <h2>Infrastructure</h2>
+  <p>Read-only effective paths and endpoints. Credential file contents are never displayed.</p>
+  <dl>
+    {% for label, value in infrastructure.items() %}
+    <dt>{{ label.replace('_', ' ') | title }}</dt><dd><code>{{ value }}</code></dd>
+    {% endfor %}
+  </dl>
+  <h3>Current health</h3>
+  <dl>{% for label, value in infrastructure_health.items() %}<dt>{{ label.replace('_', ' ') | title }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
+  <p>Use <a href="/diagnostics">Diagnostics</a> for service health and external endpoint status.</p>
+</section>
+
+<section class="panel" id="security">
+  <h2>Security</h2>
+  <p>Authentication is currently <strong>{{ 'enabled' if authentication_enabled else 'disabled' }}</strong>. Secret changes require the current administrator password and revoke existing sessions.</p>
+  <form method="post" action="/settings/security/change">
+    {{ csrf() }}
+    <div class="form-grid">
+      {{ field("security", "SNAPIMS_ADMIN_USERNAME", "Administrator username") }}
+      <label>Current administrator password<input type="password" name="current_password" autocomplete="current-password"></label>
+      <label>New administrator password<input type="password" name="new_password" autocomplete="new-password"></label>
+      <label>Confirm new password<input type="password" name="confirm_password" autocomplete="new-password"></label>
+    </div>
+    <label><input type="checkbox" name="rotate_signing_secret" value="true"> Rotate the session-signing secret</label>
+    <button class="primary">Apply credential change and revoke sessions</button>
+  </form>
+  <form method="post" action="/settings/security/revoke">
+    {{ csrf() }}
+    <label>Current administrator password<input type="password" name="current_password" autocomplete="current-password" required></label>
+    <button>Revoke all sessions</button>
+  </form>
+  <p>Cloudflare Access is an external access-control layer. Its policy is not stored or modified by SnapIMS.</p>
+  <h3>Safe login audit</h3>
+  <table><thead><tr><th>Time</th><th>Event</th><th>Outcome</th></tr></thead><tbody>
+    {% for event in login_events %}<tr><td>{{ event.occurred_at }}</td><td>{{ event.event_type }}</td><td>{{ event.outcome }}</td></tr>
+    {% else %}<tr><td colspan="3">No login events in the retained window.</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+
+<section class="panel" id="backup">
+  <h2>Backup and Retention</h2>
+  <form method="post" action="/settings/backup/save">
+    {{ csrf() }}
+    <div class="form-grid">
+      {{ field("backup", "SNAPIMS_BACKUP_RETENTION_DAYS", "Backup retention days", "number") }}
+      {{ field("backup", "SNAPIMS_LOG_RETENTION_DAYS", "Log retention days", "number") }}
+      {{ field("backup", "SNAPIMS_EVENT_RETENTION_DAYS", "Operational event retention days", "number") }}
+    </div>
+    <button class="primary">Save retention settings</button>
+  </form>
+  <p>Backup destination: <code>{{ infrastructure.backup_path }}</code></p>
+</section>
+
+{% if legacy_secret_fields %}
+<section class="panel" id="legacy-secrets">
+  <h2>Legacy .env secret migration</h2>
+  <p>Copy selected legacy values into the owner-only SnapIMS secret store. This does not delete or edit <code>.env</code>; legacy values remain and should be removed by the owner only after restart verification.</p>
+  <form method="post" action="/settings/legacy-secrets/migrate">
+    {{ csrf() }}
+    {% for key in legacy_secret_fields %}<label><input type="checkbox" name="secret_field" value="{{ key }}"> {{ key }}</label>{% endfor %}
+    <label>Current administrator password<input type="password" name="current_password" autocomplete="current-password" required></label>
+    <button>Validate and copy selected legacy secrets</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="panel" id="revisions">
+  <h2>Configuration revisions and rollback</h2>
+  <table><thead><tr><th>Time</th><th>Section</th><th>Fields</th><th>Status</th><th>Rollback</th></tr></thead><tbody>
+    {% for revision in revisions %}
+    <tr>
+      <td>{{ revision.created_at }}</td><td>{{ revision.section }}</td>
+      <td>{% for key in revision.changed_fields %}<code>{{ key }}</code>{% endfor %}</td>
+      <td>{{ revision.status }}</td>
+      <td>
+        <form method="post" action="/settings/rollback/{{ revision.revision_id }}">
+          {{ csrf() }}
+          {% if revision.contains_secrets %}<input type="password" name="current_password" autocomplete="current-password" placeholder="Current password" required>{% endif %}
+          <button>Rollback</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}<tr><td colspan="5">No configuration revisions yet.</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+{% endblock %}

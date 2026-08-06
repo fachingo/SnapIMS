@@ -1,0 +1,8 @@
+SnapIMS v0.15.0 automated test inventory
+Collected: 302
+Passed: 299
+Skipped: 3
+Failed: 0
+Execution: bounded groups due tool execution limit; every collected test file passed in its final group.
+Final focused Shopify regression: PASS
+Final migration/settings/observability regression: PASS

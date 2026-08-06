@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{% block title %}SnapIMS{% endblock %}</title>
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <script defer src="{{ url_for('static', path='app.js') }}"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">SnapIMS <span>v{{ version }}</span></a>
+    {% if show_nav is not defined or show_nav %}
+    <nav>
+      <a href="/">Home</a>
+      <a href="/import">Import</a>
+      <a href="/review">Review</a>
+      <a href="/pricing">Pricing Review</a>
+      <a href="/recognition">Recognition</a>
+      <a href="/batch-editor">Batch Editor</a>
+      <a href="/publish">Publish</a>
+      <a href="/settings">Settings</a>
+      <a href="/diagnostics">Diagnostics</a>
+      <form method="post" action="/logout" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Log out</button></form>
+    </nav>
+    <button class="command-trigger" type="button" data-command-open title="Command palette (Alt+P)">⌘</button>
+    {% endif %}
+  </header>
+  <main class="page">{% block content %}{% endblock %}</main>
+  <footer>SnapIMS {{ version }} · Exception-handling inventory workstation</footer>
+  {% if show_nav is not defined or show_nav %}
+  <dialog id="command-palette" class="command-palette">
+    <div class="palette-head"><strong>Quick Command Palette</strong><button type="button" data-command-close aria-label="Close command palette">×</button></div>
+    <input id="command-search" autocomplete="off" placeholder="Type a command…" aria-label="Search commands">
+    <div class="command-list">
+      <a data-command href="/import">Open Import</a>
+      <a data-command href="/review">Open Review</a>
+      <a data-command href="/pricing">Open Pricing Review</a>
+      <a data-command href="/recognition">Open Recognition</a>
+      <a data-command href="/batch-editor">Open Batch Editor</a>
+      <a data-command href="/publish">Open Publish</a>
+      <a data-command href="/diagnostics">Open Diagnostics</a>
+      <button type="button" data-command data-command-action="focus-search">Search current batch</button>
+      <button type="button" data-command data-command-action="bulk-price">Set selected prices</button>
+      <button type="button" data-command data-command-action="approve-selected">Approve selected</button>
+    </div>
+    <small>Alt+P · Esc closes</small>
+  </dialog>
+  {% endif %}
+</body>
+</html>

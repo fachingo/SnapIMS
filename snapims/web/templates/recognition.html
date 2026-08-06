@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Recognition · SnapIMS{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow">RECOGNITION CONTROL</p><h1>Recognition</h1><p>Route bounded attempts, compare immutable evidence, and keep operator approval authoritative.</p></div>
+  <a class="button" href="/settings#recognition">Model settings</a>
+</div>
+{% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}{% if message %}<div class="alert error">{{ message }}</div>{% endif %}
+<section class="metric-grid">
+  <article><b>{{ totals.attempts }}</b><span>Filtered attempts</span></article>
+  <article><b>{{ '%.4f'|format(totals.cost_cad) }}</b><span>Estimated CAD</span></article>
+  <article><b>{{ totals.input_tokens + totals.output_tokens }}</b><span>Tokens</span></article>
+  <article><b>{{ totals.low_confidence }}</b><span>Low confidence</span></article>
+  <article><b>{{ totals.contradictions }}</b><span>Contradictions</span></article>
+  <article><b>{{ benchmark_count }}</b><span>Owner-labelled cases</span></article>
+</section>
+
+<section class="panel">
+  <div class="section-heading"><div><p class="eyebrow">QUEUE</p><h2>Run recognition</h2></div></div>
+  <form method="get" action="/recognition" class="toolbar">
+    <label>Batch<select name="batch_id">{% for batch in batches %}<option value="{{ batch.batch_id }}" {% if batch.batch_id==batch_id %}selected{% endif %}>{{ batch.batch_id }}{% if batch.is_test_copy %} · TEST COPY{% endif %}</option>{% endfor %}</select></label>
+    <label>State<select name="state"><option value="">All states</option>{% for value in ['UNREVIEWED','SELECTED','ACCEPTED','REJECTED','SUPERSEDED','FAILED'] %}<option value="{{ value }}" {% if filter_state==value %}selected{% endif %}>{{ value|title }}</option>{% endfor %}</select></label>
+    <label class="check"><input type="checkbox" name="low_confidence" value="true" {% if filter_low %}checked{% endif %}> Low confidence</label>
+    <label class="check"><input type="checkbox" name="contradictions" value="true" {% if filter_contradictions %}checked{% endif %}> Contradictions</label>
+    <button>Apply filters</button>
+  </form>
+  {% if batch_id %}
+  <form method="post" action="/recognition/run-batch" class="form-grid" data-prevent-double-submit>
+    <input type="hidden" name="batch_id" value="{{ batch_id }}">
+    <label>Scope<select name="scope"><option value="unfinished">Run Unfinished</option><option value="all">Force Rerun All</option></select></label>
+    <label>Provider<select name="provider">{% for name in providers %}<option value="{{ name }}">{{ name|title }}</option>{% endfor %}</select></label>
+    <label>Tested model<select name="model_name"><option value="">Configured role model</option>{% for model in compatible_models %}<option value="{{ model }}">{{ model }}</option>{% endfor %}</select></label>
+    <label>Tier<select name="tier"><option value="baseline">Baseline</option><option value="escalation">Escalation</option><option value="frontier">Frontier</option></select></label>
+    <label>Image profile<select name="image_profile"><option value="standard">Standard derivatives</option><option value="front">Front only</option><option value="expanded">Expanded derivatives</option><option value="originals">Originals · explicit</option></select></label>
+    <button class="primary">Queue batch</button>
+  </form>
+  <form method="post" action="/recognition/pause"><input type="hidden" name="batch_id" value="{{ batch_id }}"><button>Pause after current attempt</button></form>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <p class="eyebrow">CONFIGURED LADDER</p>
+  <div class="metric-grid compact">{% for tier,model in ladder %}<article><b>{{ tier|title }}</b><span>{{ model or 'Not configured' }}</span></article>{% endfor %}</div>
+  <p><small>Frontier runs require an explicit operator choice or a separately measured hard-case policy. Cost is calculated from the configured price table and is not provider billing truth.</small></p>
+</section>
+
+<section class="panel">
+  <h2>Current jobs</h2>
+  <table><thead><tr><th>Batch</th><th>Status</th><th>Provider/model</th><th>Progress</th><th>Last error</th></tr></thead><tbody>
+  {% for job in jobs %}<tr><td><a href="/recognition?batch_id={{ job.batch_id }}">{{ job.batch_id }}</a></td><td>{{ job.status }}</td><td>{{ job.provider or '—' }}{% if job.model_name %} · {{ job.model_name }}{% endif %}</td><td>{{ job.completed }}/{{ job.total }}</td><td>{{ job.error_code }} {{ job.error_message }}</td></tr>{% else %}<tr><td colspan="5">No jobs.</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+
+<section class="panel">
+  <h2>Attempt history and comparison</h2>
+  <table><thead><tr><th>Item / attempt</th><th>Proposal</th><th>Route</th><th>Evidence profile</th><th>Usage</th><th>State</th><th>Action</th></tr></thead><tbody>
+  {% for attempt in attempts %}
+  <tr>
+    <td><a href="/review?batch_id={{ attempt.batch_id }}&queue=ALL&item_id={{ attempt.item_id }}">{{ attempt.item_id }}</a><small>#{{ attempt.recognition_result_id }} · {{ attempt.created_at }}</small></td>
+    <td><strong>{{ attempt.suggested_title or 'UNKNOWN' }}</strong><small>{{ (attempt.confidence*100)|round|int }}% · {{ attempt.provider }} / {{ attempt.model_name or 'default' }}</small></td>
+    <td>{{ attempt.tier|title }}<small>{{ attempt.trigger }}{% if attempt.route_reason %} · {{ attempt.route_reason }}{% endif %}</small></td>
+    <td>{{ attempt.image_profile }}<small>{{ attempt.input_image_count }} images · {{ attempt.input_image_bytes }} bytes{% if attempt.contradiction_flags_json!='[]' %} · {{ attempt.contradiction_flags_json }}{% endif %}</small></td>
+    <td>{{ attempt.input_tokens }}/{{ attempt.output_tokens }} tokens<small>{{ attempt.latency_ms }} ms · CA${{ '%.6f'|format(attempt.estimated_cost_cad) }} · {{ attempt.configured_price_version }}</small></td>
+    <td>{{ attempt.attempt_state }}{% if attempt.is_current %}<small>Current suggestion</small>{% endif %}</td>
+    <td>{% if not attempt.is_current %}<form method="post" action="/recognition/select"><input type="hidden" name="batch_id" value="{{ attempt.batch_id }}"><input type="hidden" name="item_id" value="{{ attempt.item_id }}"><input type="hidden" name="recognition_result_id" value="{{ attempt.recognition_result_id }}"><button>Select</button></form>{% else %}{% if attempt.attempt_state!='FAILED' %}<form method="post" action="/recognition/accept"><input type="hidden" name="batch_id" value="{{ attempt.batch_id }}"><input type="hidden" name="item_id" value="{{ attempt.item_id }}"><input type="hidden" name="recognition_result_id" value="{{ attempt.recognition_result_id }}"><button>Accept fields</button></form>{% endif %}<form method="post" action="/recognition/clear"><input type="hidden" name="batch_id" value="{{ attempt.batch_id }}"><input type="hidden" name="item_id" value="{{ attempt.item_id }}"><button>Clear</button></form>{% endif %}</td>
+  </tr>
+  {% else %}<tr><td colspan="7">No attempts match the current filters.</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+
+<section class="panel">
+  <h2>Durable requests</h2>
+  <table><thead><tr><th>Request</th><th>Item</th><th>Route</th><th>Status</th><th>Result/error</th></tr></thead><tbody>
+  {% for job in requests %}<tr><td><code>{{ job.request_id[:12] }}</code><small>{{ job.created_at }}</small></td><td>{{ job.item_id }}</td><td>{{ job.tier }} · {{ job.provider }} / {{ job.model_name or 'configured' }}</td><td>{{ job.status }}{% if job.retry_after_seconds %}<small>Retry after {{ job.retry_after_seconds }} s</small>{% endif %}</td><td>{% if job.recognition_result_id %}Attempt #{{ job.recognition_result_id }}{% else %}{{ job.error_code }} {{ job.error_message }}{% endif %}{% if job.status in ['PAUSED','FAILED'] %}<form method="post" action="/recognition/resume-request"><input type="hidden" name="request_id" value="{{ job.request_id }}"><input type="hidden" name="batch_id" value="{{ job.batch_id }}"><button>Resume safely</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="5">No item requests.</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+
+<section class="panel">
+  <h2>Benchmark mode</h2>
+  <p>Quality claims require owner-labelled truth. Synthetic or unlabelled attempts remain operational tests only.</p>
+  <h3>Owner-labelled comparison report</h3>
+  <table><tbody>
+    <tr><th>Evaluated cases</th><td>{{ benchmark_metrics.evaluated }} / {{ benchmark_metrics.labelled }}</td><th>Exact-title accuracy</th><td>{% if benchmark_metrics.exact_title_accuracy is not none %}{{ (benchmark_metrics.exact_title_accuracy*100)|round(1) }}%{% else %}Not measured{% endif %}</td></tr>
+    <tr><th>False confidence</th><td>{{ benchmark_metrics.false_confidence }}</td><th>Operator corrections</th><td>{{ benchmark_metrics.operator_corrections }}</td></tr>
+    <tr><th>Escalation rate</th><td>{% if benchmark_metrics.escalation_rate is not none %}{{ (benchmark_metrics.escalation_rate*100)|round(1) }}%{% else %}Not measured{% endif %}</td><th>Manual rate</th><td>{% if benchmark_metrics.manual_rate is not none %}{{ (benchmark_metrics.manual_rate*100)|round(1) }}%{% else %}Not measured{% endif %}</td></tr>
+    <tr><th>Average latency</th><td>{% if benchmark_metrics.average_latency_ms is not none %}{{ benchmark_metrics.average_latency_ms|round|int }} ms{% else %}Not measured{% endif %}</td><th>Operator time</th><td>{% if benchmark_metrics.average_operator_seconds is not none %}{{ benchmark_metrics.average_operator_seconds|round(1) }} s{% else %}Not measured{% endif %}</td></tr>
+    <tr><th>Usage</th><td>{{ benchmark_metrics.tokens }} tokens · {{ benchmark_metrics.image_bytes }} image bytes</td><th>Estimated cost</th><td>CA${{ '%.6f'|format(benchmark_metrics.cost_cad) }}</td></tr>
+    <tr><th>Catalog agreement</th><td>{{ benchmark_metrics.catalog_agreement }} linked</td><th>Cost basis</th><td>Configured estimate, not provider billing truth</td></tr>
+  </tbody></table>
+  {% if items %}<form method="post" action="/recognition/benchmark-label" class="form-grid">
+    <input type="hidden" name="batch_id" value="{{ batch_id }}">
+    <label>Item<select name="item_id">{% for item in items %}<option value="{{ item.item_id }}">{{ item.item_id }}</option>{% endfor %}</select></label>
+    <label>Dataset class<select name="dataset_class">{% for value in ['clear_mainstream','sequels_remakes','damaged_low_contrast','slogan_heavy','music_concert','tv_anime','unusual_edition','unsupported_media'] %}<option value="{{ value }}">{{ value|replace('_',' ')|title }}</option>{% endfor %}</select></label>
+    <label>Canonical title<input name="canonical_title" required></label>
+    <label>Year<input name="release_year" type="number" min="1800" max="2200"></label>
+    <button>Save owner-labelled truth</button>
+  </form>{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,3660 @@
+diff --git a/.env.example b/.env.example
+index fd18bd9..4f99509 100644
+--- a/.env.example
++++ b/.env.example
+@@ -21,6 +21,9 @@ SNAPIMS_MANAGE_GUACAMOLE_SERVICES=true
+ SNAPIMS_OPENAI_MODEL=gpt-4.1-mini
+ OPENAI_API_KEY=
+ SHOPIFY_STORE_DOMAIN=your-store.myshopify.com
++SHOPIFY_CLIENT_ID=
++SHOPIFY_CLIENT_SECRET=
++# Deprecated fallback only:
+ SHOPIFY_ADMIN_ACCESS_TOKEN=
+ SHOPIFY_LOCATION_ID=gid://shopify/Location/123456789
+ SHOPIFY_API_VERSION=2026-07
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index 77a0416..1ddf76d 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -1,4 +1,4 @@
+-# SnapIMS v0.13.2 Architecture
++# SnapIMS v0.14.0 Architecture
+ 
+ - FastAPI web application and CLI.
+ - SQLite inventory database, current schema 15.
+diff --git a/BROWSER_VERIFICATION.md b/BROWSER_VERIFICATION.md
+index 912f304..2e7a03c 100644
+--- a/BROWSER_VERIFICATION.md
++++ b/BROWSER_VERIFICATION.md
+@@ -1,31 +1,42 @@
+-# SnapIMS v0.13.2 Browser Verification
++# SnapIMS v0.14.0 Browser Verification
+ 
+ **Date:** August 4, 2026  
+-**Result:** PASS — 33/33 checks
++**Result:** PASS - 38/38 checks
+ 
+ ## Method
+ 
+-The sandbox Chromium policy blocked direct HTTP navigation to localhost. The test therefore loaded the actual server-generated SnapIMS HTML, CSS, and JavaScript into Chromium and relayed browser fetch requests to the real local server. This validates UI behavior and real HTTP handlers, but it is not a substitute for direct owner-machine browser verification.
++The managed Chromium policy blocked direct navigation to localhost. The harness loaded the actual server-generated SnapIMS HTML, CSS, and JavaScript into Chromium and relayed browser fetch requests to the real local HTTP server. This verifies the production templates, scripts, API handlers, response codes, and state changes. Direct owner-machine Chromium and native Firefox remain v1.0 acceptance checks.
+ 
+-## Verified workflows
++## Verified Shopify workflow
++
++- Client ID field is present.
++- Client Secret field is present once and is a password field.
++- Obsolete manual Admin API access-token fields are absent.
++- Draft-only safety is visible.
++- The complete Shopify section fits a 390-pixel viewport without internal horizontal overflow.
++- Store, scope, token-state, and named-location UI is rendered without exposing secrets.
++
++## Verified inherited workflows
+ 
+ - Home, Import, Recognition, Review, Publish, Settings, and Diagnostics load without HTTP 500 responses.
+-- Batch Editor renders five normal items and only 100 of 5,000 large-batch items.
+-- Tags, Location, Review, and Rare Fill Down work through the real UI and API.
++- Batch Editor renders five normal items and only 100 rows from a 5,000-item batch.
++- Tags, Location, Review, and Rare Fill Down work through the actual UI and API.
+ - Arrow navigation crosses Tags in both directions.
+ - Hidden selections clear before bulk actions.
+-- 390-pixel mobile body fits and the editor grid scrolls horizontally.
+-- 100-item / 202-photo Import returns immediately, survives refresh, groups exactly 100 items, scans each image once, and displays 20 preview items per page.
+-- No console errors, page errors, failed requests, or HTTP 500 responses were recorded.
++- The 390-pixel page body fits and the editor grid scrolls horizontally.
++- A 100-item / 202-photo Import returns immediately, survives refresh, groups exactly 100 items, scans each image once, and displays 20 preview items per page.
++- No console errors, page errors, unexpected failed requests, or HTTP 500 responses were recorded.
+ 
+ ## Evidence
+ 
+-- `browser-evidence/v0.13.2/browser-verification.json`
+-- `chromium-batch-editor.png`
+-- `chromium-mobile-editor.png`
+-- `chromium-import-preview.png`
+-- `server.log`
++- `browser-evidence/v0.14.0/browser-verification.json`
++- `browser-evidence/v0.14.0/chromium-shopify-settings.png`
++- `browser-evidence/v0.14.0/chromium-shopify-settings-mobile.png`
++- `browser-evidence/v0.14.0/chromium-batch-editor.png`
++- `browser-evidence/v0.14.0/chromium-mobile-editor.png`
++- `browser-evidence/v0.14.0/chromium-import-preview.png`
++- `browser-evidence/v0.14.0/server.log`
+ 
+ ## Not performed
+ 
+-Native Firefox and direct localhost navigation were unavailable in this sandbox. Both remain owner-machine v1.0 acceptance checks.
++Native Firefox, direct localhost Chromium navigation, and owner production credentials were unavailable in the sandbox. No live Shopify write was made during browser verification.
+diff --git a/DEPLOYMENT_GUIDE.md b/DEPLOYMENT_GUIDE.md
+index 2f5895c..066c6bb 100644
+--- a/DEPLOYMENT_GUIDE.md
++++ b/DEPLOYMENT_GUIDE.md
+@@ -1,4 +1,4 @@
+-# SnapIMS v0.13.2 Deployment Guide
++# SnapIMS v0.14.0 Deployment Guide
+ 
+ SnapIMS is local-first. Run application code from the extracted release and keep operator data under `~/SnapIMS-data`.
+ 
+diff --git a/DEVELOPER_GUIDE.md b/DEVELOPER_GUIDE.md
+index 97999df..b63d0b8 100644
+--- a/DEVELOPER_GUIDE.md
++++ b/DEVELOPER_GUIDE.md
+@@ -1,4 +1,4 @@
+-# SnapIMS v0.13.2 Developer Guide
++# SnapIMS v0.14.0 Developer Guide
+ 
+ Run from a clean environment:
+ 
+@@ -9,7 +9,7 @@ pip install -e .
+ pytest
+ python -m compileall snapims tests scripts
+ node --check snapims/web/static/app.js
+-bash -n install_v0132.sh
++bash -n install_v0140.sh
+ ```
+ 
+ Resource rule: use SnapIMS closing connection contexts; do not rely on SQLite connection garbage collection. Large editor/publish routes must use bounded queries and must not embed complete tables in HTML/JSON.
+diff --git a/DOCUMENTATION_VERIFICATION.md b/DOCUMENTATION_VERIFICATION.md
+index 70a3aec..1790451 100644
+--- a/DOCUMENTATION_VERIFICATION.md
++++ b/DOCUMENTATION_VERIFICATION.md
+@@ -1,16 +1,12 @@
+-# SnapIMS v0.13.2 Documentation Verification
++# SnapIMS v0.14.0 Documentation Verification
+ 
+-- Active version references updated to 0.13.2.
+-- Import workflow describes folder boundaries and NEXT ITEM only.
+-- Batch Editor guide includes bounded paging, Tags/Location/Review/Rare Fill Down, hidden-selection clearing, and keyboard traversal.
+-- Publish guide describes aggregate readiness and opt-in paged simulation.
+-- Launcher guide describes pinned project/venv/data identity.
+-- Current screenshots were regenerated from the v0.13.2 browser pass.
+-- DOCX files were rendered to PDF and page images for visual inspection.
+-
+-## Rendered-page inspection
+-
+-- Day-to-Day Guide: 7 pages inspected.
+-- Operator Guide: 8 pages inspected.
+-- Complete Operating Manual: 6 pages inspected.
+-- Full-resolution source screenshots remain in browser evidence; guide viewport crops retain the relevant controls and are indexed in `SCREENSHOT_INDEX.md`.
++- Active release references use 0.14.0.
++- The Shopify guide uses the Dev Dashboard Client ID/Client Secret workflow.
++- Active instructions no longer direct the operator to locate or paste a permanent Admin API access token.
++- Named inventory-location selection replaces normal raw-GID entry.
++- Automatic token exchange, encrypted cache, expiry, refresh, one bounded 401 retry, and safe removal are documented.
++- Draft-only publishing and the separation between read-only connection testing and a live one-item draft pilot are explicit.
++- Import documentation continues to describe folder boundaries and NEXT ITEM only.
++- Batch Editor documentation includes bounded paging, Fill Down consistency, safe selection, and keyboard traversal.
++- Current screenshots were regenerated from the v0.14.0 browser pass.
++- DOCX guides were rendered to PDF and page images and visually reviewed before packaging.
+diff --git a/END_OF_BATCH_CHECKLIST.md b/END_OF_BATCH_CHECKLIST.md
+index ee07f2a..da3b2f3 100644
+--- a/END_OF_BATCH_CHECKLIST.md
++++ b/END_OF_BATCH_CHECKLIST.md
+@@ -1,4 +1,4 @@
+-# SnapIMS v0.13.2 End-of-Batch Checklist
++# SnapIMS v0.14.0 End-of-Batch Checklist
+ 
+ - [ ] Folder name and source path are correct.
+ - [ ] Preview item count matches physical tapes.
+diff --git a/IMPORT_FIXTURE_MATRIX.md b/IMPORT_FIXTURE_MATRIX.md
+index 859d445..4b7d1b9 100644
+--- a/IMPORT_FIXTURE_MATRIX.md
++++ b/IMPORT_FIXTURE_MATRIX.md
+@@ -1,4 +1,4 @@
+-# SnapIMS v0.13.2 Import Fixture Matrix
++# SnapIMS v0.14.0 Import Fixture Matrix
+ 
+ | # | Fixture | Expected result |
+ |---:|---|---|
+diff --git a/INSTALLATION_GUIDE.md b/INSTALLATION_GUIDE.md
+index 910786f..e55966a 100644
+--- a/INSTALLATION_GUIDE.md
++++ b/INSTALLATION_GUIDE.md
+@@ -1,12 +1,12 @@
+-# SnapIMS v0.13.2 Installation Guide
++# SnapIMS v0.14.0 Installation Guide
+ 
+ ## Clean install
+ 
+ ```bash
+-unzip SnapIMS-v0.13.2-full-source.zip
+-cd SnapIMS-v0.13.2
+-chmod +x install_v0132.sh
+-./install_v0132.sh
++unzip SnapIMS-v0.14.0-full-source.zip
++cd SnapIMS-v0.14.0
++chmod +x install_v0140.sh
++./install_v0140.sh
+ export PATH="$HOME/.local/bin:$PATH"
+ snapims version
+ snapims doctor
+@@ -17,13 +17,18 @@ snapims up
+ 
+ ```bash
+ snapims down
+-cp -a ~/SnapIMS-data ~/SnapIMS-data-backup-before-v0132-$(date +%Y%m%d-%H%M%S)
+-unzip SnapIMS-v0.13.2-full-source.zip
+-cd SnapIMS-v0.13.2
+-SNAPIMS_DATA_DIR="$HOME/SnapIMS-data" ./install_v0132.sh
++cp -a ~/SnapIMS-data ~/SnapIMS-data-backup-before-v0140-$(date +%Y%m%d-%H%M%S)
++unzip SnapIMS-v0.14.0-full-source.zip
++cd SnapIMS-v0.14.0
++SNAPIMS_DATA_DIR="$HOME/SnapIMS-data" ./install_v0140.sh
+ export PATH="$HOME/.local/bin:$PATH"
+ snapims status
+ snapims up
+ ```
+ 
+ The installer creates schema-15 backups automatically and rewrites the current user launcher/service to this extracted release.
++
++
++## Shopify credential migration
++
++Existing legacy `SHOPIFY_ADMIN_ACCESS_TOKEN` values are preserved as a deprecated fallback. Configure the Dev Dashboard Client ID and Client Secret in Settings, verify the connection, select the location, and then remove the legacy connection before v1.0. Generated access tokens are encrypted and refreshed automatically.
+diff --git a/ISSUE_REGISTER_V0132.csv b/ISSUE_REGISTER_V0132.csv
+deleted file mode 100644
+index 1dbeda6..0000000
+--- a/ISSUE_REGISTER_V0132.csv
++++ /dev/null
+@@ -1,15 +0,0 @@
+-Issue ID,Severity,Finding,Status,Resolution
+-QA-0130-001,Critical,SQLite/file-descriptor leak,Fixed,"Explicit closing SQLite connection classes, serialized initialization, and resource regression coverage. Full one-process suite ended with 0 SQLite descriptors."
+-QA-0130-002,High,Duplicate same-folder Import race,Fixed,"Canonical-folder active-job uniqueness, existing-job reuse, idempotent Commit, and unique per-job staging."
+-QA-0130-003,High,Launcher could start obsolete source,Fixed,"Pinned launcher and user service are rewritten by installer; status prints project, venv executable, data path, PID, version, and schema."
+-QA-0130-004,High,Batch Editor rendered all items,Fixed,"Bounded server-side paging with 20–200 rows; 5,000-item page rendered 100 rows and 430,721 bytes."
+-QA-0130-005,Medium,Fill Down unsupported for Tags,Fixed,Atomic exact set/replace of validated Tag IDs with auditing.
+-QA-0130-006,Medium,Location Fill Down used stale shelf key,Fixed,"Location mapping, nullable None handling, arbitrary free text, and location-history events."
+-QA-0130-007,Medium,Fill Down unsupported for Review/Rare,Fixed,Atomic exact boolean propagation in both directions.
+-QA-0130-008,Medium,Horizontal navigation stuck at Tags,Fixed,ArrowLeft/ArrowRight use the tag input focus path.
+-QA-0130-009,Medium,Hidden selected rows remained armed,Fixed,Selections are cleared as rows become hidden; bulk actions only read visible selected rows.
+-QA-0130-010,Low,Shelf-only wording,Fixed,Current UI and guides use location/unassigned terminology.
+-QA-0132-011,Medium,Individual Rare edit silently discarded,Fixed,rare added to the editable-field contract with regression coverage.
+-QA-0132-012,High,Publish page dry-ran every item,Fixed,Publish summary uses aggregate SQL; dry-run is opt-in and bounded to the current page.
+-QA-0132-013,Low,Doctor falsely failed in an active external venv,Fixed,Doctor accepts either the project venv or an active Python virtual environment.
+-QA-0132-014,Low,CSRF URL resolution depended on window location,Fixed,"Same-origin checks resolve against document.baseURI, preserving reverse-proxy and verification behavior."
+diff --git a/ISSUE_TRACEABILITY_V0132.md b/ISSUE_TRACEABILITY_V0132.md
+deleted file mode 100644
+index dc460bc..0000000
+--- a/ISSUE_TRACEABILITY_V0132.md
++++ /dev/null
+@@ -1,22 +0,0 @@
+-# SnapIMS v0.13.2 Issue Traceability
+-
+-| ID | Severity | Finding | Final status | Implementation / evidence |
+-| --- | --- | --- | --- | --- |
+-| QA-0130-001 | Critical | SQLite/file-descriptor leak | Fixed | Explicit closing SQLite connection classes, serialized initialization, and resource regression coverage. Full one-process suite ended with 0 SQLite descriptors. |
+-| QA-0130-002 | High | Duplicate same-folder Import race | Fixed | Canonical-folder active-job uniqueness, existing-job reuse, idempotent Commit, and unique per-job staging. |
+-| QA-0130-003 | High | Launcher could start obsolete source | Fixed | Pinned launcher and user service are rewritten by installer; status prints project, venv executable, data path, PID, version, and schema. |
+-| QA-0130-004 | High | Batch Editor rendered all items | Fixed | Bounded server-side paging with 20–200 rows; 5,000-item page rendered 100 rows and 430,721 bytes. |
+-| QA-0130-005 | Medium | Fill Down unsupported for Tags | Fixed | Atomic exact set/replace of validated Tag IDs with auditing. |
+-| QA-0130-006 | Medium | Location Fill Down used stale shelf key | Fixed | Location mapping, nullable None handling, arbitrary free text, and location-history events. |
+-| QA-0130-007 | Medium | Fill Down unsupported for Review/Rare | Fixed | Atomic exact boolean propagation in both directions. |
+-| QA-0130-008 | Medium | Horizontal navigation stuck at Tags | Fixed | ArrowLeft/ArrowRight use the tag input focus path. |
+-| QA-0130-009 | Medium | Hidden selected rows remained armed | Fixed | Selections are cleared as rows become hidden; bulk actions only read visible selected rows. |
+-| QA-0130-010 | Low | Shelf-only wording | Fixed | Current UI and guides use location/unassigned terminology. |
+-| QA-0132-011 | Medium | Individual Rare edit silently discarded | Fixed | rare added to the editable-field contract with regression coverage. |
+-| QA-0132-012 | High | Publish page dry-ran every item | Fixed | Publish summary uses aggregate SQL; dry-run is opt-in and bounded to the current page. |
+-| QA-0132-013 | Low | Doctor falsely failed in an active external venv | Fixed | Doctor accepts either the project venv or an active Python virtual environment. |
+-| QA-0132-014 | Low | CSRF URL resolution depended on window location | Fixed | Same-origin checks resolve against document.baseURI, preserving reverse-proxy and verification behavior. |
+-
+-## Source comparison
+-
+-The supplied remediation sheet was used as the required baseline. Every QA-0130 issue was reproduced or directly traced to source/evidence, fixed, and covered by automated or browser verification. Additional findings were recorded separately rather than silently folded into the original issue IDs.
+diff --git a/LOCAL_SOURCE_INVENTORY.md b/LOCAL_SOURCE_INVENTORY.md
+index d7f9d16..7e50018 100644
+--- a/LOCAL_SOURCE_INVENTORY.md
++++ b/LOCAL_SOURCE_INVENTORY.md
+@@ -1,25 +1,22 @@
+-# SnapIMS v0.13.2 Local Source Inventory
++# SnapIMS v0.14.0 Local Source Inventory
+ 
+-## Release inputs found in the local sandbox
++## Baseline
+ 
+-- `SnapIMS-v0.13.0-full-source.zip` — latest complete executable source archive found; used as the implementation base.
+-- `SnapIMS-v0.12.3-full-source(1).zip` — older baseline/upgrade source; used for benchmark and migration comparison.
+-- `SnapIMS_v0.13.0_Stress_QA_Bug_Report_2026-08-03.md` — authoritative prior findings.
+-- `SnapIMS_v0.13.0_Stress_QA_Issue_Register_2026-08-03.csv` — issue-by-issue comparison sheet.
+-- `SnapIMS_v0.13.0_Stress_QA_Evidence_2026-08-03.zip` — prior browser, concurrency, descriptor, and source evidence.
+-- `SnapIMS_v0.13.1_Full_Remediation_Prompt_With_QA_Report.md` — remediation requirements supplied in the current task.
++- Source baseline: complete SnapIMS v0.13.2 release snapshot corresponding to GitHub branch `feature/shopify-auth-v0133`.
++- Baseline package version: `0.13.2`.
++- Target release: `0.14.0`.
++- Inventory database schema: 15 (unchanged).
+ 
+-No complete SnapIMS v0.13.1 source archive was present locally. v0.13.2 was therefore built from the latest complete source actually available, v0.13.0, while incorporating and superseding the v0.13.1 remediation requirements.
++## New v0.14.0 source
+ 
+-## Local implementation tree examined
++- `snapims/shopify/auth.py` - Shopify client-credentials exchange, encrypted token cache, expiry, refresh, concurrency guard, and legacy fallback.
++- `snapims/shopify/client.py` - access-token provider integration and one bounded refresh/retry after HTTP 401.
++- `snapims/provider_probes.py` - read-only identity, scope, and location verification with authoritative minimum scope mapping.
++- `snapims/settings.py` - Client ID/Secret definitions, encrypted provider secret storage, and connection removal support.
++- `snapims/web/templates/settings.html` - guided Shopify connection workflow.
++- `tests/test_shopify_auth_v0140.py` - deterministic authentication, encryption, refresh, restart, concurrency, and retry coverage.
++- `SHOPIFY_SETUP_GUIDE.md` - exact operator setup and recovery procedure.
+ 
+-The complete extracted application was searched and tested, including:
++## External limitations
+ 
+-- Python application modules and migrations
+-- FastAPI routes, Jinja templates, CSS, and JavaScript
+-- Import, Recognition, Review, Batch Editor, CSV, Publish, Settings, Diagnostics, authentication, observability, and infrastructure tests
+-- installer, CLI, process manager, user service, deployment examples, and recovery scripts
+-- deterministic Import, catalog, and v0.12.3-upgrade fixtures
+-- editable and rendered operator documentation
+-
+-The per-file release inventory is recorded in `PACKAGE_FILE_MANIFEST.sha256` and `MANIFEST_SHA256.json`.
++The source was implemented and tested in the local sandbox. Git network cloning was unavailable in the container, so no GitHub push is claimed. The complete source ZIP is returned directly for owner review and Git commit.
+diff --git a/OPERATOR_GUIDE.md b/OPERATOR_GUIDE.md
+index df2cad7..7b04b80 100644
+--- a/OPERATOR_GUIDE.md
++++ b/OPERATOR_GUIDE.md
+@@ -1,4 +1,4 @@
+-# SnapIMS v0.13.2 Operator Guide
++# SnapIMS v0.14.0 Operator Guide
+ 
+ ## Start and verify
+ 
+@@ -8,7 +8,7 @@ snapims up
+ snapims status
+ ```
+ 
+-Confirm Version is `0.13.2`, Inventory schema is `15 / 15`, and Project path points to the intended release. Open `http://127.0.0.1:8767/`.
++Confirm Version is `0.14.0`, Inventory schema is `15 / 15`, and Project path points to the intended release. Open `http://127.0.0.1:8767/`.
+ 
+ ## Import a batch
+ 
+@@ -32,6 +32,19 @@ Confirm Version is `0.13.2`, Inventory schema is `15 / 15`, and Project path poi
+ - When filters hide a selected row, that selection is cleared automatically.
+ - Arrow keys cross the Tags editor in both directions.
+ 
++## Connect Shopify
++
++1. In Shopify Dev Dashboard, confirm the released SnapIMS app is installed in the store and has `read_locations`, `read_products`, `write_products`, `read_inventory`, and `write_inventory`.
++2. Open **Settings -> Shopify connection**.
++3. Enter the permanent `.myshopify.com` domain, Client ID, Client Secret, and current SnapIMS administrator password.
++4. Select **Test and save securely**. SnapIMS generates and refreshes the access token automatically.
++5. Confirm the store identity and all required permissions.
++6. Select the inventory location by name and save it.
++7. Keep draft-only publishing enabled.
++8. Use **Retest saved connection** for a read-only check. Use Publish separately for the one-item draft pilot.
++
++The normal workflow never asks for a raw Admin API access token or manual Location GID. See `SHOPIFY_SETUP_GUIDE.md`.
++
+ ## Publish
+ 
+ Publish displays aggregate batch readiness without evaluating every Item. Shopify simulation is explicit and paged. Live publishing remains guarded by credentials and confirmation.
+diff --git a/PERFORMANCE_REPORT.md b/PERFORMANCE_REPORT.md
+index 27795b7..7fc9684 100644
+--- a/PERFORMANCE_REPORT.md
++++ b/PERFORMANCE_REPORT.md
+@@ -1,11 +1,11 @@
+-# SnapIMS v0.13.2 Performance Report
++# SnapIMS v0.14.0 Performance Report
+ 
+ **Measured:** August 4, 2026  
+ **Environment:** Linux, Python 3.13.5, 5 logical CPUs. The 2012 Mac mini was not available.
+ 
+ ## Import
+ 
+-| Scenario | v0.13.2 result |
++| Scenario | v0.14.0 result |
+ | --- | --- |
+ | 20-item / 42-photo Preview request | 79.845 ms |
+ | 20-item / 42-photo cold scan | 479 ms |
+@@ -20,7 +20,7 @@ The same-environment v0.12.3 parser baseline was 1517.626 ms. The measured cold-
+ 
+ ## Batch Editor
+ 
+-The original v0.13.0 audit measured 22,664,709 bytes and 11.593 seconds DOMContentLoaded for 5,000 items. v0.13.2 returned **430,721 bytes**, rendered **100 rows**, and completed the relayed Chromium render in **0.414 seconds**.
++The original v0.13.0 audit measured 22,664,709 bytes and 11.593 seconds DOMContentLoaded for 5,000 items. v0.14.0 returned **430,721 bytes**, rendered **100 rows**, and completed the relayed Chromium render in **0.454 seconds**.
+ 
+ ## Resource stability
+ 
+diff --git a/PRODUCTION_READINESS.md b/PRODUCTION_READINESS.md
+index 010d99f..c1506de 100644
+--- a/PRODUCTION_READINESS.md
++++ b/PRODUCTION_READINESS.md
+@@ -1,20 +1,19 @@
+-# SnapIMS v0.13.2 Production Readiness Report
++# SnapIMS v0.14.0 Production Readiness Report
+ 
+-**Decision:** CONDITIONAL / PILOT-READY — NOT v1.0.0
++**Decision:** CONDITIONAL / OWNER-PILOT CANDIDATE - NOT v1.0.0
+ 
+ ## Passed locally
+ 
+-- All 10 v0.13.0 stress-audit issues fixed.
+-- Four additional defects fixed.
+-- 273 tests passed in one process; no failures.
+-- SQLite descriptors returned to zero after suite teardown.
+-- Duplicate Preview/Commit is idempotent.
+-- Batch Editor and Publish are bounded for 5,000 items.
+-- Clean installation and v0.12.3 schema upgrade passed.
+-- Stale launcher and user service paths were rewritten.
+-- Two consecutive server starts returned healthy v0.13.2/schema-15 results.
+-- 33 Chromium UI/browser checks passed.
++- Shopify Client ID/Client Secret configuration and validation.
++- Encrypted provider secret storage and plaintext legacy migration.
++- Short-lived token exchange, encrypted cache, restart reuse, proactive refresh, and credential invalidation.
++- One bounded retry after HTTP 401; no refresh retry for HTTP 403 or GraphQL/user errors.
++- Concurrent token refresh deduplication.
++- Guided desktop/mobile Shopify settings flow with location selection by name.
++- Legacy static-token fallback retained and marked deprecated.
++- Existing draft, media, inventory, idempotency, and reconciliation tests remain covered by deterministic Shopify fakes.
++- All v0.13.2 reliability fixes remain included.
+ 
+ ## Not production-accepted
+ 
+-Live provider, live Shopify, target hardware, direct Firefox, owner infrastructure, and real-operator pilot evidence are absent. The complete remaining gate is in `V1_PRODUCTION_ACCEPTANCE_GAPS.md`.
++The live Canada VHS Shopify connection, live one-item draft creation, live OpenAI recognition, target Mac hardware, native Firefox, and owner-infrastructure walkthrough were unavailable locally. See `SKIPPED_EXTERNAL_TESTS.md` and `V1_PRODUCTION_ACCEPTANCE_GAPS.md`.
+diff --git a/README.md b/README.md
+index 77a85f6..e741120 100644
+--- a/README.md
++++ b/README.md
+@@ -1,6 +1,6 @@
+-# SnapIMS v0.13.2
++# SnapIMS v0.14.0
+ 
+-SnapIMS is a local, photo-first inventory workstation for Canada VHS. v0.13.2 is a patch release that stabilizes the folder-based Import workflow, corrects Batch Editor consistency problems, prevents mixed-version launches, and bounds large-batch rendering.
++SnapIMS is a local, photo-first inventory workstation for Canada VHS. v0.14.0 is a minor release that adds Shopify Dev Dashboard client-credentials authentication, automatic encrypted token caching and refresh, and a guided Shopify setup workflow. It includes all v0.13.2 reliability corrections.
+ 
+ ## Daily workflow
+ 
+@@ -17,16 +17,16 @@ Legacy START, END, LOCATION, RARE, REVIEW, and CONTINUE QR photographs are ignor
+ ## Install
+ 
+ ```bash
+-unzip SnapIMS-v0.13.2-full-source.zip
+-cd SnapIMS-v0.13.2
+-chmod +x install_v0132.sh
+-./install_v0132.sh
++unzip SnapIMS-v0.14.0-full-source.zip
++cd SnapIMS-v0.14.0
++chmod +x install_v0140.sh
++./install_v0140.sh
+ export PATH="$HOME/.local/bin:$PATH"
+ snapims version
+ snapims up
+ ```
+ 
+-The installer pins `~/.local/bin/snapims` and the user service to the extracted v0.13.2 release. `snapims status` prints the resolved project path, venv executable, data directory, PID, application version, and inventory schema.
++The installer pins `~/.local/bin/snapims` and the user service to the extracted v0.14.0 release. `snapims status` prints the resolved project path, venv executable, data directory, PID, application version, and inventory schema.
+ 
+ ## Core commands
+ 
+@@ -45,4 +45,4 @@ Application code and operator data are separate. The default data root is `~/Sna
+ 
+ ## Verification
+ 
+-See `TEST_RESULTS.md`, `BROWSER_VERIFICATION.md`, `PERFORMANCE_REPORT.md`, `ISSUE_TRACEABILITY_V0132.md`, and `PRODUCTION_READINESS.md`.
++Shopify configuration is documented in `SHOPIFY_SETUP_GUIDE.md`. See `TEST_RESULTS.md`, `BROWSER_VERIFICATION.md`, `PERFORMANCE_REPORT.md`, `ISSUE_TRACEABILITY_V0140.md`, and `PRODUCTION_READINESS.md`.
+diff --git a/RECOVERY_PROCEDURES.md b/RECOVERY_PROCEDURES.md
+index 8b4fed0..e886afa 100644
+--- a/RECOVERY_PROCEDURES.md
++++ b/RECOVERY_PROCEDURES.md
+@@ -1,4 +1,4 @@
+-# SnapIMS v0.13.2 Recovery Procedures
++# SnapIMS v0.14.0 Recovery Procedures
+ 
+ ## Wrong version or wrong source path
+ 
+@@ -6,7 +6,7 @@
+ snapims status
+ ```
+ 
+-Verify Version, Project path, Python executable, Data directory, and Inventory schema. Re-run `install_v0132.sh` from the intended extracted release to rewrite the pinned launcher and user service.
++Verify Version, Project path, Python executable, Data directory, and Inventory schema. Re-run `install_v0140.sh` from the intended extracted release to rewrite the pinned launcher and user service.
+ 
+ ## Port already occupied
+ 
+diff --git a/RELEASE_NOTES.md b/RELEASE_NOTES.md
+index 8f9e1bb..14224ac 100644
+--- a/RELEASE_NOTES.md
++++ b/RELEASE_NOTES.md
+@@ -1,43 +1,41 @@
+-# SnapIMS v0.13.2 Release Notes
++# SnapIMS v0.14.0 Release Notes
+ 
+ **Release date:** August 4, 2026  
+-**Release type:** Patch release (`0.13.1 → 0.13.2`)  
+-**Production status:** Pilot-ready; not approved as v1.0.0
+-
+-## Scope
+-
+-v0.13.2 remediates the v0.13.0 stress-audit findings and additional defects found while running the complete application locally. It does not introduce a new operator workflow. The folder-based NEXT ITEM Import protocol remains unchanged.
+-
+-## Fixed issues
+-
+-| ID | Severity | Finding | Status | Resolution |
+-| --- | --- | --- | --- | --- |
+-| QA-0130-001 | Critical | SQLite/file-descriptor leak | Fixed | Explicit closing SQLite connection classes, serialized initialization, and resource regression coverage. Full one-process suite ended with 0 SQLite descriptors. |
+-| QA-0130-002 | High | Duplicate same-folder Import race | Fixed | Canonical-folder active-job uniqueness, existing-job reuse, idempotent Commit, and unique per-job staging. |
+-| QA-0130-003 | High | Launcher could start obsolete source | Fixed | Pinned launcher and user service are rewritten by installer; status prints project, venv executable, data path, PID, version, and schema. |
+-| QA-0130-004 | High | Batch Editor rendered all items | Fixed | Bounded server-side paging with 20–200 rows; 5,000-item page rendered 100 rows and 430,721 bytes. |
+-| QA-0130-005 | Medium | Fill Down unsupported for Tags | Fixed | Atomic exact set/replace of validated Tag IDs with auditing. |
+-| QA-0130-006 | Medium | Location Fill Down used stale shelf key | Fixed | Location mapping, nullable None handling, arbitrary free text, and location-history events. |
+-| QA-0130-007 | Medium | Fill Down unsupported for Review/Rare | Fixed | Atomic exact boolean propagation in both directions. |
+-| QA-0130-008 | Medium | Horizontal navigation stuck at Tags | Fixed | ArrowLeft/ArrowRight use the tag input focus path. |
+-| QA-0130-009 | Medium | Hidden selected rows remained armed | Fixed | Selections are cleared as rows become hidden; bulk actions only read visible selected rows. |
+-| QA-0130-010 | Low | Shelf-only wording | Fixed | Current UI and guides use location/unassigned terminology. |
+-| QA-0132-011 | Medium | Individual Rare edit silently discarded | Fixed | rare added to the editable-field contract with regression coverage. |
+-| QA-0132-012 | High | Publish page dry-ran every item | Fixed | Publish summary uses aggregate SQL; dry-run is opt-in and bounded to the current page. |
+-| QA-0132-013 | Low | Doctor falsely failed in an active external venv | Fixed | Doctor accepts either the project venv or an active Python virtual environment. |
+-| QA-0132-014 | Low | CSRF URL resolution depended on window location | Fixed | Same-origin checks resolve against document.baseURI, preserving reverse-proxy and verification behavior. |
+-
+-## Verification summary
+-
+-- Complete suite: **273 passed, 3 skipped, 0 failed** in one Python process.
+-- File descriptors: baseline **3**, peak **166**, final **7**; final SQLite descriptors **0**.
+-- Browser checks: **33/33 passed** in Chromium using real SnapIMS HTML/JavaScript and relayed localhost HTTP because the sandbox browser policy blocked direct localhost navigation.
+-- Clean install, schema-15 migration, wheel installation, two server starts, and stale-launcher rewrite passed.
++**Release type:** Minor release (`0.13.2 -> 0.14.0`)  
++**Production status:** Owner pilot candidate; not v1.0.0
++
++## New Shopify authentication workflow
++
++- Added Shopify Dev Dashboard Client ID/Client Secret configuration.
++- Added client-credentials token exchange against the store's Admin OAuth endpoint.
++- Added encrypted, restart-safe short-lived token caching.
++- Added proactive refresh with a five-minute safety margin.
++- Added one bounded refresh-and-retry after HTTP 401 only.
++- Added concurrent refresh deduplication using thread and filesystem locks.
++- Added credential-fingerprint invalidation when store, Client ID, or Client Secret changes.
++- Preserved legacy static-token mode as a clearly deprecated fallback.
++- Replaced duplicate manual access-token forms with a guided settings workflow.
++- Added read-only identity/scope/location verification.
++- Added location selection by name rather than manual GID entry.
++- Added explicit token refresh and safe connection removal controls.
++- Kept Shopify publishing draft-only.
++
++## Security
++
++- SnapIMS provider secrets are now encrypted at rest with a dedicated owner-only key file.
++- Plaintext legacy secret stores are read for migration and converted to encrypted storage on the next secret save.
++- Shopify access tokens and Client Secrets are excluded from HTML, logs, audit values, browser storage, screenshots, and test snapshots.
++- Encrypted token cache and key files require mode `0600`; the secrets directory requires `0700`.
++
++## Required Shopify scopes
++
++`read_locations`, `read_products`, `write_products`, `read_inventory`, and `write_inventory`.
++Publication scopes are not required in draft-only mode.
+ 
+ ## Compatibility
+ 
+-Existing v0.12.3 and v0.13.0 databases are migrated forward to schema 15. Operator data, immutable IDs, image paths, history, settings, credentials, and logs are preserved. A pre-migration backup is created under the SnapIMS data backup directory.
++Existing v0.13.2 inventory databases remain schema 15. No operator inventory migration is required. Existing Shopify linkage data and legacy static tokens are preserved.
+ 
+-## Known external verification gaps
++## External verification
+ 
+-See `SKIPPED_EXTERNAL_TESTS.md` and `V1_PRODUCTION_ACCEPTANCE_GAPS.md`. Live OpenAI, live Shopify, target Mac hardware, native Firefox, and owner infrastructure were not available in this sandbox.
++Local tests use deterministic Shopify fakes. A real read-only store connection and one-item draft pilot remain owner acceptance tasks and are not claimed as completed by the sandbox build.
+diff --git a/ROLLBACK.md b/ROLLBACK.md
+index c9f5102..5d5513b 100644
+--- a/ROLLBACK.md
++++ b/ROLLBACK.md
+@@ -1,7 +1,7 @@
+-# SnapIMS v0.13.2 Rollback
++# SnapIMS v0.14.0 Rollback
+ 
+ Stop SnapIMS and preserve the complete current data directory before any rollback. Schema 15 is forward-only. Application-code rollback does not downgrade the inventory database.
+ 
+-Use the backup created under `~/SnapIMS-data/backups` before schema-v15 migration only when every v0.13.2 change that occurred after that backup can be discarded. Restore into a copied data directory first and verify integrity before replacing active data.
++Use the backup created under `~/SnapIMS-data/backups` before schema-v15 migration only when every v0.14.0 change that occurred after that backup can be discarded. Restore into a copied data directory first and verify integrity before replacing active data.
+ 
+ Never delete original photographs, the Batch Home Directory, logs, credentials, or the database to repair an Import Preview.
+diff --git a/SCREENSHOT_INDEX.md b/SCREENSHOT_INDEX.md
+index 1eda863..8390c0e 100644
+--- a/SCREENSHOT_INDEX.md
++++ b/SCREENSHOT_INDEX.md
+@@ -1,6 +1,6 @@
+-# SnapIMS v0.13.2 Screenshot Index
++# SnapIMS v0.14.0 Screenshot Index
+ 
+-Full-resolution browser evidence is stored under `browser-evidence/v0.13.2/`.
++Full-resolution browser evidence is stored under `browser-evidence/v0.14.0/`.
+ 
+ - `chromium-batch-editor.png`: complete desktop Batch Editor page.
+ - `chromium-batch-editor-controls.png`: desktop control and grid viewport used in current guides.
+diff --git a/SKIPPED_EXTERNAL_TESTS.md b/SKIPPED_EXTERNAL_TESTS.md
+index e42f903..d823347 100644
+--- a/SKIPPED_EXTERNAL_TESTS.md
++++ b/SKIPPED_EXTERNAL_TESTS.md
+@@ -1,11 +1,11 @@
+-# SnapIMS v0.13.2 Skipped and Simulated External Tests
++# SnapIMS v0.14.0 Skipped and Simulated External Tests
+ 
+ ## Skipped because the capability was unavailable
+ 
+ | Capability | Disposition | Reason |
+ | --- | --- | --- |
+ | Live OpenAI recognition | Skipped; deterministic provider tests used | No production API key or account was supplied. Existing mock/provider contract, retries, persistence, and failure tests passed. |
+-| Live Shopify draft creation | Skipped; fake Shopify client tests used | No store URL or Admin API token was supplied. Draft, retry, reconciliation, inventory, media, and idempotency tests passed with deterministic dummies. |
++| Live Shopify draft creation | Skipped; fake Shopify client tests used | No Shopify Client ID/Client Secret was supplied to the sandbox. Client-credentials exchange, token caching/refresh, settings, draft, retry, reconciliation, inventory, media, and idempotency behavior were tested with deterministic fakes. |
+ | Live Wikipedia | Skipped | The bounded test is explicit opt-in and live Internet behavior was outside the release sandbox. |
+ | Native Firefox | Skipped | No Firefox binary/runtime was available. |
+ | Direct Chromium localhost navigation | Skipped by policy; relayed real HTTP used | The managed Chromium URLBlocklist rejected localhost HTTP navigation. |
+diff --git a/SNAPIMS_PRE_1_0_ROADMAP_V0132.md b/SNAPIMS_PRE_1_0_ROADMAP_V0132.md
+deleted file mode 100644
+index 1a807ca..0000000
+--- a/SNAPIMS_PRE_1_0_ROADMAP_V0132.md
++++ /dev/null
+@@ -1,3 +0,0 @@
+-# SnapIMS Pre-1.0 Roadmap — Active Release v0.13.2
+-
+-v0.13.2 is the current pilot build. Complete every item in `V1_PRODUCTION_ACCEPTANCE_GAPS.md` before assigning 1.0.0. No production blocker may remain open.
+diff --git a/TEST_RESULTS.md b/TEST_RESULTS.md
+index 7fec32e..578974d 100644
+--- a/TEST_RESULTS.md
++++ b/TEST_RESULTS.md
+@@ -1,36 +1,51 @@
+-# SnapIMS v0.13.2 Test Results
++# SnapIMS v0.14.0 Test Results
+ 
+ **Date:** August 4, 2026  
+-**Verdict:** PASS for local code, database, browser-harness, installer, migration, and restart verification.
++**Verdict:** PASS for local code, database, deterministic Shopify authentication, browser-harness, and package verification.
+ 
+ ## Complete suite
+ 
+-- **273 passed**
++- **284 passed**
+ - **3 skipped**
+ - **0 failed**
+ - One Python process
+-- Duration: **107.84 seconds**
++- Duration: **129.47 seconds**
+ 
+ ## Skips
+ 
+ | Test | Reason |
+ | --- | --- |
+-| Live English Wikipedia lookup | Opt-in live integration; SNAPIMS_LIVE_WIKIPEDIA_TEST was not enabled. |
+-| HEIC runtime fixture | `pillow_heif` was unavailable in the test runtime. |
+-| Launcher installer operator-user test | Installer intentionally refuses root; separate non-root-equivalent HOME/service rewrite tests were run. |
++| Live English Wikipedia lookup | Opt-in live integration; `SNAPIMS_LIVE_WIKIPEDIA_TEST` was not enabled. |
++| HEIC runtime fixture | The optional HEIC runtime was unavailable in this sandbox. |
++| Launcher installer operator-user test | The test intentionally skips as root; the installer, launcher rewrite, service rewrite, wheel install, and version checks were verified separately with isolated paths. |
++
++## Shopify v0.14.0 coverage
++
++- Client-credentials request formation: PASS
++- Store-domain normalization and rejection: PASS
++- Encrypted Client Secret persistence: PASS
++- Encrypted restart-safe token cache: PASS
++- Cache reuse and restart reuse: PASS
++- Five-minute proactive refresh margin: PASS
++- One refresh/retry after HTTP 401: PASS
++- No refresh retry for HTTP 403 or GraphQL/user errors: PASS
++- Concurrent refresh deduplication: PASS
++- Credential-change cache invalidation: PASS
++- Legacy static-token fallback and migration: PASS
++- Settings setup, retest, location selection, refresh, and removal: PASS
++- Secret redaction from HTML and stored plaintext files: PASS
+ 
+ ## Additional checks
+ 
+ - Python compilation: PASS
+ - JavaScript syntax: PASS
+ - Installer shell syntax: PASS
+-- Built wheel metadata: 0.13.2
+-- Clean install: PASS
+-- v0.12.3 database upgrade to schema 15: PASS
+-- Stale launcher/service rewrite: PASS
+-- Two successive server starts and health checks: PASS
+-- Browser checks: 33/33 PASS
++- Built wheel: `snapims-0.14.0-py3-none-any.whl`
++- Browser checks: **38/38 PASS**
++- Browser console/page errors: 0
++- Unexpected failed requests: 0
++- HTTP 500 responses: 0
+ 
+-## Data preservation
++## External limitations
+ 
+-The upgrade fixture retained two Items and one Batch. Active launcher and service files no longer referenced the stale `/home/isaiah/Projects/SnapIMS` path.
++Live Shopify token exchange and live draft creation were not performed because owner store credentials were not available in the sandbox. Deterministic transport fakes exercised token exchange, expiry, refresh, retries, scopes, locations, publishing, inventory, media, reconciliation, and idempotency. See `SKIPPED_EXTERNAL_TESTS.md`.
+diff --git a/V1_PRODUCTION_ACCEPTANCE_GAPS.md b/V1_PRODUCTION_ACCEPTANCE_GAPS.md
+index 1d90ce0..d1683ac 100644
+--- a/V1_PRODUCTION_ACCEPTANCE_GAPS.md
++++ b/V1_PRODUCTION_ACCEPTANCE_GAPS.md
+@@ -1,12 +1,12 @@
+ # SnapIMS Pre-v1.0 Production Acceptance Gaps
+ 
+-v0.13.2 is a patch release, not v1.0.0. The following must be completed before the project can be labeled 1.0.0.
++v0.14.0 is a minor feature release, not v1.0.0. The following must be completed before the project can be labeled 1.0.0.
+ 
+ ## Required production acceptance
+ 
+ 1. **Real 20-tape Pixel pilot** on the actual operator workstation, including NEXT placement, Preview correction, Commit, Recognition, Review, Batch Editor, CSV, and Publish handoff.
+ 2. **Live AI test** with the intended provider and real credentials, including timeout, retry, malformed output, cost/token logging, rate-limit recovery, and restart durability.
+-3. **Live Shopify draft creation** with a real test product, image media, inventory activation, retry/reconciliation, and proof that the product remains draft.
++3. **Live Shopify client-credentials connection and draft creation** with a real test product, image media, inventory activation, retry/reconciliation, and proof that the product remains draft.
+ 4. **CSV verification** using a real owner batch: export, edit, reorder, import, validation failure, all-or-nothing rollback, and row-count reconciliation.
+ 5. **Restart durability** on the target machine during scan, after Preview, during Recognition, during Review edits, and around Publish checkpoints.
+ 6. **Operator Guide completion and walkthrough** by following every step against the final direct browser UI and replacing any mismatched screenshot or control name.
+@@ -16,7 +16,7 @@ v0.13.2 is a patch release, not v1.0.0. The following must be completed before t
+ ## Additional release-blocking engineering checks
+ 
+ - Run an eight-hour or equivalent repeated-workflow soak and confirm descriptor, memory, WAL, log, and temporary-file stability.
+-- Perform the real in-place upgrade from the owner’s active installation and verify that `snapims up`, the process, Home, schema, and service all resolve to v0.13.2 or the later release.
++- Perform the real in-place upgrade from the owner’s active installation and verify that `snapims up`, the process, Home, schema, and service all resolve to v0.14.0 or the later release.
+ - Complete a backup, restore, and rollback drill using copied operator data.
+ - Validate authentication, session revocation, CSRF, secret-file permissions, Cloudflare exposure, Guacamole access, and remote-workstation boundaries in the real deployment.
+ - Test real HEIC/HEIF input if it remains an advertised format.
+diff --git a/install_v0132.sh b/install_v0132.sh
+deleted file mode 100755
+index f1ad8ec..0000000
+--- a/install_v0132.sh
++++ /dev/null
+@@ -1,138 +0,0 @@
+-#!/usr/bin/env bash
+-set -euo pipefail
+-
+-RELEASE_VERSION="0.13.2"
+-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+-PYTHON_BIN="${PYTHON_BIN:-python3}"
+-DATA_DIR="${SNAPIMS_DATA_DIR:-$HOME/SnapIMS-data}"
+-VENV_DIR="$PROJECT_DIR/.venv"
+-WHEEL="$PROJECT_DIR/dist/snapims-${RELEASE_VERSION}-py3-none-any.whl"
+-
+-fail() {
+-  printf 'SnapIMS installer error: %s\n' "$*" >&2
+-  exit 1
+-}
+-
+-[[ -f "$WHEEL" ]] || fail "built wheel is missing: $WHEEL"
+-command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "Python executable not found: $PYTHON_BIN"
+-
+-"$PYTHON_BIN" - <<'PY' || fail "Python 3.12 or newer is required"
+-import sys
+-raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
+-PY
+-
+-if [[ ! -x "$VENV_DIR/bin/python" ]]; then
+-  if [[ "${SNAPIMS_VENV_SYSTEM_SITE_PACKAGES:-false}" == "true" ]]; then
+-    "$PYTHON_BIN" -m venv --system-site-packages "$VENV_DIR"
+-    # Offline release verification only: inherit the controlled host's installed
+-    # dependency paths without copying packages into the release.
+-    HOST_PATHS="$($PYTHON_BIN - <<'HOSTPY'
+-import sys
+-for value in sys.path:
+-    if value and ("site-packages" in value or "dist-packages" in value):
+-        print(value)
+-HOSTPY
+-)"
+-    VENV_SITE="$($VENV_DIR/bin/python - <<'VENVPY'
+-import site
+-print(site.getsitepackages()[0])
+-VENVPY
+-)"
+-    printf '%s\n' "$HOST_PATHS" > "$VENV_SITE/snapims-offline-host-paths.pth"
+-  else
+-    "$PYTHON_BIN" -m venv "$VENV_DIR"
+-  fi
+-fi
+-
+-PIP_ARGS=(install --disable-pip-version-check --force-reinstall)
+-if [[ "${SNAPIMS_INSTALL_NO_DEPS:-false}" == "true" ]]; then
+-  PIP_ARGS+=(--no-deps)
+-fi
+-"$VENV_DIR/bin/python" -m pip "${PIP_ARGS[@]}" "$WHEEL"
+-
+-mkdir -p "$DATA_DIR" "$DATA_DIR/batches" "$DATA_DIR/database" "$DATA_DIR/logs"
+-
+-# The wrapper pins the extracted application directory while leaving the data
+-# directory external. Re-running the installer after moving the release rewrites it.
+-cat > "$VENV_DIR/bin/snapims" <<WRAPPER
+-#!/usr/bin/env bash
+-export SNAPIMS_PROJECT_PATH="$PROJECT_DIR"
+-export SNAPIMS_DATA_DIR="\${SNAPIMS_DATA_DIR:-$DATA_DIR}"
+-exec "$VENV_DIR/bin/python" -m snapims.cli "\$@"
+-WRAPPER
+-chmod +x "$VENV_DIR/bin/snapims"
+-
+-SNAPIMS_PROJECT_PATH="$PROJECT_DIR" SNAPIMS_DATA_DIR="$DATA_DIR" \
+-  "$VENV_DIR/bin/python" - <<'PY'
+-from snapims import __version__, db
+-from snapims.catalog import db as catalog_db
+-from snapims.config import DataPaths
+-
+-assert __version__ == "0.13.2", __version__
+-paths = DataPaths.from_root().ensure()
+-db.initialize(paths.db_file, paths=paths)
+-catalog_db.initialize(paths.catalog_db_file, paths=paths)
+-print(f"SnapIMS {__version__}: database initialization complete")
+-PY
+-
+-# Install a stable per-user launcher that always pins this extracted release.
+-if [[ "${SNAPIMS_INSTALL_LAUNCHER:-true}" != "false" ]]; then
+-  LAUNCHER_DIR="$HOME/.local/bin"
+-  LAUNCHER="$LAUNCHER_DIR/snapims"
+-  mkdir -p "$LAUNCHER_DIR"
+-  cat > "$LAUNCHER" <<LAUNCHER_EOF
+-#!/usr/bin/env bash
+-set -euo pipefail
+-export SNAPIMS_PROJECT_PATH="$PROJECT_DIR"
+-export SNAPIMS_DATA_DIR="\${SNAPIMS_DATA_DIR:-$DATA_DIR}"
+-exec "$VENV_DIR/bin/python" -m snapims.cli "\$@"
+-LAUNCHER_EOF
+-  chmod +x "$LAUNCHER"
+-
+-  PROFILE_FILE="$HOME/.bashrc"
+-  case "$(basename -- "${SHELL:-bash}")" in
+-    zsh) PROFILE_FILE="$HOME/.zshrc" ;;
+-    bash) PROFILE_FILE="$HOME/.bashrc" ;;
+-    *) PROFILE_FILE="$HOME/.profile" ;;
+-  esac
+-  if ! grep -Fqs '$HOME/.local/bin' "$PROFILE_FILE" 2>/dev/null; then
+-    printf '\n# SnapIMS launcher\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$PROFILE_FILE"
+-  fi
+-
+-  # Replace the per-user service definition so old source paths cannot survive an upgrade.
+-  USER_SERVICE_DIR="$HOME/.config/systemd/user"
+-  mkdir -p "$USER_SERVICE_DIR"
+-  cat > "$USER_SERVICE_DIR/snapims.service" <<SERVICE_EOF
+-[Unit]
+-Description=SnapIMS inventory application v$RELEASE_VERSION
+-After=network.target
+-
+-[Service]
+-Type=simple
+-WorkingDirectory=$PROJECT_DIR
+-Environment=SNAPIMS_PROJECT_PATH=$PROJECT_DIR
+-Environment=SNAPIMS_DATA_DIR=$DATA_DIR
+-ExecStart=$LAUNCHER serve
+-Restart=on-failure
+-
+-[Install]
+-WantedBy=default.target
+-SERVICE_EOF
+-  if command -v systemctl >/dev/null 2>&1; then
+-    systemctl --user daemon-reload >/dev/null 2>&1 || true
+-  fi
+-
+-  INSTALLED_VERSION="$(PATH="$LAUNCHER_DIR:$PATH" "$LAUNCHER" version)"
+-  [[ "$INSTALLED_VERSION" == "$RELEASE_VERSION" ]] || fail "launcher resolved version $INSTALLED_VERSION instead of $RELEASE_VERSION"
+-fi
+-
+-printf '\nSnapIMS v%s installed.\n' "$RELEASE_VERSION"
+-printf 'Application directory: %s\n' "$PROJECT_DIR"
+-printf 'Data directory: %s\n' "$DATA_DIR"
+-printf 'Batch Home Directory: %s/batches\n' "$DATA_DIR"
+-printf 'Next commands:\n'
+-printf '  source "%s/bin/activate"\n' "$VENV_DIR"
+-printf '  snapims version\n'
+-printf '  export PATH="$HOME/.local/bin:$PATH"\n'
+-printf '  snapims version\n'
+-printf '  snapims up\n'
+diff --git a/pyproject.toml b/pyproject.toml
+index dd7af0e..8ae5d50 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
+ 
+ [project]
+ name = "snapims"
+-version = "0.13.2"
++version = "0.14.0"
+ description = "Photo-first, exception-driven inventory ingestion for physical media"
+ readme = "README.md"
+ requires-python = ">=3.12"
+@@ -21,6 +21,7 @@ dependencies = [
+   "openai>=1.30",
+   "qrcode>=7.4",
+   "itsdangerous>=2.2",
++  "cryptography>=42.0",
+   "playwright>=1.48,<2",
+ ]
+ 
+diff --git a/scripts/benchmark_import_v0132.py b/scripts/benchmark_import_v0132.py
+deleted file mode 100755
+index fd3fb9b..0000000
+--- a/scripts/benchmark_import_v0132.py
++++ /dev/null
+@@ -1,195 +0,0 @@
+-#!/usr/bin/env python3
+-"""Deterministic SnapIMS v0.13.2 Import benchmark with real QR images."""
+-from __future__ import annotations
+-
+-import argparse
+-import json
+-import os
+-import shutil
+-import subprocess
+-import sys
+-import tempfile
+-import time
+-from pathlib import Path
+-
+-import psutil
+-import qrcode
+-from PIL import Image, ImageDraw
+-
+-ROOT = Path(__file__).resolve().parents[1]
+-sys.path.insert(0, str(ROOT))
+-
+-from snapims import db
+-from snapims.config import DataPaths
+-from snapims.import_v0130 import NEXT_PAYLOAD, get_job, start_commit, start_preview
+-
+-
+-def product(path: Path, label: str) -> None:
+-    image = Image.new("RGB", (1200, 900), (52, 83, 111))
+-    ImageDraw.Draw(image).text((55, 55), label, fill="white")
+-    image.save(path, quality=88)
+-
+-
+-def qr(path: Path, payload: str) -> None:
+-    code = qrcode.make(payload).convert("RGB").resize((620, 620))
+-    image = Image.new("RGB", (1200, 900), "white")
+-    image.paste(code, ((1200 - 620) // 2, (900 - 620) // 2))
+-    image.save(path, quality=92)
+-
+-
+-def make_fixture(folder: Path, items: int, legacy: bool = True) -> int:
+-    folder.mkdir(parents=True, exist_ok=True)
+-    index = 0
+-    if legacy:
+-        for payload, label in [
+-            ("CVHS1:BATCH:START", "start"),
+-            ("CVHS1:LOC:A6", "location"),
+-        ]:
+-            qr(folder / f"{index:04d}-{label}.jpg", payload); index += 1
+-    for item in range(items):
+-        product(folder / f"{index:04d}-tape-{item+1:03d}.jpg", f"TAPE {item+1}"); index += 1
+-        if item < items - 1:
+-            qr(folder / f"{index:04d}-next-{item+1:03d}.jpg", NEXT_PAYLOAD); index += 1
+-    if legacy:
+-        qr(folder / f"{index:04d}-end.jpg", "CVHS1:BATCH:END"); index += 1
+-    return index
+-
+-
+-def wait(paths: DataPaths, job_id: str, terminal: set[str], timeout: float = 120) -> dict:
+-    end = time.monotonic() + timeout
+-    while time.monotonic() < end:
+-        job = get_job(paths.db_file, job_id)
+-        if job and job["status"] in terminal:
+-            return job
+-        time.sleep(0.01)
+-    raise RuntimeError(f"job timed out: {get_job(paths.db_file, job_id)}")
+-
+-
+-def preview(paths: DataPaths, folder: Path, location: str = "A6") -> tuple[float, dict]:
+-    started = time.perf_counter()
+-    job_id = start_preview(paths, folder, location=location)
+-    returned_ms = (time.perf_counter() - started) * 1000
+-    job = wait(paths, job_id, {"READY", "NEEDS_ATTENTION", "FAILED"})
+-    if job["status"] == "FAILED":
+-        raise RuntimeError(job["error_message"])
+-    return returned_ms, job
+-
+-
+-def baseline_parse(baseline_root: Path, fixture: Path) -> dict:
+-    code = r'''
+-import json, resource, sys, time, types
+-from pathlib import Path
+-stub=types.ModuleType("pillow_heif")
+-stub.register_heif_opener=lambda: None
+-sys.modules.setdefault("pillow_heif", stub)
+-sys.path.insert(0, sys.argv[1])
+-from snapims.pipeline import parse_batch
+-fixture=Path(sys.argv[2])
+-values=[]
+-for _ in range(2):
+-    t=time.perf_counter(); batch=parse_batch(fixture, manual_location="A6", override_locations=True); values.append((time.perf_counter()-t)*1000)
+-print(json.dumps({"runs_ms":values,"item_count":len(batch.items),"max_rss_kb":resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}))
+-'''
+-    result = subprocess.run(
+-        [sys.executable, "-c", code, str(baseline_root), str(fixture)],
+-        check=True, capture_output=True, text=True, timeout=180,
+-    )
+-    return json.loads(result.stdout.strip().splitlines()[-1])
+-
+-
+-def main() -> int:
+-    parser = argparse.ArgumentParser()
+-    parser.add_argument("--output", type=Path, required=True)
+-    parser.add_argument("--baseline-root", type=Path)
+-    parser.add_argument("--typical-fixture", type=Path, help="Existing 40-60 photo fixture copied without modification")
+-    args = parser.parse_args()
+-    workspace = Path(tempfile.mkdtemp(prefix="snapims-v0132-benchmark-"))
+-    try:
+-        paths = DataPaths.from_root(workspace / "data").ensure()
+-        db.initialize(paths.db_file, paths=paths)
+-        typical = paths.batches / "AUGUST-HORROR-01"
+-        synthetic = paths.batches / "SYNTHETIC-100"
+-        if args.typical_fixture:
+-            shutil.copytree(args.typical_fixture.resolve(), typical)
+-            typical_count = len([path for path in typical.iterdir() if path.is_file()])
+-        else:
+-            typical_count = make_fixture(typical, 20, legacy=True)  # 42 files
+-        synthetic_count = make_fixture(synthetic, 100, legacy=True)  # 202 files
+-
+-        process = psutil.Process()
+-        rss_before = process.memory_info().rss
+-        typical_return_ms, typical_cold = preview(paths, typical)
+-        rss_after_typical = process.memory_info().rss
+-        warm_return_ms, typical_warm = preview(paths, typical, "Processing Table")
+-
+-        synthetic_return_ms, synthetic_cold = preview(paths, synthetic)
+-        rss_after_synthetic = process.memory_info().rss
+-        _, synthetic_warm = preview(paths, synthetic, "None")
+-
+-        commit_job_id = start_preview(paths, typical, location="Processing Table")
+-        ready = wait(paths, commit_job_id, {"READY", "NEEDS_ATTENTION", "FAILED"})
+-        commit_start = time.perf_counter()
+-        start_commit(paths, commit_job_id)
+-        committed = wait(paths, commit_job_id, {"IMPORTED", "FAILED", "NEEDS_ATTENTION"})
+-        commit_ms = (time.perf_counter() - commit_start) * 1000
+-        if committed["status"] != "IMPORTED":
+-            raise RuntimeError(committed["error_message"])
+-
+-        baseline = None
+-        if args.baseline_root:
+-            baseline = baseline_parse(args.baseline_root.resolve(), typical)
+-
+-        cold_ms = typical_cold["duration_ms"]
+-        baseline_ms = baseline["runs_ms"][0] if baseline else None
+-        improvement = ((baseline_ms - cold_ms) / baseline_ms * 100) if baseline_ms else None
+-        result = {
+-            "environment": {
+-                "python": sys.version.split()[0],
+-                "platform": sys.platform,
+-                "cpu_count": os.cpu_count(),
+-                "actual_target_mac_available": False,
+-            },
+-            "typical_20_item_42_photo": {
+-                "files": typical_count,
+-                "preview_request_return_ms": round(typical_return_ms, 3),
+-                "cold_preview_ms": cold_ms,
+-                "warm_preview_ms": typical_warm["duration_ms"],
+-                "cold_decodes": typical_cold["decode_count"],
+-                "cold_qr_scans": typical_cold["qr_scan_count"],
+-                "warm_decodes": typical_warm["decode_count"],
+-                "warm_qr_scans": typical_warm["qr_scan_count"],
+-                "warm_cache_hits": typical_warm["cache_hits"],
+-                "location_only_request_return_ms": round(warm_return_ms, 3),
+-                "commit_ms": round(commit_ms, 3),
+-                "full_hashes_at_commit": committed["full_hash_count"],
+-            },
+-            "synthetic_100_item_202_photo": {
+-                "files": synthetic_count,
+-                "preview_request_return_ms": round(synthetic_return_ms, 3),
+-                "cold_preview_ms": synthetic_cold["duration_ms"],
+-                "warm_preview_ms": synthetic_warm["duration_ms"],
+-                "cold_decodes": synthetic_cold["decode_count"],
+-                "cold_qr_scans": synthetic_cold["qr_scan_count"],
+-                "warm_decodes": synthetic_warm["decode_count"],
+-                "warm_qr_scans": synthetic_warm["qr_scan_count"],
+-                "warm_cache_hits": synthetic_warm["cache_hits"],
+-            },
+-            "memory": {
+-                "rss_before_mb": round(rss_before / 1024 / 1024, 2),
+-                "rss_after_typical_mb": round(rss_after_typical / 1024 / 1024, 2),
+-                "rss_after_synthetic_mb": round(rss_after_synthetic / 1024 / 1024, 2),
+-                "observed_peak_proxy_mb": round(max(rss_after_typical, rss_after_synthetic) / 1024 / 1024, 2),
+-            },
+-            "baseline_v0.12.3": baseline,
+-            "cold_preview_improvement_percent": round(improvement, 2) if improvement is not None else None,
+-        }
+-        args.output.parent.mkdir(parents=True, exist_ok=True)
+-        args.output.write_text(json.dumps(result, indent=2), encoding="utf-8")
+-        print(json.dumps(result, indent=2))
+-        return 0
+-    finally:
+-        shutil.rmtree(workspace, ignore_errors=True)
+-
+-
+-if __name__ == "__main__":
+-    raise SystemExit(main())
+diff --git a/scripts/browser_verify_v0132.py b/scripts/browser_verify_v0132.py
+deleted file mode 100755
+index e7b361c..0000000
+--- a/scripts/browser_verify_v0132.py
++++ /dev/null
+@@ -1,430 +0,0 @@
+-#!/usr/bin/env python3
+-from __future__ import annotations
+-
+-import base64
+-import json
+-import re
+-import os
+-import shutil
+-import socket
+-import subprocess
+-import sys
+-import time
+-from pathlib import Path
+-from typing import Any
+-from urllib.parse import urlsplit
+-
+-import httpx
+-from playwright.sync_api import BrowserType, Page, sync_playwright
+-
+-from snapims import db
+-from snapims.config import DataPaths
+-from snapims.demo import create_demo_batch
+-from snapims.processor import process_batch
+-
+-ROOT = Path(__file__).resolve().parents[1]
+-EVIDENCE = ROOT / "browser-evidence" / "v0.13.2"
+-DATA = Path(os.getenv("SNAPIMS_BROWSER_DATA", "/tmp/snapims-v0132-browser-data"))
+-PORT = int(os.getenv("SNAPIMS_BROWSER_PORT", "8878"))
+-BASE = f"http://snapims.test:{PORT}"
+-SERVER_BASE = f"http://127.0.0.1:{PORT}"
+-
+-
+-def _wait_http(url: str, timeout: float = 30) -> None:
+-    deadline = time.monotonic() + timeout
+-    while time.monotonic() < deadline:
+-        try:
+-            if httpx.get(url, timeout=1).status_code < 500:
+-                return
+-        except Exception:
+-            pass
+-        time.sleep(0.1)
+-    raise RuntimeError(f"Server did not become ready: {url}")
+-
+-
+-def _direct_batch(paths: DataPaths, count: int, batch_id: str) -> str:
+-    stamp = db.now()
+-    with db.transaction(paths.db_file) as connection:
+-        connection.execute(
+-            """INSERT INTO batches(
+-                   batch_id,source_fingerprint,source_folder,created_at,imported_at,started,ended,
+-                   status,item_count,product_photo_count,command_count,warning_count,warnings_json,
+-                   display_name,source_folder_name
+-               ) VALUES(?,?,?,?,?,1,1,'IMPORTED',?,0,0,0,'[]',?,?)""",
+-            (batch_id, f"fp-{batch_id}", f"/fixtures/{batch_id}", stamp, stamp, count, batch_id, batch_id),
+-        )
+-        connection.executemany(
+-            """INSERT INTO items(
+-                   item_id,sku,batch_id,sequence,shelf,location,title,price_cents,created_at,updated_at
+-               ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+-            [
+-                (
+-                    f"{batch_id}-ITEM-{index:05d}", f"{batch_id}-SKU-{index:05d}", batch_id,
+-                    index, "", None, f"Tape {index:05d}", 499, stamp, stamp,
+-                )
+-                for index in range(1, count + 1)
+-            ],
+-        )
+-    return batch_id
+-
+-
+-def _seed() -> dict[str, str]:
+-    shutil.rmtree(DATA, ignore_errors=True)
+-    paths = DataPaths.from_root(DATA).ensure()
+-    db.initialize(paths.db_file, paths=paths)
+-    demo = process_batch(create_demo_batch(DATA / "camera", item_count=5), paths=paths, batch_name="BROWSER-QA")
+-    items = db.list_items(paths.db_file, batch_id=demo.batch_id)
+-    stamp = db.now()
+-    with db.transaction(paths.db_file) as connection:
+-        connection.executemany(
+-            """INSERT INTO tag_definitions(
+-                   tag_id,canonical_label,category,active,ai_eligible,shopify_visible,
+-                   deterministic_only,sort_order,created_at,updated_at,evidence_json
+-               ) VALUES(?,?, 'Operator',1,0,1,1,?,?,?,'{}')""",
+-            [
+-                ("TAG-BROWSER-A", "Browser A", 10, stamp, stamp),
+-                ("TAG-BROWSER-B", "Browser B", 20, stamp, stamp),
+-            ],
+-        )
+-    for index, item in enumerate(items, start=1):
+-        db.update_item(
+-            paths.db_file, item["item_id"], {"title": f"Browser Tape {index}"},
+-            source="BROWSER_FIXTURE", reason="Seed distinct browser title",
+-        )
+-    items = db.list_items(paths.db_file, batch_id=demo.batch_id)
+-    source = items[0]
+-    db.update_item(
+-        paths.db_file,
+-        source["item_id"],
+-        {
+-            "tag_ids": ["TAG-BROWSER-A", "TAG-BROWSER-B"],
+-            "location": "Processing Table",
+-            "shelf": "Processing Table",
+-            "review": 1,
+-            "rare": 1,
+-        },
+-        source="BROWSER_FIXTURE",
+-        reason="Seed browser verification source values",
+-    )
+-    large = _direct_batch(paths, 5000, "BATCH-V0132-5000")
+-    fixtures = ROOT / "tests" / "fixtures" / "import_v0130"
+-    shutil.copytree(fixtures / "03-twenty-items-normal-next", paths.batches / "BROWSER-20")
+-    shutil.copytree(fixtures / "27-100-items-202-photos", paths.batches / "BROWSER-100")
+-    return {"editor": demo.batch_id, "large": large}
+-
+-
+-def _check(results: dict[str, Any], name: str, ok: bool, detail: Any = "") -> None:
+-    results["checks"].append({"name": name, "ok": bool(ok), "detail": str(detail)})
+-    print(("PASS" if ok else "FAIL"), name, detail)
+-
+-
+-def _watch(page: Page, results: dict[str, Any]) -> None:
+-    page.on("console", lambda m: results["console_errors"].append(m.text) if m.type == "error" else None)
+-    page.on("pageerror", lambda e: results["page_errors"].append(str(e)))
+-    page.on("requestfailed", lambda r: results["failed_requests"].append({"url": r.url, "failure": r.failure}))
+-    page.on("response", lambda r: results["http_errors"].append({"url": r.url, "status": r.status}) if r.status >= 500 else None)
+-
+-
+-def _wait_reload(page: Page) -> None:
+-    page.wait_for_timeout(900)
+-    page.wait_for_load_state("domcontentloaded")
+-
+-
+-def _browser_pass(browser_type: BrowserType, executable_path: str | None, label: str, ids: dict[str, str]) -> dict[str, Any]:
+-    """Run browser UI verification with local HTTP proxied through Python.
+-
+-    The execution environment applies a Chromium URLBlocklist to all HTTP
+-    navigation, including localhost. The browser still executes the real HTML,
+-    CSS, and JavaScript; HTTP reads and fetch calls are relayed to the actual
+-    local SnapIMS server by the test harness.
+-    """
+-    results: dict[str, Any] = {
+-        "browser": label,
+-        "network_mode": "local HTTP relayed because browser policy blocks localhost navigation",
+-        "checks": [],
+-        "console_errors": [],
+-        "page_errors": [],
+-        "failed_requests": [],
+-        "http_errors": [],
+-    }
+-    launch_args: dict[str, Any] = {"headless": True}
+-    if executable_path:
+-        launch_args["executable_path"] = executable_path
+-    if label == "chromium":
+-        launch_args["args"] = ["--no-sandbox", "--disable-dev-shm-usage"]
+-    browser = browser_type.launch(**launch_args)
+-    context = browser.new_context(viewport={"width": 1440, "height": 1000})
+-    server_client = httpx.Client(follow_redirects=True, timeout=30)
+-    page = context.new_page()
+-    page.set_default_timeout(12000)
+-    _watch(page, results)
+-
+-    css = (ROOT / "snapims" / "web" / "static" / "app.css").read_text(encoding="utf-8")
+-    js = (ROOT / "snapims" / "web" / "static" / "app.js").read_text(encoding="utf-8")
+-    transparent = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
+-
+-    def proxy_request(payload: dict[str, Any]) -> dict[str, Any]:
+-        raw_url = str(payload.get("url") or "/")
+-        parsed = urlsplit(raw_url)
+-        path = parsed.path or "/"
+-        if parsed.query:
+-            path += "?" + parsed.query
+-        headers = {str(k): str(v) for k, v in dict(payload.get("headers") or {}).items()}
+-        for key in list(headers):
+-            if key.casefold() in {"host", "content-length", "cookie"}:
+-                headers.pop(key, None)
+-        headers["Origin"] = SERVER_BASE
+-        headers["Referer"] = SERVER_BASE + "/"
+-        body = payload.get("body")
+-        response = server_client.request(
+-            str(payload.get("method") or "GET"),
+-            SERVER_BASE + path,
+-            headers=headers,
+-            content=body.encode("utf-8") if isinstance(body, str) else body,
+-            follow_redirects=False,
+-        )
+-        if response.status_code >= 500:
+-            results["http_errors"].append({"url": path, "status": response.status_code})
+-        return {
+-            "status": response.status_code,
+-            "headers": dict(response.headers),
+-            "body_b64": base64.b64encode(response.content).decode("ascii"),
+-        }
+-
+-    page.expose_function("__snapimsProxy", proxy_request)
+-    page.add_init_script(script=
+-        """
+-        (() => {
+-          const storage = new Map();
+-          Object.defineProperty(window, "localStorage", {value: {
+-            getItem: (key) => storage.has(String(key)) ? storage.get(String(key)) : null,
+-            setItem: (key, value) => storage.set(String(key), String(value)),
+-            removeItem: (key) => storage.delete(String(key)),
+-            clear: () => storage.clear(),
+-          }});
+-          const nativeSetTimeout = window.setTimeout.bind(window);
+-          window.setTimeout = (fn, delay, ...args) => {
+-            if (typeof fn === 'function' && String(fn).includes('window.location.reload')) return 0;
+-            return nativeSetTimeout(fn, delay, ...args);
+-          };
+-          window.fetch = async (input, init = {}) => {
+-            const url = new URL(typeof input === 'string' ? input : input.url, 'http://snapims.test:8878/').toString();
+-            const headers = {};
+-            new Headers(init.headers || (typeof input !== 'string' ? input.headers : undefined)).forEach((value, key) => headers[key] = value);
+-            const payload = await window.__snapimsProxy({
+-              method: init.method || (typeof input !== 'string' ? input.method : 'GET'),
+-              url,
+-              headers,
+-              body: init.body == null ? null : String(init.body),
+-            });
+-            const binary = atob(payload.body_b64 || '');
+-            const bytes = new Uint8Array(binary.length);
+-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+-            return new Response(bytes, {status: payload.status, headers: payload.headers});
+-          };
+-        })();
+-        """
+-    )
+-
+-    def load(path: str) -> httpx.Response:
+-        page.goto("about:blank", wait_until="domcontentloaded")
+-        response = server_client.get(SERVER_BASE + path)
+-        response.raise_for_status()
+-        html = response.text
+-        html = re.sub(r'<link[^>]+href="[^"]*/static/app\.css"[^>]*>', lambda _: f"<style>{css}</style>", html)
+-        html = re.sub(r'<script[^>]+src="[^"]*/static/app\.js"[^>]*></script>', '', html)
+-        html = html.replace('</body>', f'<script>{js}</script></body>', 1)
+-        html = re.sub(r'src="/media/[^"]+"', f'src="{transparent}"', html)
+-        html = html.replace("<head>", f'<head><base href="{BASE}/">', 1)
+-        page.set_content(html, wait_until="domcontentloaded")
+-        return response
+-
+-    try:
+-        for route, heading in [
+-            ("/", "SnapIMS"), ("/import", "Import"), ("/recognition", "Recognition"),
+-            ("/review", "Review"), ("/publish", "Publish"), ("/settings", "Settings"),
+-            ("/diagnostics", "Diagnostics"),
+-        ]:
+-            response = load(route)
+-            _check(results, f"{label} {route} loads", response.status_code < 500, response.status_code)
+-            _check(results, f"{label} {route} has content", heading.casefold() in page.locator("body").inner_text().casefold())
+-
+-        editor_path = f"/batch-editor?batch_id={ids['editor']}&page_size=100"
+-        load(editor_path)
+-        rows = page.locator("#batch-grid tbody tr[data-item-id]")
+-        _check(results, f"{label} editor rows", rows.count() == 5, rows.count())
+-
+-        def select_destinations() -> None:
+-            page.locator("[data-clear-selection]").click()
+-            rows.nth(1).locator(".row-select").check()
+-            rows.nth(2).locator(".row-select").check()
+-
+-        select_destinations()
+-        rows.nth(0).locator("[data-tag-input]").focus()
+-        page.locator("[data-fill-down]").click()
+-        page.locator(".save-toast").last.wait_for(state="visible")
+-        load(editor_path)
+-        rows = page.locator("#batch-grid tbody tr[data-item-id]")
+-        tag_counts = [rows.nth(i).locator(".tag-pill").count() for i in (1, 2)]
+-        _check(results, f"{label} Tags Fill Down", tag_counts == [2, 2], tag_counts)
+-
+-        select_destinations()
+-        rows.nth(0).locator('[data-field="location"]').focus()
+-        page.locator("[data-fill-down]").click()
+-        page.locator(".save-toast").last.wait_for(state="visible")
+-        load(editor_path)
+-        rows = page.locator("#batch-grid tbody tr[data-item-id]")
+-        locations = [rows.nth(i).locator('[data-field="location"]').input_value() for i in (1, 2)]
+-        _check(results, f"{label} Location Fill Down", locations == ["Processing Table", "Processing Table"], locations)
+-
+-        select_destinations()
+-        rows.nth(0).locator('[data-field="review"]').focus()
+-        page.locator("[data-fill-down]").click()
+-        page.locator(".save-toast").last.wait_for(state="visible")
+-        load(editor_path)
+-        rows = page.locator("#batch-grid tbody tr[data-item-id]")
+-        _check(results, f"{label} Review Fill Down", all(rows.nth(i).locator('[data-field="review"]').is_checked() for i in (1, 2)))
+-
+-        select_destinations()
+-        rows.nth(0).locator('[data-field="rare"]').focus()
+-        page.locator("[data-fill-down]").click()
+-        page.locator(".save-toast").last.wait_for(state="visible")
+-        load(editor_path)
+-        rows = page.locator("#batch-grid tbody tr[data-item-id]")
+-        _check(results, f"{label} Rare Fill Down", all(rows.nth(i).locator('[data-field="rare"]').is_checked() for i in (1, 2)))
+-
+-        price = rows.nth(0).locator('[data-field="price_cents"]')
+-        price.focus(); price.press("End"); price.press("ArrowRight")
+-        active = page.evaluate("document.activeElement?.hasAttribute('data-tag-input')")
+-        _check(results, f"{label} ArrowRight crosses Tags", active is True, active)
+-        discount = rows.nth(0).locator('[data-field="discount_percent"]')
+-        discount.focus(); discount.press("Home"); discount.press("ArrowLeft")
+-        active = page.evaluate("document.activeElement?.hasAttribute('data-tag-input')")
+-        _check(results, f"{label} ArrowLeft crosses Tags", active is True, active)
+-
+-        page.locator("[data-clear-selection]").click()
+-        search = page.locator("#batch-search")
+-        first_title = rows.nth(0).locator('[data-field="title"]').input_value()
+-        search.fill(first_title)
+-        page.locator("[data-select-visible]").click()
+-        before = page.locator("#selection-count").inner_text()
+-        search.fill("NO-SUCH-VISIBLE-TAPE")
+-        after = page.locator("#selection-count").inner_text()
+-        _check(results, f"{label} hidden selections clear", before == "1 selected" and after == "0 selected", f"{before} -> {after}")
+-
+-        EVIDENCE.mkdir(parents=True, exist_ok=True)
+-        page.screenshot(path=str(EVIDENCE / f"{label}-batch-editor.png"), full_page=True)
+-
+-        start = time.perf_counter()
+-        large_response = load(f"/batch-editor?batch_id={ids['large']}&page_size=100")
+-        large_time = time.perf_counter() - start
+-        large_rows = page.locator("#batch-grid tbody tr[data-item-id]").count()
+-        content_bytes = len(large_response.content)
+-        _check(results, f"{label} 5000-item page bounded", large_rows == 100 and content_bytes < 1_500_000, f"rows={large_rows} bytes={content_bytes}")
+-        _check(results, f"{label} 5000-item render under 1s", large_time < 1.0, f"{large_time:.3f}s")
+-        results["large_editor"] = {"render_seconds": large_time, "html_bytes": content_bytes, "rows": large_rows}
+-
+-        page.set_viewport_size({"width": 390, "height": 844})
+-        load(editor_path)
+-        body_width = page.evaluate("document.body.scrollWidth")
+-        viewport_width = page.evaluate("window.innerWidth")
+-        table_width = page.locator("#batch-grid").evaluate("e => e.scrollWidth")
+-        wrap_width = page.locator(".data-grid-wrap").evaluate("e => e.clientWidth")
+-        _check(results, f"{label} mobile body fits", body_width <= viewport_width + 2, f"body={body_width} viewport={viewport_width}")
+-        _check(results, f"{label} mobile grid scrolls", table_width > wrap_width, f"table={table_width} wrap={wrap_width}")
+-        page.screenshot(path=str(EVIDENCE / f"{label}-mobile-editor.png"), full_page=True)
+-        page.set_viewport_size({"width": 1440, "height": 1000})
+-
+-        load("/import")
+-        form = page.locator('form[action="/import/preview"]').filter(has=page.locator('input[value$="BROWSER-100"]'))
+-        _check(results, f"{label} 100-item folder listed", form.count() == 1, form.count())
+-        if form.count() == 1:
+-            folder_path = form.locator('input[name="folder_path"]').input_value()
+-            csrf = page.locator('meta[name="csrf-token"]').get_attribute("content") or ""
+-            preview_start = time.perf_counter()
+-            response = server_client.post(
+-                SERVER_BASE + "/import/preview",
+-                data={"folder_path": folder_path, "batch_location": "", "csrf_token": csrf},
+-                headers={"Origin": SERVER_BASE, "Referer": SERVER_BASE + "/import"},
+-                follow_redirects=False,
+-            )
+-            response_seconds = time.perf_counter() - preview_start
+-            _check(results, f"{label} Preview returns under 1s", response_seconds < 1.0 and response.status_code == 303, f"{response_seconds:.3f}s status={response.status_code}")
+-            location = response.headers.get("location", "")
+-            job_id = location.split("job_id=", 1)[1].split("&", 1)[0]
+-            deadline = time.monotonic() + 90
+-            job: dict[str, Any] = {}
+-            refresh_ok = True
+-            for _ in range(3):
+-                try:
+-                    load(f"/import?job_id={job_id}")
+-                except Exception:
+-                    refresh_ok = False
+-            _check(results, f"{label} refresh during Preview", refresh_ok)
+-            while time.monotonic() < deadline:
+-                job = server_client.get(SERVER_BASE + f"/import/job/{job_id}").json()
+-                if job.get("status") not in {"QUEUED", "RUNNING"}:
+-                    break
+-                time.sleep(0.1)
+-            _check(results, f"{label} 100-item Preview ready", job.get("status") in {"READY", "NEEDS_ATTENTION"}, job.get("status"))
+-            _check(results, f"{label} 100-item grouping exact", job.get("preview", {}).get("item_count") == 100, job.get("preview", {}).get("item_count"))
+-            _check(results, f"{label} one decode/scan per image", job.get("decode_count") <= 202 and job.get("qr_scan_count") <= 202, f"decode={job.get('decode_count')} qr={job.get('qr_scan_count')}")
+-            load(f"/import?job_id={job_id}")
+-            _check(results, f"{label} Preview page bounded to 20", page.locator(".preview-item-card").count() == 20, page.locator(".preview-item-card").count())
+-            page.screenshot(path=str(EVIDENCE / f"{label}-import-preview.png"), full_page=True)
+-    finally:
+-        context.close()
+-        server_client.close()
+-        browser.close()
+-    results["passed"] = all(check["ok"] for check in results["checks"])
+-    return results
+-
+-def main() -> int:
+-    EVIDENCE.mkdir(parents=True, exist_ok=True)
+-    ids = _seed()
+-    env = os.environ.copy()
+-    env.update({
+-        "SNAPIMS_DATA_DIR": str(DATA),
+-        "SNAPIMS_SKIP_DOTENV": "1",
+-        "SNAPIMS_AUTH_SECRET": "",
+-        "SNAPIMS_ADMIN_PASSWORD_HASH": "",
+-        "SNAPIMS_ENABLE_TEST_PROVIDERS": "true",
+-        "OPENAI_API_KEY": "",
+-        "SHOPIFY_ADMIN_ACCESS_TOKEN": "",
+-    })
+-    log_path = EVIDENCE / "server.log"
+-    with log_path.open("w", encoding="utf-8") as log:
+-        process = subprocess.Popen(
+-            [sys.executable, "-m", "snapims.cli", "--data-dir", str(DATA), "run", "--host", "127.0.0.1", "--port", str(PORT)],
+-            cwd=ROOT,
+-            env=env,
+-            stdout=log,
+-            stderr=subprocess.STDOUT,
+-            text=True,
+-        )
+-        try:
+-            _wait_http(SERVER_BASE + "/health")
+-            with sync_playwright() as playwright:
+-                outputs = [
+-                    _browser_pass(playwright.chromium, "/usr/bin/chromium", "chromium", ids),
+-                ]
+-            summary = {
+-                "version": "0.13.2",
+-                "base_url": BASE,
+-                "data_dir": str(DATA),
+-                "browsers": outputs,
+-                "passed": all(result["passed"] for result in outputs),
+-            }
+-            (EVIDENCE / "browser-verification.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+-            return 0 if summary["passed"] else 1
+-        finally:
+-            process.terminate()
+-            try:
+-                process.wait(timeout=10)
+-            except subprocess.TimeoutExpired:
+-                process.kill()
+-                process.wait(timeout=5)
+-
+-
+-if __name__ == "__main__":
+-    raise SystemExit(main())
+diff --git a/scripts/build_guides_v0132.py b/scripts/build_guides_v0132.py
+deleted file mode 100755
+index d873857..0000000
+--- a/scripts/build_guides_v0132.py
++++ /dev/null
+@@ -1,287 +0,0 @@
+-#!/usr/bin/env python3
+-from __future__ import annotations
+-from pathlib import Path
+-from docx import Document
+-from docx.enum.text import WD_ALIGN_PARAGRAPH
+-from docx.enum.section import WD_SECTION
+-from docx.shared import Inches, Pt
+-from PIL import Image
+-from docx.oxml import OxmlElement
+-from docx.oxml.ns import qn
+-
+-ROOT=Path(__file__).resolve().parents[1]
+-DOCS=ROOT/'docs'
+-EVIDENCE=ROOT/'browser-evidence'/'v0.13.2'
+-VERSION='0.13.2'
+-DATE='August 4, 2026'
+-
+-
+-def set_cell_shading(cell, fill='E8EEF7'):
+-    tcPr=cell._tc.get_or_add_tcPr(); shd=OxmlElement('w:shd'); shd.set(qn('w:fill'),fill); tcPr.append(shd)
+-
+-def add_page_number(paragraph):
+-    paragraph.alignment=WD_ALIGN_PARAGRAPH.RIGHT
+-    run=paragraph.add_run('Page ')
+-    fld=OxmlElement('w:fldSimple'); fld.set(qn('w:instr'),'PAGE'); run._r.addnext(fld)
+-
+-def setup(title, subtitle):
+-    d=Document()
+-    sec=d.sections[0]
+-    sec.top_margin=Inches(.65); sec.bottom_margin=Inches(.65); sec.left_margin=Inches(.75); sec.right_margin=Inches(.75)
+-    styles=d.styles
+-    styles['Normal'].font.name='Arial'; styles['Normal'].font.size=Pt(10)
+-    styles['Title'].font.name='Arial'; styles['Title'].font.size=Pt(24); styles['Title'].font.bold=True
+-    for name,size in [('Heading 1',17),('Heading 2',13),('Heading 3',11)]:
+-        styles[name].font.name='Arial'; styles[name].font.size=Pt(size); styles[name].font.bold=True
+-    p=d.add_paragraph(style='Title'); p.alignment=WD_ALIGN_PARAGRAPH.CENTER; p.add_run(title)
+-    p=d.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER; r=p.add_run(subtitle); r.bold=True; r.font.size=Pt(13)
+-    p=d.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER; p.add_run(f'Active release v{VERSION} · {DATE}')
+-    d.add_paragraph('SnapIMS is local-first inventory software. This guide describes the browser interface and command behavior verified for the active release.', style='Intense Quote')
+-    d.add_page_break()
+-    for section in d.sections:
+-        header=section.header.paragraphs[0]; header.text=f'SnapIMS v{VERSION} · {title}'; header.alignment=WD_ALIGN_PARAGRAPH.CENTER
+-        add_page_number(section.footer.paragraphs[0])
+-    return d
+-
+-def h(d,text,level=1): d.add_heading(text,level=level)
+-def p(d,text,bold_prefix=None):
+-    para=d.add_paragraph()
+-    if bold_prefix and text.startswith(bold_prefix):
+-        para.add_run(bold_prefix).bold=True; para.add_run(text[len(bold_prefix):])
+-    else: para.add_run(text)
+-    return para
+-
+-def bullets(d,items):
+-    for item in items: d.add_paragraph(item,style='List Bullet')
+-
+-def numbered(d,items):
+-    for item in items: d.add_paragraph(item,style='List Number')
+-
+-def code(d,text):
+-    para=d.add_paragraph(); para.style=d.styles['Normal'];
+-    run=para.add_run(text); run.font.name='Courier New'; run.font.size=Pt(9)
+-    para.paragraph_format.left_indent=Inches(.25); para.paragraph_format.space_before=Pt(3); para.paragraph_format.space_after=Pt(6)
+-
+-def image(d,name,caption):
+-    path=EVIDENCE/name
+-    if path.exists():
+-        with Image.open(path) as im:
+-            width_px, height_px = im.size
+-        ratio = width_px / max(1, height_px)
+-        max_w, max_h = 6.6, 6.7
+-        width = min(max_w, max_h * ratio)
+-        height = width / ratio
+-        d.add_picture(str(path), width=Inches(width), height=Inches(height))
+-        q=d.paragraphs[-1]; q.alignment=WD_ALIGN_PARAGRAPH.CENTER
+-        c=d.add_paragraph(caption); c.alignment=WD_ALIGN_PARAGRAPH.CENTER; c.runs[0].italic=True
+-
+-def table(d,headers,rows,widths=None):
+-    t=d.add_table(rows=1,cols=len(headers)); t.style='Table Grid'
+-    for i,x in enumerate(headers):
+-        t.rows[0].cells[i].text=str(x); set_cell_shading(t.rows[0].cells[i])
+-        for r in t.rows[0].cells[i].paragraphs[0].runs:r.bold=True
+-    for row in rows:
+-        cells=t.add_row().cells
+-        for i,x in enumerate(row): cells[i].text=str(x)
+-    return t
+-
+-def save(d,name):
+-    DOCS.mkdir(parents=True,exist_ok=True); path=DOCS/name; d.save(path); print(path)
+-
+-
+-def day_to_day():
+-    d=setup('SnapIMS Day-to-Day Guide','First-time operator workflow')
+-    h(d,'1. Start SnapIMS')
+-    code(d,'export PATH="$HOME/.local/bin:$PATH"\nsnapims up\nsnapims status')
+-    bullets(d,[
+-        'Version must show 0.13.2.',
+-        'Inventory schema must show 15 / 15.',
+-        'Project path and Python executable must point to the current extracted release.',
+-        'Open http://127.0.0.1:8767/.',
+-    ])
+-    h(d,'2. Prepare one batch folder')
+-    numbered(d,[
+-        'Create one immediate child folder inside ~/SnapIMS-data/batches.',
+-        'Use the desired default batch name as the folder name.',
+-        'Put product photographs inside the folder in capture order.',
+-        'Photograph NEXT ITEM between tapes. The exact payload is CVHS1:ITEM:NEXT.',
+-        'Do not rename, recompress, or edit source photographs after Preview.',
+-    ])
+-    p(d,'Blank or “None” location means unassigned. Any reasonable free-text location is allowed, including Processing Table or Warehouse Wall.')
+-    h(d,'3. Preview and Commit')
+-    numbered(d,[
+-        'Open Import and select the folder.',
+-        'Confirm the derived batch name.',
+-        'Enter a location or leave it unassigned.',
+-        'Select Preview batch. The page remains responsive and progress survives refresh.',
+-        'Verify the interpreted Items and warning list.',
+-        'Use only the focused correction controls when necessary.',
+-        'Select Commit Import once grouping is correct. Repeated Commit is safe and idempotent.',
+-    ])
+-    image(d,'chromium-import-top.png','Import Preview overview with durable progress, measured scan counts, and the first interpreted Item.')
+-    image(d,'chromium-import-commit.png','Final Preview controls and Commit Import action.')
+-    h(d,'4. Recognition and Review')
+-    bullets(d,[
+-        'Recognition may use live AI only when configured. Blocked or failed results are not successful results.',
+-        'Review title, price, tags, condition, Rare, Physical Review, and evidence before approval.',
+-        'Manual edits remain attached to immutable Item IDs.',
+-    ])
+-    h(d,'5. Batch Editor')
+-    bullets(d,[
+-        'The editor uses bounded pages and does not render an entire 5,000-item batch.',
+-        'Select destination rows, focus a source cell, then choose Fill Down.',
+-        'Fill Down supports Title, Price, Tags, Discount, Description, Location, Review, and Rare.',
+-        'Tags Fill Down replaces the destination tag set exactly. Append Tags is a different action.',
+-        'Rows hidden by search/filter are automatically deselected.',
+-        'ArrowLeft and ArrowRight move through the Tags editor.',
+-    ])
+-    image(d,'chromium-batch-editor-controls.png','Desktop Batch Editor with controlled Tags, location, flags, paging, and selection-safe bulk actions.')
+-    image(d,'chromium-mobile-editor-top.png','At 390 pixels, the page body fits the viewport and the wide editor grid scrolls horizontally.')
+-    h(d,'6. Publish and finish')
+-    bullets(d,[
+-        'Publish readiness is calculated with aggregate database queries.',
+-        'Shopify simulation is explicit and limited to the current page.',
+-        'Live Shopify action requires valid credentials and confirmation.',
+-        'Stop SnapIMS before an offline database backup.',
+-    ])
+-    code(d,'snapims down')
+-    h(d,'End-of-batch check')
+-    numbered(d,[
+-        'Physical tape count matches Preview Item count.',
+-        'No NEXT photographs are attached to Items.',
+-        'Location is correct or intentionally unassigned.',
+-        'Titles, prices, tags, condition, flags, and quantity are verified.',
+-        'CSV and Shopify results were independently checked when used.',
+-    ])
+-    save(d,f'SnapIMS_v{VERSION}_Day-to-Day_Guide.docx')
+-
+-
+-def operator():
+-    d=setup('SnapIMS Operator Guide','Complete verified operator procedures')
+-    h(d,'1. Release identity and safety')
+-    p(d,'The active release is v0.13.2 with inventory schema 15. The installer pins the command and user service to the extracted release so an older source tree cannot silently start against a newer database.')
+-    table(d,['Identity','Expected'],[
+-        ('CLI version','0.13.2'),('Home version','0.13.2'),('Inventory schema','15 / 15'),('Default data','~/SnapIMS-data'),('Batch Home','~/SnapIMS-data/batches')])
+-    h(d,'2. Installation and startup')
+-    code(d,'unzip SnapIMS-v0.13.2-full-source.zip\ncd SnapIMS-v0.13.2\nchmod +x install_v0132.sh\n./install_v0132.sh\nexport PATH="$HOME/.local/bin:$PATH"\nsnapims status\nsnapims up')
+-    p(d,'Do not operate against an unexpected project path. Re-run the installer from the intended release if status shows a stale source path.')
+-    h(d,'3. Import protocol')
+-    p(d,'Folder beginning and folder end are automatic batch boundaries. NEXT ITEM is the only active daily QR command. START, END, LOCATION, RARE, REVIEW, and CONTINUE photographs are ignored legacy commands and produce one concise non-blocking warning.')
+-    table(d,['Situation','Interpretation'],[
+-        ('No NEXT card','Valid one-Item batch'),('Leading NEXT','Ignored with warning'),('Consecutive NEXT','Collapsed with warning'),('Trailing NEXT','Empty Item ignored with warning'),('Only NEXT cards','No product photographs'),('Unrelated consumer QR','Product photograph'),('Legacy SnapIMS QR','Ignored; does not control grouping')])
+-    h(d,'4. Import corrections')
+-    bullets(d,['Treat as Product Photo','Treat as NEXT ITEM','Ignore Photo','Split Item Before This Photo','Merge With Previous Item'])
+-    p(d,'Corrections affect only SnapIMS interpretation. They survive refresh, navigation, restart, Preview reopening, and final Commit. Original filenames, timestamps, EXIF, and pixels are not modified.')
+-    image(d,'chromium-import-top.png','Verified 100-item Preview overview: exact grouping, durable progress, and one decode/scan per source image.')
+-    image(d,'chromium-import-correction.png','Interpreted Item cards expose focused photo corrections without modifying source files.')
+-    image(d,'chromium-import-commit.png','End of Preview and Commit controls.')
+-    h(d,'5. Recognition')
+-    p(d,'Use configured providers only. Test/mock provider output is blocked from Publish unless deliberately replaced by manual review. A missing or failed provider is displayed as blocked or failed rather than silently accepted.')
+-    h(d,'6. Review')
+-    bullets(d,[
+-        'Inspect the correct Item photo and immutable Item ID.',
+-        'Confirm or change Title, Price, Tags, Discount, Condition, Quantity, and location.',
+-        'Use Rare and Physical Review as operator decisions.',
+-        'Review stored evidence and uncertainty; SnapIMS does not invent explanations for missing evidence.',
+-        'Stale two-tab edits return HTTP 409 and preserve the accepted record.',
+-    ])
+-    h(d,'7. Batch Editor')
+-    p(d,'The editor is paged at 20–200 rows. Search, filter, and sort are server-bounded, and the loaded page retains fast spreadsheet-style editing.')
+-    table(d,['Operation','Behavior'],[
+-        ('Fill Down Tags','Exact set/replace with validated immutable Tag IDs'),('Fill Down Location','Copies free text; blank/None becomes unassigned; history recorded'),('Fill Down Review/Rare','Copies true or false exactly'),('Append Tags','Adds tags without replacing existing tags'),('Hidden rows','Selections clear immediately'),('Keyboard','Horizontal movement crosses Tags; vertical movement keeps the field')])
+-    image(d,'chromium-batch-editor-controls.png','Desktop Batch Editor after the v0.13.2 consistency and paging fixes.')
+-    image(d,'chromium-mobile-editor-top.png','Mobile verification at 390 × 844.')
+-    h(d,'8. CSV')
+-    numbered(d,[
+-        'Export the intended batch CSV.',
+-        'Preserve Item ID values and header structure.',
+-        'Edit only supported values.',
+-        'Preview import differences before apply.',
+-        'Correct every validation error; failed staged imports remain all-or-nothing.',
+-        'Verify exported/imported row counts and an Item-ID sample.',
+-    ])
+-    h(d,'9. Publish')
+-    p(d,'The Publish page uses aggregate readiness counts. It does not dry-run all Items by default. Select simulation explicitly; simulation is paged. Live Shopify draft creation is guarded by valid configuration and explicit confirmation.')
+-    h(d,'10. Recovery')
+-    table(d,['Problem','Operator action'],[
+-        ('Wrong version/path','Run snapims status; re-run install_v0132.sh from the intended release.'),
+-        ('Interrupted scan','Reopen Import; resume the durable folder job.'),
+-        ('Duplicate tab/Commit','Open the existing job/result; do not create a new source folder copy.'),
+-        ('Migration issue','Stop SnapIMS; preserve data; restore only from copied pre-schema-v15 backup.'),
+-        ('API unavailable','Keep result blocked/failed; use Diagnostics; do not treat dummy evidence as production proof.'),
+-    ])
+-    h(d,'11. Shutdown and backup')
+-    code(d,'snapims down\ncp -a ~/SnapIMS-data ~/SnapIMS-data-backup-$(date +%Y%m%d-%H%M%S)')
+-    save(d,f'SnapIMS_v{VERSION}_Operator_Guide.docx')
+-
+-
+-def manual():
+-    d=setup('SnapIMS Complete Operating Manual','Operations, diagnostics, recovery, and release readiness')
+-    h(d,'1. Product model')
+-    p(d,'SnapIMS keeps immutable internal Batch and Item identities while allowing operator-visible batch names and locations to change. Source folders remain audit evidence and are never renamed by display-name edits.')
+-    table(d,['Layer','Purpose'],[
+-        ('Source photos','Immutable operator originals'),('Import cache','Restart-safe dimensions, readability, QR result, thumbnail, optional hash'),('Inventory database','Batches, Items, history, controlled Tags, checkpoints'),('Recognition','Durable provider attempts/results and evidence'),('Review/Batch Editor','Human decisions and audited edits'),('Publish','CSV and guarded Shopify draft workflow')])
+-    h(d,'2. Performance design')
+-    bullets(d,[
+-        'Folder list reads immediate child directories without opening every photograph.',
+-        'Preview runs as a background job and returns browser control immediately.',
+-        'Unchanged photographs are not decoded or QR-scanned again.',
+-        'Final preservation hashes are streamed at Commit and reused.',
+-        'Batch Editor and Publish use bounded database pages and aggregate summaries.',
+-        'SQLite connections close explicitly after every context.',
+-    ])
+-    table(d,['Measured scenario','v0.13.2 sandbox result'],[
+-        ('20-item / 42-photo cold Preview','479 ms'),('20-item warm Preview','18 ms, 0 decodes, 0 scans'),('100-item / 202-photo cold Preview','2,388 ms'),('100-item warm Preview','40 ms'),('5,000-item Batch Editor','430,721 bytes; 100 rows; 0.414 s relayed Chromium render'),('Full suite descriptors','3 baseline; 166 peak; 7 final; 0 final SQLite')])
+-    h(d,'3. Complete workflow')
+-    numbered(d,[
+-        'Start and verify release identity.',
+-        'Prepare one batch folder and NEXT separators.',
+-        'Preview and correct grouping.',
+-        'Commit immutable inventory records.',
+-        'Run Recognition or leave provider-blocked Items for manual work.',
+-        'Review evidence and commercial fields.',
+-        'Use paged Batch Editor for controlled mass edits.',
+-        'Verify CSV when used.',
+-        'Simulate and perform guarded Publish only when ready.',
+-        'Stop and back up.',
+-    ])
+-    image(d,'chromium-import-top.png','Import Preview overview from the v0.13.2 browser pass.')
+-    image(d,'chromium-import-commit.png','Import Commit controls from the v0.13.2 browser pass.')
+-    image(d,'chromium-batch-editor-controls.png','Batch Editor evidence from the v0.13.2 browser pass.')
+-    h(d,'4. Audit and conflict rules')
+-    bullets(d,[
+-        'Every accepted edit remains tied to the immutable Item ID.',
+-        'Location changes create location-history events.',
+-        'Bulk operations are atomic and checkpointed where required.',
+-        'Stale revisions are rejected rather than overwriting newer work.',
+-        'Duplicate Import Preview/Commit requests resolve to one durable job/result.',
+-        'A mixed application/schema version is refused before serving normal work.',
+-    ])
+-    h(d,'5. Diagnostics')
+-    code(d,'snapims doctor\nsnapims status\nsnapims logs')
+-    p(d,'Status reports project path, Python executable, data directory, PID, version, and schema. External-service failures do not imply inventory database failure; read each component separately.')
+-    h(d,'6. Security')
+-    bullets(d,[
+-        'Configure authentication before public exposure.',
+-        'Keep secrets outside source control and verify owner-only secret-file permissions.',
+-        'Use CSRF-protected state changes and revoke sessions after credential changes.',
+-        'Treat Cloudflare, Guacamole, xrdp, and remote-shell exposure as separate deployment controls.',
+-    ])
+-    h(d,'7. Production acceptance')
+-    p(d,'v0.13.2 is pilot-ready, not v1.0.0. Before 1.0, complete the real 20-tape Pixel pilot, live AI, live Shopify draft, real CSV round trip, target-machine restart durability, direct Firefox/Chromium walkthrough, guide verification, security/deployment review, backup/restore drill, and zero-blocker review.')
+-    h(d,'8. Skipped sandbox capabilities')
+-    table(d,['Capability','Reason'],[
+-        ('Live OpenAI','No production API key'),('Live Shopify','No store/token'),('Native Firefox','Runtime unavailable'),('Direct localhost Chromium','Managed URLBlocklist'),('2012 Mac mini','Hardware unavailable'),('Cloudflare/Guacamole','Owner infrastructure unavailable'),('HEIC','pillow_heif unavailable')])
+-    h(d,'9. Evidence locations')
+-    bullets(d,[
+-        'release-evidence/v0.13.2/',
+-        'browser-evidence/v0.13.2/',
+-        'TEST_RESULTS.md',
+-        'PERFORMANCE_REPORT.md',
+-        'ISSUE_TRACEABILITY_V0132.md',
+-        'V1_PRODUCTION_ACCEPTANCE_GAPS.md',
+-    ])
+-    save(d,f'SnapIMS_v{VERSION}_Complete_Operating_Manual.docx')
+-
+-if __name__=='__main__':
+-    day_to_day(); operator(); manual()
+diff --git a/scripts/build_manifest_v0132.py b/scripts/build_manifest_v0132.py
+deleted file mode 100755
+index b1e3ecb..0000000
+--- a/scripts/build_manifest_v0132.py
++++ /dev/null
+@@ -1,23 +0,0 @@
+-#!/usr/bin/env python3
+-from __future__ import annotations
+-import hashlib, json
+-from pathlib import Path
+-ROOT=Path(__file__).resolve().parents[1]
+-EXCLUDE={'.git','.pytest_cache','.venv','__pycache__'}
+-entries=[]
+-for path in sorted(ROOT.rglob('*')):
+-    if not path.is_file() or any(part in EXCLUDE for part in path.parts) or path.suffix=='.pyc':
+-        continue
+-    rel=path.relative_to(ROOT).as_posix()
+-    if rel in {'PACKAGE_FILE_MANIFEST.sha256','MANIFEST_SHA256.json','SHA256SUMS'}:
+-        continue
+-    digest=hashlib.sha256(path.read_bytes()).hexdigest()
+-    entries.append({'path':rel,'sha256':digest,'bytes':path.stat().st_size})
+-(ROOT/'PACKAGE_FILE_MANIFEST.sha256').write_text(''.join(f"{e['sha256']}  {e['path']}\n" for e in entries),encoding='utf-8')
+-(ROOT/'MANIFEST_SHA256.json').write_text(json.dumps({'release':'0.13.2','files':entries},indent=2),encoding='utf-8')
+-required=['install_v0132.sh','dist/snapims-0.13.2-py3-none-any.whl','SnapIMS_Operator_Guide_v0.13.2.pdf','SnapIMS_Operator_Guide_v0.13.2.docx']
+-for rel in required:
+-    p=ROOT/rel
+-    if not p.exists(): raise SystemExit(f'missing required release file: {rel}')
+-(ROOT/'SHA256SUMS').write_text(''.join(f"{hashlib.sha256((ROOT/r).read_bytes()).hexdigest()}  {r}\n" for r in required),encoding='utf-8')
+-print(f'manifested {len(entries)} files')
+diff --git a/scripts/generate_import_fixture_sets_v0132.py b/scripts/generate_import_fixture_sets_v0132.py
+deleted file mode 100755
+index bdbca78..0000000
+--- a/scripts/generate_import_fixture_sets_v0132.py
++++ /dev/null
+@@ -1,202 +0,0 @@
+-#!/usr/bin/env python3
+-"""Generate deterministic, real-image Import fixtures for SnapIMS v0.13.2.
+-
+-The fixture set contains actual decodable QR photographs. It never writes into the
+-operator Batch Home and is safe to delete and regenerate.
+-"""
+-from __future__ import annotations
+-
+-import argparse
+-import json
+-import shutil
+-from pathlib import Path
+-from typing import Iterable
+-
+-import qrcode
+-from PIL import Image, ImageDraw
+-
+-NEXT = "CVHS1:ITEM:NEXT"
+-LEGACY = {
+-    "start": "CVHS1:BATCH:START",
+-    "end": "CVHS1:BATCH:END",
+-    "location": "CVHS1:LOC:A6",
+-    "location_malformed": "CVHS1:LOC:",
+-    "rare": "CVHS1:FLAG:RARE",
+-    "review": "CVHS1:FLAG:REVIEW",
+-    "continue": "CVHS1:ITEM:CONT",
+-}
+-
+-
+-def product(path: Path, label: str) -> None:
+-    image = Image.new("RGB", (800, 600), (40, 68, 92))
+-    draw = ImageDraw.Draw(image)
+-    draw.rectangle((35, 35, 765, 565), outline=(235, 235, 235), width=8)
+-    draw.text((65, 70), label, fill=(255, 255, 255))
+-    draw.text((65, 520), path.name, fill=(255, 255, 255))
+-    image.save(path, format="JPEG", quality=88, optimize=True)
+-
+-
+-def qr_photo(path: Path, payload: str, label: str = "QR") -> None:
+-    code = qrcode.make(payload).convert("RGB").resize((420, 420))
+-    image = Image.new("RGB", (800, 600), "white")
+-    image.paste(code, (190, 70))
+-    draw = ImageDraw.Draw(image)
+-    draw.text((35, 25), label, fill="black")
+-    draw.text((35, 555), payload, fill="black")
+-    image.save(path, format="JPEG", quality=94, optimize=True)
+-
+-
+-def folder(root: Path, name: str) -> Path:
+-    destination = root / name
+-    destination.mkdir(parents=True, exist_ok=True)
+-    return destination
+-
+-
+-def stream(destination: Path, layout: Iterable[str]) -> None:
+-    for index, kind in enumerate(layout):
+-        target = destination / f"PXL_20260803_120{index:05d}.jpg"
+-        if kind == "P":
+-            product(target, f"PRODUCT {index + 1}")
+-        elif kind == "N":
+-            qr_photo(target, NEXT, "NEXT ITEM")
+-        else:
+-            qr_photo(target, kind, "COMMAND")
+-
+-
+-def build(root: Path) -> dict[str, object]:
+-    if root.exists():
+-        shutil.rmtree(root)
+-    root.mkdir(parents=True)
+-
+-    stream(folder(root, "01-one-item-no-next"), ["P"])
+-    stream(folder(root, "02-two-items-one-next"), ["P", "N", "P"])
+-
+-    twenty = folder(root, "03-twenty-items-normal-next")
+-    index = 0
+-    for item in range(20):
+-        product(twenty / f"{index:04d}.jpg", f"TAPE {item + 1}")
+-        index += 1
+-        if item < 19:
+-            qr_photo(twenty / f"{index:04d}.jpg", NEXT, "NEXT ITEM")
+-            index += 1
+-
+-    stream(folder(root, "04-leading-next"), ["N", "P"])
+-    stream(folder(root, "05-trailing-next"), ["P", "N"])
+-    stream(folder(root, "06-consecutive-next"), ["P", "N", "N", "P"])
+-    folder(root, "07-empty-folder")
+-    stream(folder(root, "08-only-next-cards"), ["N", "N"])
+-
+-    corrupt = folder(root, "09-corrupt-jpeg-among-valid")
+-    product(corrupt / "001.jpg", "VALID BEFORE")
+-    (corrupt / "002.jpg").write_bytes(b"not-a-jpeg\x00\x01")
+-    product(corrupt / "003.jpg", "VALID AFTER")
+-
+-    heic = folder(root, "10-heic-if-supported")
+-    heic_status = "not generated: pillow-heif unavailable"
+-    try:
+-        import pillow_heif  # type: ignore[import-not-found]
+-
+-        pillow_heif.register_heif_opener()
+-        Image.new("RGB", (800, 600), (40, 68, 92)).save(heic / "001.heic", format="HEIF")
+-        heic_status = "generated"
+-    except (ImportError, KeyError, OSError):
+-        (heic / "HEIC_RUNTIME_NOT_AVAILABLE.txt").write_text(heic_status, encoding="utf-8")
+-
+-    mixed = folder(root, "11-unsupported-files-mixed")
+-    product(mixed / "001.jpg", "PRODUCT")
+-    (mixed / "notes.txt").write_text("ignored", encoding="utf-8")
+-    (mixed / "archive.zip").write_bytes(b"not a real archive")
+-
+-    consumer = folder(root, "12-unrelated-consumer-qr")
+-    qr_photo(consumer / "001.jpg", "https://example.com/product/123", "CONSUMER QR")
+-    product(consumer / "002.jpg", "PRODUCT")
+-
+-    legacy = folder(root, "13-legacy-mixed-with-next")
+-    qr_photo(legacy / "001.jpg", LEGACY["start"], "LEGACY START")
+-    product(legacy / "002.jpg", "TAPE 1")
+-    qr_photo(legacy / "003.jpg", LEGACY["location"], "LEGACY LOCATION")
+-    qr_photo(legacy / "004.jpg", NEXT, "NEXT ITEM")
+-    product(legacy / "005.jpg", "TAPE 2")
+-    qr_photo(legacy / "006.jpg", LEGACY["end"], "LEGACY END")
+-
+-    malformed = folder(root, "14-legacy-malformed-location")
+-    product(malformed / "001.jpg", "PRODUCT")
+-    qr_photo(malformed / "002.jpg", LEGACY["location_malformed"], "MALFORMED LEGACY")
+-
+-    for name in (
+-        "15-blank-location",
+-        "16-none-location",
+-        "17-processing-table-location",
+-        "20-duplicate-reused-folder",
+-        "21-source-change-after-preview",
+-        "22-stop-during-scan",
+-        "23-stop-after-preview-before-commit",
+-        "24-browser-refresh-during-scan",
+-        "25-manual-split-merge",
+-        "26-one-changed-photo",
+-        "29-v0123-upgrade-source",
+-        "30-clean-install-source",
+-    ):
+-        destination = folder(root, name)
+-        product(destination / "001.jpg", name)
+-        product(destination / "002.jpg", f"{name} second photo")
+-
+-    spaced = folder(root, "18-Folder Name With Spaces")
+-    product(spaced / "001.jpg", "SPACES")
+-    unicode_folder = folder(root, "19-Horreur été ünicode")
+-    product(unicode_folder / "001.jpg", "UNICODE")
+-
+-    large = folder(root, "27-100-items-202-photos")
+-    index = 0
+-    for item in range(100):
+-        product(large / f"{index:04d}.jpg", f"TAPE {item + 1}")
+-        index += 1
+-        if item < 99:
+-            qr_photo(large / f"{index:04d}.jpg", NEXT, "NEXT ITEM")
+-            index += 1
+-    for payload in (LEGACY["start"], LEGACY["end"], LEGACY["review"]):
+-        qr_photo(large / f"{index:04d}.jpg", payload, "LEGACY")
+-        index += 1
+-    assert index == 202
+-
+-    multiple = folder(root, "28-multiple-batch-home")
+-    for child_name in ("AUGUST-HORROR-01", "Comedy Batch", "Été VHS"):
+-        child = folder(multiple, child_name)
+-        product(child / "001.jpg", child_name)
+-
+-    manifest = {
+-        "release": "0.13.2",
+-        "root": str(root.resolve()),
+-        "fixture_folders": sorted(path.name for path in root.iterdir() if path.is_dir()),
+-        "image_files": sum(
+-            1
+-            for path in root.rglob("*")
+-            if path.suffix.casefold() in {".jpg", ".jpeg", ".heic", ".heif"}
+-        ),
+-        "heic": heic_status,
+-        "note": (
+-            "Scenarios 15-17 are differentiated by operator-entered metadata. "
+-            "Scenarios 20-26 and 29-30 are completed by the automated tests/scripts."
+-        ),
+-    }
+-    (root / "fixture-manifest.json").write_text(
+-        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+-    )
+-    return manifest
+-
+-
+-def main() -> None:
+-    parser = argparse.ArgumentParser()
+-    parser.add_argument(
+-        "--output",
+-        type=Path,
+-        default=Path("tests/fixtures/import_v0130"),
+-        help="Fixture output directory",
+-    )
+-    args = parser.parse_args()
+-    result = build(args.output.resolve())
+-    print(json.dumps(result, indent=2, ensure_ascii=False))
+-
+-
+-if __name__ == "__main__":
+-    main()
+diff --git a/scripts/verify_release_v0132.py b/scripts/verify_release_v0132.py
+deleted file mode 100755
+index 12f0516..0000000
+--- a/scripts/verify_release_v0132.py
++++ /dev/null
+@@ -1,22 +0,0 @@
+-#!/usr/bin/env python3
+-from __future__ import annotations
+-import argparse, hashlib, json, subprocess, sys, zipfile
+-from pathlib import Path
+-RELEASE='0.13.2'
+-def run(args,cwd):
+-    return subprocess.run(args,cwd=cwd,text=True,capture_output=True,check=True)
+-def main():
+-    parser=argparse.ArgumentParser(); parser.add_argument('root',type=Path,nargs='?',default=Path(__file__).resolve().parents[1]); args=parser.parse_args()
+-    root=args.root.resolve()
+-    required=[root/'install_v0132.sh',root/f'dist/snapims-{RELEASE}-py3-none-any.whl',root/'tests',root/'docs',root/'browser-evidence/v0.13.2/browser-verification.json']
+-    missing=[str(p) for p in required if not p.exists()]
+-    if missing: raise SystemExit('missing: '+', '.join(missing))
+-    run([sys.executable,'-m','compileall','-q','snapims','tests','scripts'],root)
+-    run(['node','--check','snapims/web/static/app.js'],root)
+-    run(['bash','-n','install_v0132.sh'],root)
+-    import tomllib
+-    assert tomllib.loads((root/'pyproject.toml').read_text())['project']['version']==RELEASE
+-    browser=json.loads((root/'browser-evidence/v0.13.2/browser-verification.json').read_text())
+-    assert browser['passed'] is True
+-    print(json.dumps({'release':RELEASE,'required_files':'PASS','compile':'PASS','javascript':'PASS','installer_syntax':'PASS','browser':'PASS'},indent=2))
+-if __name__=='__main__': main()
+diff --git a/snapims/__init__.py b/snapims/__init__.py
+index 284a63d..90b08ca 100644
+--- a/snapims/__init__.py
++++ b/snapims/__init__.py
+@@ -8,4 +8,4 @@ except ImportError:  # HEIC remains optional when the native codec is unavailabl
+ if register_heif_opener is not None:
+     register_heif_opener()
+ 
+-__version__ = "0.13.2"
++__version__ = "0.14.0"
+diff --git a/snapims/cli.py b/snapims/cli.py
+index 5502f67..315852c 100644
+--- a/snapims/cli.py
++++ b/snapims/cli.py
+@@ -23,7 +23,8 @@ from snapims.auth import (
+     hash_password,
+ )
+ from snapims.catalog import db as catalog_db
+-from snapims.config import SnapIMSConfig
++from snapims.config import SnapIMSConfig, ShopifyConfig
++from snapims.shopify.auth import ShopifyTokenManager
+ from snapims.demo import create_demo_batch
+ from snapims.manager import ServiceManager
+ from snapims.observability import query_events, redact
+@@ -577,6 +578,9 @@ def main() -> None:
+         guacamole = cast(dict[str, object], status["guacamole"])
+         auth_state, auth_detail = _auth_state(config)
+         database_ok = _database_ok(config)
++        shopify_config = ShopifyConfig.from_env()
++        shopify_token = ShopifyTokenManager().status()
++        shopify_ready = not shopify_config.problems()
+         print(
+             f"SnapIMS .............. {_running_stopped(bool(status['app']))}\n"
+             f"Health ............... {_pass_fail(bool(status['health']))}\n"
+@@ -588,6 +592,8 @@ def main() -> None:
+             f"Authentication ....... {auth_state}\n"
+             f"Database ............. {_pass_fail(database_ok)}\n"
+             f"OpenAI ............... {_pass_fail(bool(config.openai_api_key))}\n"
++            f"Shopify .............. {_pass_fail(shopify_ready)}\n"
++            f"Shopify auth ......... {shopify_token.mode} / {shopify_token.state}\n"
+             f"Port ................. {status['port']}\n"
+             f"Version .............. {status['version']}\n"
+             f"PID .................. {status['pid']}\n"
+diff --git a/snapims/config.py b/snapims/config.py
+index 4519d64..b0fd9b4 100644
+--- a/snapims/config.py
++++ b/snapims/config.py
+@@ -200,31 +200,56 @@ class ShopifyConfig:
+     location_id: str
+     api_version: str = "2026-07"
+     draft_only: bool = True
++    client_id: str = ""
++    client_secret: str = ""
+ 
+     @classmethod
+-    def from_env(cls) -> ShopifyConfig:
++    def from_env(cls) -> "ShopifyConfig":
+         from snapims.settings import ConfigurationService
++        from snapims.shopify.auth import normalize_shop_domain
+ 
+         service = ConfigurationService.load_runtime()
++        raw_domain = service.value("SHOPIFY_STORE_DOMAIN", "").strip()
++        try:
++            domain = normalize_shop_domain(raw_domain) if raw_domain else ""
++        except Exception:
++            domain = raw_domain
+         return cls(
+-            store_domain=service.value("SHOPIFY_STORE_DOMAIN", "").strip(),
++            store_domain=domain,
+             access_token=service.value("SHOPIFY_ADMIN_ACCESS_TOKEN", "").strip(),
+             location_id=service.value("SHOPIFY_LOCATION_ID", "").strip(),
+             api_version=service.value("SHOPIFY_API_VERSION", "2026-07").strip(),
+             draft_only=service.value("SHOPIFY_DRAFT_ONLY", "true").strip().casefold()
+             not in {"false", "0", "no"},
++            client_id=service.value("SHOPIFY_CLIENT_ID", "").strip(),
++            client_secret=service.value("SHOPIFY_CLIENT_SECRET", "").strip(),
+         )
+ 
+-    def problems(self) -> list[str]:
++    @property
++    def auth_mode(self) -> str:
++        if self.client_id and self.client_secret:
++            return "client_credentials"
++        if self.access_token:
++            return "legacy_static_token"
++        return "none"
++
++    def problems(self, *, require_location: bool = True) -> list[str]:
+         problems: list[str] = []
+-        if not self.store_domain or not self.store_domain.endswith(".myshopify.com"):
+-            problems.append("SHOPIFY_STORE_DOMAIN must end in .myshopify.com")
+-        if not self.access_token:
+-            problems.append("SHOPIFY_ADMIN_ACCESS_TOKEN is not configured")
+-        if not self.location_id.startswith("gid://shopify/Location/"):
++        if not self.store_domain or not re.fullmatch(
++            r"[a-z0-9][a-z0-9-]*\.myshopify\.com", self.store_domain.casefold()
++        ):
++            problems.append("SHOPIFY_STORE_DOMAIN must be the permanent .myshopify.com domain")
++        client_complete = bool(self.client_id and self.client_secret)
++        client_partial = bool(self.client_id) != bool(self.client_secret)
++        if client_partial:
++            problems.append("SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET must both be configured")
++        if not client_complete and not self.access_token:
++            problems.append("Shopify Client ID and Client Secret are not configured")
++        if require_location and not self.location_id.startswith("gid://shopify/Location/"):
+             problems.append("SHOPIFY_LOCATION_ID is not a Shopify Location GID")
+         if not re.fullmatch(r"\d{4}-\d{2}", self.api_version):
+             problems.append("SHOPIFY_API_VERSION must look like 2026-07")
+         if not self.draft_only:
+             problems.append("SnapIMS permits Shopify draft-only mode only at this stage")
+         return problems
++
+diff --git a/snapims/provider_probes.py b/snapims/provider_probes.py
+index 9e2ba60..bd01a81 100644
+--- a/snapims/provider_probes.py
++++ b/snapims/provider_probes.py
+@@ -10,6 +10,7 @@ from typing import Any, Protocol
+ from snapims import __version__
+ from snapims.config import ShopifyConfig
+ from snapims.shopify.client import ShopifyAPIError, ShopifyClient, ShopifyTransport
++from snapims.shopify.auth import ShopifyTokenManager, ShopifyCredentialError, ShopifyTokenError
+ 
+ OPENAI_API_ROOT = "https://api.openai.com/v1"
+ ONE_PIXEL_PNG = (
+@@ -218,13 +219,17 @@ query SnapIMSConnectionProbe {
+ """.strip()
+ 
+ SHOPIFY_CAPABILITIES: dict[str, frozenset[str]] = {
+-    "shop identity": frozenset({"read_markets_home"}),
+     "location discovery": frozenset({"read_locations"}),
+-    "draft product creation": frozenset({"write_products"}),
++    "SKU reconciliation": frozenset({"read_products"}),
++    "draft product and media creation": frozenset({"write_products"}),
+     "inventory reconciliation": frozenset({"read_inventory"}),
+     "inventory activation": frozenset({"write_inventory"}),
+ }
+ 
++SHOPIFY_REQUIRED_SCOPES = frozenset(
++    scope for scopes in SHOPIFY_CAPABILITIES.values() for scope in scopes
++)
++
+ 
+ @dataclass(frozen=True, slots=True)
+ class ShopifyProbeResult:
+@@ -232,6 +237,9 @@ class ShopifyProbeResult:
+     granted_scopes: tuple[str, ...]
+     missing_by_capability: dict[str, tuple[str, ...]]
+     locations: tuple[dict[str, Any], ...]
++    authentication_mode: str = ""
++    token_state: str = ""
++    token_expires_at: str = ""
+ 
+     @property
+     def missing_scopes(self) -> tuple[str, ...]:
+@@ -252,18 +260,32 @@ class ShopifyConnectionProbe:
+         config: ShopifyConfig,
+         *,
+         transport: ShopifyTransport | None = None,
++        token_manager: ShopifyTokenManager | None = None,
+     ) -> None:
+         self.config = config
+-        self.client = ShopifyClient(config, transport=transport)
++        self.token_manager = token_manager
++        if self.token_manager is None and config.auth_mode == "client_credentials":
++            self.token_manager = ShopifyTokenManager(
++                credentials=(config.store_domain, config.client_id, config.client_secret, config.access_token)
++            )
++        self.client = ShopifyClient(
++            config,
++            transport=transport or None,
++        )
++        if transport is None and self.token_manager is not None:
++            from snapims.shopify.client import HTTPShopifyTransport
++            self.client = ShopifyClient(
++                config,
++                transport=HTTPShopifyTransport(config, token_manager=self.token_manager),
++            )
+ 
+     def run(self) -> ShopifyProbeResult:
+-        if not self.config.store_domain.endswith(".myshopify.com"):
+-            raise ProviderProbeError("A valid .myshopify.com domain is required.")
+-        if not self.config.access_token:
+-            raise ProviderProbeError("Shopify Admin API token is required.")
++        problems = self.config.problems(require_location=False)
++        if problems:
++            raise ProviderProbeError("; ".join(problems))
+         try:
+             payload = self.client.transport.graphql(SHOPIFY_CONNECTION_QUERY, {})
+-        except ShopifyAPIError as exc:
++        except (ShopifyAPIError, ShopifyCredentialError, ShopifyTokenError) as exc:
+             raise ProviderProbeError(str(exc)) from exc
+         errors = payload.get("errors") or []
+         if errors:
+@@ -313,6 +335,7 @@ class ShopifyConnectionProbe:
+             if isinstance(node, dict)
+             and str(node.get("id") or "").startswith("gid://shopify/Location/")
+         )
++        token_status = self.token_manager.status() if self.token_manager is not None else None
+         return ShopifyProbeResult(
+             shop={
+                 "id": str(shop.get("id") or ""),
+@@ -322,4 +345,7 @@ class ShopifyConnectionProbe:
+             granted_scopes=scopes,
+             missing_by_capability=missing,
+             locations=safe_locations,
++            authentication_mode=(token_status.mode if token_status else self.config.auth_mode),
++            token_state=(token_status.state if token_status else "configured"),
++            token_expires_at=(token_status.expires_at if token_status else "unknown"),
+         )
+diff --git a/snapims/settings.py b/snapims/settings.py
+index 62385a6..de7d7e2 100644
+--- a/snapims/settings.py
++++ b/snapims/settings.py
+@@ -13,6 +13,7 @@ from pathlib import Path
+ from typing import Any, cast
+ from uuid import uuid4
+ 
++from cryptography.fernet import Fernet, InvalidToken
+ from dotenv import dotenv_values
+ 
+ 
+@@ -65,6 +66,8 @@ DEFINITIONS = {
+         SettingDefinition("SNAPIMS_CAD_TOKEN_PRICE_TABLE", "recognition", "{}"),
+         SettingDefinition("SNAPIMS_CAD_TOKEN_PRICE_VERSION", "recognition", "operator-configured"),
+         SettingDefinition("SHOPIFY_STORE_DOMAIN", "shopify"),
++        SettingDefinition("SHOPIFY_CLIENT_ID", "shopify"),
++        SettingDefinition("SHOPIFY_CLIENT_SECRET", "shopify", secret=True),
+         SettingDefinition("SHOPIFY_ADMIN_ACCESS_TOKEN", "shopify", secret=True),
+         SettingDefinition("SHOPIFY_LOCATION_ID", "shopify"),
+         SettingDefinition("SHOPIFY_API_VERSION", "shopify", "2026-07"),
+@@ -100,7 +103,9 @@ DEFINITIONS = {
+ 
+ SECRET_KEYS = frozenset(key for key, definition in DEFINITIONS.items() if definition.secret)
+ PERSISTED_PREFIX = "configuration."
+-SECRET_FILENAME = "provider-secrets.json"
++SECRET_FILENAME = "provider-secrets.enc"
++SECRET_KEY_FILENAME = "provider-secrets.key"
++LEGACY_SECRET_FILENAME = "provider-secrets.json"
+ 
+ 
+ def legacy_environment(
+@@ -198,6 +203,14 @@ class ConfigurationService:
+     def secret_backup_dir(self) -> Path:
+         return cast(Path, self.paths.secrets / "backups")
+ 
++    @property
++    def secret_key_file(self) -> Path:
++        return cast(Path, self.paths.secrets / SECRET_KEY_FILENAME)
++
++    @property
++    def legacy_secret_file(self) -> Path:
++        return cast(Path, self.paths.secrets / LEGACY_SECRET_FILENAME)
++
+     def _persisted(self, key: str) -> str | None:
+         db_file = self.paths.db_file
+         if not db_file.is_file():
+@@ -240,12 +253,51 @@ class ConfigurationService:
+             return EffectiveSetting(key, value, "legacy .env", secret, bool(value), False)
+         return EffectiveSetting(key, fallback, "default", secret, bool(fallback), False)
+ 
++    def _load_or_create_secret_key(self) -> bytes:
++        self._ensure_secret_permissions()
++        if self.secret_key_file.exists():
++            if self.secret_key_file.is_symlink() or not self.secret_key_file.is_file():
++                raise ConfigurationError("SnapIMS secret key is not a regular file.")
++            status = self.secret_key_file.stat()
++            if status.st_uid != os.geteuid() or stat.S_IMODE(status.st_mode) != 0o600:
++                raise ConfigurationError("SnapIMS secret key must be owner-only with permissions 0600.")
++            return self.secret_key_file.read_bytes().strip()
++        key = Fernet.generate_key()
++        descriptor = os.open(self.secret_key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
++        try:
++            os.write(descriptor, key + b"\n")
++            os.fsync(descriptor)
++        finally:
++            os.close(descriptor)
++        return key
++
++    def _read_secret_path(self, path: Path) -> dict[str, str]:
++        if not path.is_file():
++            return {}
++        raw = path.read_bytes()
++        if not raw.strip():
++            return {}
++        if raw.lstrip().startswith(b"{"):
++            try:
++                payload = json.loads(raw.decode("utf-8"))
++            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
++                raise ConfigurationError("SnapIMS legacy secret store is unreadable.") from exc
++        else:
++            try:
++                payload = json.loads(Fernet(self._load_or_create_secret_key()).decrypt(raw).decode("utf-8"))
++            except (InvalidToken, UnicodeDecodeError, json.JSONDecodeError) as exc:
++                raise ConfigurationError("SnapIMS encrypted secret store could not be decrypted.") from exc
++        if not isinstance(payload, dict):
++            raise ConfigurationError("SnapIMS secret store payload is invalid.")
++        return {str(key): str(value) for key, value in payload.items() if key in SECRET_KEYS and isinstance(value, str)}
++
+     def _stored_secrets(self) -> dict[str, str]:
+-        if not self.secret_file.exists():
++        candidate = self.secret_file if self.secret_file.exists() else self.legacy_secret_file
++        if not candidate.exists():
+             return {}
+-        if self.secret_file.is_symlink() or not self.secret_file.is_file():
++        if candidate.is_symlink() or not candidate.is_file():
+             raise ConfigurationError("SnapIMS secret store is not a regular file.")
+-        file_status = self.secret_file.stat()
++        file_status = candidate.stat()
+         directory_status = self.paths.secrets.stat()
+         if file_status.st_uid != os.geteuid() or directory_status.st_uid != os.geteuid():
+             raise ConfigurationError("SnapIMS secret store must be owned by the service user.")
+@@ -253,7 +305,7 @@ class ConfigurationService:
+             raise ConfigurationError("SnapIMS secret store file permissions must be 0600.")
+         if stat.S_IMODE(directory_status.st_mode) != 0o700:
+             raise ConfigurationError("SnapIMS secret store directory permissions must be 0700.")
+-        return _safe_json_object(self.secret_file)
++        return self._read_secret_path(candidate)
+ 
+     def value(self, key: str, default: str = "") -> str:
+         return self.effective(key, default).value
+@@ -275,17 +327,22 @@ class ConfigurationService:
+         self.paths.secrets.chmod(0o700)
+         self.secret_backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+         self.secret_backup_dir.chmod(0o700)
+-        if self.secret_file.exists():
+-            self.secret_file.chmod(0o600)
++        for protected in (self.secret_file, self.secret_key_file, self.legacy_secret_file):
++            if protected.exists():
++                protected.chmod(0o600)
+ 
+     def _atomic_secret_write(self, payload: Mapping[str, str]) -> str:
+         self._ensure_secret_permissions()
+         backup_name = f"{_filename_timestamp()}-{SECRET_FILENAME}"
+         backup = self.secret_backup_dir / backup_name
+-        if self.secret_file.is_file():
+-            backup.write_bytes(self.secret_file.read_bytes())
+-        else:
+-            backup.write_text("{}", encoding="utf-8")
++        source = self.secret_file if self.secret_file.is_file() else self.legacy_secret_file
++        previous_payload = self._read_secret_path(source) if source.is_file() else {}
++        previous_plaintext = json.dumps(
++            dict(sorted(previous_payload.items())),
++            sort_keys=True,
++            separators=(",", ":"),
++        ).encode("utf-8")
++        backup.write_bytes(Fernet(self._load_or_create_secret_key()).encrypt(previous_plaintext))
+         backup.chmod(0o600)
+         with backup.open("rb") as handle:
+             os.fsync(handle.fileno())
+@@ -297,17 +354,20 @@ class ConfigurationService:
+         temporary = Path(temporary_name)
+         try:
+             os.fchmod(descriptor, 0o600)
+-            encoded = json.dumps(
++            plaintext = json.dumps(
+                 dict(sorted(payload.items())),
+                 sort_keys=True,
+                 separators=(",", ":"),
+             ).encode("utf-8")
++            encoded = Fernet(self._load_or_create_secret_key()).encrypt(plaintext)
+             with os.fdopen(descriptor, "wb") as handle:
+                 handle.write(encoded)
+                 handle.flush()
+                 os.fsync(handle.fileno())
+             temporary.replace(self.secret_file)
+             self.secret_file.chmod(0o600)
++            if self.legacy_secret_file.exists():
++                self.legacy_secret_file.unlink()
+             directory_fd = os.open(self.paths.secrets, os.O_RDONLY)
+             try:
+                 os.fsync(directory_fd)
+@@ -329,6 +389,10 @@ class ConfigurationService:
+             r"[a-z0-9][a-z0-9-]*\.myshopify\.com", cleaned.casefold()
+         ):
+             raise ConfigurationError("Shopify store domain must end in .myshopify.com.")
++        if key == "SHOPIFY_CLIENT_ID" and cleaned and not re.fullmatch(r"[A-Za-z0-9_-]{8,200}", cleaned):
++            raise ConfigurationError("Shopify Client ID contains invalid characters.")
++        if key == "SHOPIFY_CLIENT_SECRET" and cleaned and len(cleaned) < 12:
++            raise ConfigurationError("Shopify Client Secret appears incomplete.")
+         if key == "SHOPIFY_LOCATION_ID" and cleaned and not cleaned.startswith(
+             "gid://shopify/Location/"
+         ):
+@@ -537,6 +601,61 @@ class ConfigurationService:
+             backup_reference=backup,
+         )
+ 
++    def delete_secrets(self, section: str, fields: list[str]) -> str:
++        if not fields:
++            raise ConfigurationError("No secret fields were supplied.")
++        stored = self._stored_secrets()
++        changed: list[str] = []
++        for key in fields:
++            definition = DEFINITIONS.get(key)
++            if definition is None or not definition.secret or definition.section != section:
++                raise ConfigurationError(f"{key} is not a {section} secret.")
++            if key in self.process_environment:
++                raise ConfigurationError(f"{key} is managed by the process environment.")
++            if key in stored:
++                stored.pop(key, None)
++                changed.append(key)
++        if not changed:
++            raise ConfigurationError("None of the requested secrets were stored by SnapIMS.")
++        backup = self._atomic_secret_write(stored)
++        return self._record_revision(
++            section=section,
++            changed_fields=changed,
++            secret=True,
++            backup_reference=backup,
++            status="REMOVED",
++        )
++
++    def delete_nonsecret(self, section: str, fields: list[str]) -> str:
++        from snapims import db
++
++        if not fields:
++            raise ConfigurationError("No setting fields were supplied.")
++        cleaned: list[str] = []
++        for key in fields:
++            definition = DEFINITIONS.get(key)
++            if definition is None or definition.secret or definition.section != section:
++                raise ConfigurationError(f"{key} is not a {section} setting.")
++            if key in self.process_environment:
++                raise ConfigurationError(f"{key} is managed by the process environment.")
++            cleaned.append(key)
++        db.initialize(self.paths.db_file, paths=self.paths)
++        backup = db.backup_database(self.paths, f"before-{section}-settings-removal")
++        previous = {key: self._persisted(key) for key in cleaned}
++        with db.transaction(self.paths.db_file) as connection:
++            connection.executemany(
++                "DELETE FROM settings WHERE key=?",
++                [(PERSISTED_PREFIX + key,) for key in cleaned],
++            )
++        return self._record_revision(
++            section=section,
++            changed_fields=cleaned,
++            previous=previous,
++            replacement={},
++            backup_reference=backup.name if backup else "",
++            status="REMOVED",
++        )
++
+     def migrate_legacy_secrets(self, fields: list[str]) -> str:
+         changes: dict[str, str] = {}
+         sections = {
+@@ -558,8 +677,8 @@ class ConfigurationService:
+         backup = self.secret_backup_dir / backup_name
+         if not backup.is_file():
+             raise ConfigurationError("Secret backup was not found.")
+-        payload = _safe_json_object(backup)
+-        current = _safe_json_object(self.secret_file)
++        payload = self._read_secret_path(backup)
++        current = self._stored_secrets()
+         new_backup = self._atomic_secret_write(payload)
+         changed_fields = sorted(set(current) | set(payload))
+         return self._record_revision(
+diff --git a/snapims/shopify/client.py b/snapims/shopify/client.py
+index d9ac8df..c6940bc 100644
+--- a/snapims/shopify/client.py
++++ b/snapims/shopify/client.py
+@@ -10,11 +10,23 @@ from typing import Any, Protocol
+ 
+ from snapims import __version__
+ from snapims.config import ShopifyConfig
++from snapims.shopify.auth import ShopifyTokenManager, ShopifyCredentialError, ShopifyTokenError
+ from snapims.money import final_price_cents, format_price_cents
+ 
+ 
+ class ShopifyAPIError(RuntimeError):
+-    pass
++    def __init__(
++        self,
++        message: str,
++        *,
++        status_code: int | None = None,
++        authentication: bool = False,
++        rejected_token: str = "",
++    ) -> None:
++        super().__init__(message)
++        self.status_code = status_code
++        self.authentication = authentication
++        self.rejected_token = rejected_token
+ 
+ 
+ class ShopifyTransport(Protocol):
+@@ -23,19 +35,41 @@ class ShopifyTransport(Protocol):
+ 
+ 
+ class HTTPShopifyTransport:
+-    def __init__(self, config: ShopifyConfig, timeout: int = 60) -> None:
++    def __init__(
++        self,
++        config: ShopifyConfig,
++        timeout: int = 60,
++        *,
++        token_manager: ShopifyTokenManager | None = None,
++    ) -> None:
+         self.config = config
+         self.timeout = timeout
+         self.endpoint = f"https://{config.store_domain}/admin/api/{config.api_version}/graphql.json"
++        self.token_manager = token_manager
++        if self.token_manager is None and config.auth_mode == "client_credentials":
++            self.token_manager = ShopifyTokenManager(
++                credentials=(config.store_domain, config.client_id, config.client_secret, config.access_token)
++            )
+ 
+-    def graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
++    def _access_token(self, *, force_refresh: bool = False) -> str:
++        if self.token_manager is not None:
++            try:
++                return self.token_manager.get_access_token(force_refresh=force_refresh)
++            except (ShopifyCredentialError, ShopifyTokenError) as exc:
++                raise ShopifyAPIError(str(exc), authentication=True) from exc
++        if not self.config.access_token:
++            raise ShopifyAPIError("Shopify authentication is not configured.", authentication=True)
++        return self.config.access_token
++
++    def _graphql_once(self, query: str, variables: dict[str, Any], *, force_refresh: bool = False) -> dict[str, Any]:
++        access_token = self._access_token(force_refresh=force_refresh)
+         request = urllib.request.Request(
+             self.endpoint,
+             data=json.dumps({"query": query, "variables": variables}).encode(),
+             method="POST",
+             headers={
+                 "Content-Type": "application/json",
+-                "X-Shopify-Access-Token": self.config.access_token,
++                "X-Shopify-Access-Token": access_token,
+                 "User-Agent": f"SnapIMS/{__version__}",
+             },
+         )
+@@ -46,9 +80,35 @@ class HTTPShopifyTransport:
+                     raise ShopifyAPIError("Shopify returned a non-object response")
+                 return payload
+         except urllib.error.HTTPError as exc:
+-            raise ShopifyAPIError(f"Shopify returned HTTP {exc.code}") from exc
++            if exc.code == 401:
++                raise ShopifyAPIError(
++                    "Shopify authentication expired or was rejected.",
++                    status_code=401,
++                    authentication=True,
++                    rejected_token=access_token,
++                ) from exc
++            if exc.code == 403:
++                raise ShopifyAPIError(
++                    "Shopify denied this operation. Check the app's Admin API scopes.",
++                    status_code=403,
++                ) from exc
++            if exc.code == 429:
++                raise ShopifyAPIError("Shopify rate limit reached; retry later.", status_code=429) from exc
++            raise ShopifyAPIError(f"Shopify returned HTTP {exc.code}", status_code=exc.code) from exc
+         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+-            raise ShopifyAPIError(f"Shopify connection failed: {exc}") from exc
++            raise ShopifyAPIError("Shopify connection failed or returned an invalid response.") from exc
++
++    def graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
++        try:
++            return self._graphql_once(query, variables)
++        except ShopifyAPIError as exc:
++            if not exc.authentication or self.token_manager is None:
++                raise
++            # One bounded refresh-and-retry for authentication failure only.
++            self.token_manager.get_access_token(
++                force_refresh=True, rejected_token=exc.rejected_token
++            )
++            return self._graphql_once(query, variables)
+ 
+     def upload(self, url: str, parameters: list[dict[str, str]], file_path: Path) -> None:
+         boundary = f"----snapims-{secrets.token_hex(12)}"
+@@ -70,7 +130,7 @@ class HTTPShopifyTransport:
+                 if response.status not in {200, 201, 204}:
+                     raise ShopifyAPIError(f"Staged upload returned HTTP {response.status}")
+         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+-            raise ShopifyAPIError(f"Staged upload failed for {file_path.name}: {exc}") from exc
++            raise ShopifyAPIError(f"Staged upload failed for {file_path.name}") from exc
+ 
+ 
+ class ShopifyClient:
+diff --git a/snapims/shopify/service.py b/snapims/shopify/service.py
+index 959cea1..d0f9742 100644
+--- a/snapims/shopify/service.py
++++ b/snapims/shopify/service.py
+@@ -45,7 +45,7 @@ class ShopifyService:
+             item_id=item_id,
+             provider="shopify",
+             paths=self.paths,
+-            known_secrets=(self.config.access_token,),
++            known_secrets=tuple(value for value in (self.config.access_token, self.config.client_secret) if value),
+             **fields,
+         )
+ 
+@@ -375,7 +375,7 @@ class ShopifyService:
+             )
+             return result
+         except Exception as exc:
+-            safe = safe_exception(exc, known_secrets=(self.config.access_token,))
++            safe = safe_exception(exc, known_secrets=tuple(value for value in (self.config.access_token, self.config.client_secret) if value))
+             with db.transaction(self.db_file) as connection:
+                 connection.execute(
+                     "UPDATE upload_attempts SET finished_at=?,status='FAILED',step=?,error=? WHERE attempt_id=?",
+diff --git a/snapims/web/app.py b/snapims/web/app.py
+index 6d595c2..70b119f 100644
+--- a/snapims/web/app.py
++++ b/snapims/web/app.py
+@@ -87,6 +87,9 @@ from snapims.recognition.service import (
+     start_batch_recognition,
+ )
+ from snapims.shopify.service import ShopifyService
++from snapims.shopify.auth import (
++    ShopifyTokenManager, ShopifyCredentialError, ShopifyTokenError, normalize_shop_domain,
++)
+ from snapims.provider_probes import (
+     OpenAIConnectionProbe,
+     ProviderProbeError,
+@@ -151,6 +154,7 @@ def _configured_secrets() -> tuple[str, ...]:
+             config.admin_password_hash,
+             config.openai_api_key,
+             shopify.access_token,
++            shopify.client_secret,
+         )
+         if value
+     )
+@@ -2501,6 +2505,8 @@ async def _render_settings(
+             compatible_models=service.compatible_models(),
+             legacy_secret_fields=service.legacy_secret_fields(),
+             revisions=service.revisions(),
++            shopify_token_status=ShopifyTokenManager(service).status(),
++            shopify_auth_mode=ShopifyConfig.from_env().auth_mode,
+             infrastructure={
+                 "project_path": str(config.project_path),
+                 "data_root": str(paths.root),
+@@ -2746,28 +2752,48 @@ async def test_openai_settings(request: Request) -> HTMLResponse:
+ async def test_shopify_settings(request: Request) -> HTMLResponse:
+     form = await request.form()
+     service = get_configuration_service()
+-    token = str(form.get("SHOPIFY_ADMIN_ACCESS_TOKEN") or "") or service.value(
+-        "SHOPIFY_ADMIN_ACCESS_TOKEN", ""
+-    )
++    submitted_secret = str(form.get("SHOPIFY_CLIENT_SECRET") or "").strip()
++    client_secret = submitted_secret or service.value("SHOPIFY_CLIENT_SECRET", "").strip()
++    legacy_token = service.value("SHOPIFY_ADMIN_ACCESS_TOKEN", "").strip()
++    try:
++        domain = normalize_shop_domain(
++            str(form.get("SHOPIFY_STORE_DOMAIN") or service.value("SHOPIFY_STORE_DOMAIN", ""))
++        )
++    except ShopifyCredentialError as exc:
++        return await _render_settings(
++            request,
++            test_result={"kind": "shopify", "status": "FAIL", "summary": str(exc)},
++            form_values=_safe_form_values(form),
++        )
+     config = ShopifyConfig(
+-        store_domain=str(
+-            form.get("SHOPIFY_STORE_DOMAIN")
+-            or service.value("SHOPIFY_STORE_DOMAIN", "")
+-        ).strip(),
+-        access_token=token,
+-        location_id=str(
+-            form.get("SHOPIFY_LOCATION_ID")
+-            or service.value("SHOPIFY_LOCATION_ID", "")
+-        ).strip(),
++        store_domain=domain,
++        access_token=legacy_token,
++        location_id=service.value("SHOPIFY_LOCATION_ID", "").strip(),
+         api_version=str(
+             form.get("SHOPIFY_API_VERSION")
+             or service.value("SHOPIFY_API_VERSION", "2026-07")
+         ).strip(),
+         draft_only=True,
++        client_id=str(
++            form.get("SHOPIFY_CLIENT_ID") or service.value("SHOPIFY_CLIENT_ID", "")
++        ).strip(),
++        client_secret=client_secret,
+     )
+     test_result: dict[str, Any]
++    known_secrets = tuple(value for value in (submitted_secret, client_secret, legacy_token) if value)
+     try:
+-        result = ShopifyConnectionProbe(config).run()
++        temporary_credentials = bool(submitted_secret or str(form.get("SHOPIFY_CLIENT_ID") or ""))
++        manager = ShopifyTokenManager(
++            service,
++            credentials=(
++                config.store_domain,
++                config.client_id,
++                config.client_secret,
++                config.access_token,
++            ),
++            cache_enabled=not temporary_credentials,
++        )
++        result = ShopifyConnectionProbe(config, token_manager=manager).run()
+         test_result = {
+             "kind": "shopify",
+             "status": "PASS" if not result.missing_scopes else "INCOMPLETE",
+@@ -2775,43 +2801,92 @@ async def test_shopify_settings(request: Request) -> HTMLResponse:
+             "granted_scopes": result.granted_scopes,
+             "missing_by_capability": result.missing_by_capability,
+             "locations": result.locations,
+-            "summary": (
+-                "Shopify identity, scopes, and locations were read successfully."
+-            ),
++            "authentication_mode": result.authentication_mode,
++            "token_state": result.token_state,
++            "token_expires_at": result.token_expires_at,
++            "summary": "Shopify identity, permissions, and locations were read without creating or changing Shopify data.",
+         }
+         if str(form.get("save_after_test") or "") == "true":
+             if not _reauthenticated(str(form.get("current_password") or "")):
+                 raise ProviderProbeError(
+-                    "Administrator re-authentication is required to save the tested connection."
++                    "Administrator re-authentication is required to save Shopify credentials."
+                 )
+-            if str(form.get("SHOPIFY_ADMIN_ACCESS_TOKEN") or ""):
+-                service.save_secrets(
+-                    "shopify",
+-                    {"SHOPIFY_ADMIN_ACCESS_TOKEN": token},
++            if not config.client_id or not config.client_secret:
++                raise ProviderProbeError(
++                    "Client ID and Client Secret are both required for the Dev Dashboard connection."
++                )
++            save_fields = (
++                "SHOPIFY_STORE_DOMAIN",
++                "SHOPIFY_CLIENT_ID",
++                "SHOPIFY_API_VERSION",
++                "SHOPIFY_DRAFT_ONLY",
++            )
++            externally_managed = [
++                key for key in save_fields + ("SHOPIFY_CLIENT_SECRET",)
++                if service.effective(key).externally_managed
++            ]
++            if externally_managed:
++                raise ConfigurationError(
++                    "These Shopify fields are managed by the process environment and cannot be replaced in Settings: "
++                    + ", ".join(externally_managed)
+                 )
+-            service.save_nonsecret(
+-                "shopify",
+-                {
++            previous_secrets = service._stored_secrets()
++            previous_domain = service.value("SHOPIFY_STORE_DOMAIN", "").strip()
++            previous_client_id = service.value("SHOPIFY_CLIENT_ID", "").strip()
++            identity_changed = (
++                config.store_domain != previous_domain or config.client_id != previous_client_id
++            )
++            persistent_manager = ShopifyTokenManager(service)
++            previous_cache = (
++                persistent_manager.cache_file.read_bytes()
++                if persistent_manager.cache_file.is_file()
++                else None
++            )
++            nonsecret_revision = ""
++            secret_changed = bool(submitted_secret)
++            try:
++                if secret_changed:
++                    service.save_secrets(
++                        "shopify", {"SHOPIFY_CLIENT_SECRET": submitted_secret}
++                    )
++                settings_changes = {
+                     "SHOPIFY_STORE_DOMAIN": config.store_domain,
++                    "SHOPIFY_CLIENT_ID": config.client_id,
+                     "SHOPIFY_API_VERSION": config.api_version,
+                     "SHOPIFY_DRAFT_ONLY": "true",
+-                },
+-            )
+-            test_result["summary"] += (
+-                " The tested connection was saved; choose and save an intended location below."
+-            )
+-    except (ProviderProbeError, ConfigurationError) as exc:
++                }
++                if identity_changed:
++                    settings_changes["SHOPIFY_LOCATION_ID"] = ""
++                nonsecret_revision = service.save_nonsecret("shopify", settings_changes)
++                persistent_manager.clear()
++                persistent_manager.get_access_token(force_refresh=True)
++            except Exception:
++                if nonsecret_revision:
++                    service.rollback_nonsecret(nonsecret_revision)
++                if secret_changed:
++                    service._atomic_secret_write(previous_secrets)
++                if previous_cache is None:
++                    persistent_manager.cache_file.unlink(missing_ok=True)
++                else:
++                    persistent_manager.cache_file.parent.mkdir(parents=True, exist_ok=True)
++                    persistent_manager.cache_file.write_bytes(previous_cache)
++                    persistent_manager.cache_file.chmod(0o600)
++                raise
++            test_result["summary"] += " Credentials were saved securely. Select the inventory location below."
++            test_result["token_state"] = persistent_manager.status().state
++            test_result["token_expires_at"] = persistent_manager.status().expires_at
++    except (ProviderProbeError, ConfigurationError, ShopifyCredentialError, ShopifyTokenError) as exc:
+         test_result = {
+             "kind": "shopify",
+             "status": "FAIL",
+-            "summary": redact_text(str(exc), known_secrets=(token,)),
++            "summary": redact_text(str(exc), known_secrets=known_secrets),
+         }
+     _event(
+         "shopify",
+         "shopify.connection_tested",
+         status="TESTED",
+         outcome=str(test_result["status"]),
+-        detail={"store_domain": config.store_domain},
++        detail={"store_domain": config.store_domain, "auth_mode": config.auth_mode},
+         retention_class="SECURITY",
+     )
+     return await _render_settings(
+@@ -2821,6 +2896,129 @@ async def test_shopify_settings(request: Request) -> HTMLResponse:
+     )
+ 
+ 
++@app.post("/settings/shopify/location", response_class=HTMLResponse)
++async def save_shopify_location(request: Request) -> Any:
++    form = await request.form()
++    location_id = str(form.get("SHOPIFY_LOCATION_ID") or "").strip()
++    service = get_configuration_service()
++    try:
++        config = ShopifyConfig.from_env()
++        result = ShopifyConnectionProbe(
++            config, token_manager=ShopifyTokenManager(service)
++        ).run()
++        selected = next(
++            (location for location in result.locations if location.get("id") == location_id),
++            None,
++        )
++        if selected is None:
++            raise ConfigurationError(
++                "Select a location returned by the verified Shopify connection."
++            )
++        if not bool(selected.get("is_active")):
++            raise ConfigurationError(
++                "The selected Shopify location is inactive. Activate it in Shopify or choose another location."
++            )
++        service.save_nonsecret("shopify", {"SHOPIFY_LOCATION_ID": location_id})
++    except (ConfigurationError, ProviderProbeError, ShopifyCredentialError, ShopifyTokenError) as exc:
++        return await _render_settings(request, error=redact_text(str(exc)))
++    _event(
++        "shopify",
++        "shopify.location_selected",
++        status="SAVED",
++        outcome="SUCCESS",
++        detail={"location_id": location_id},
++        retention_class="SECURITY",
++    )
++    return redirect(f"/settings?message={quote('Shopify inventory location saved.')}#shopify")
++
++
++@app.post("/settings/shopify/refresh", response_class=HTMLResponse)
++async def refresh_shopify_token(request: Request) -> Any:
++    form = await request.form()
++    if not _reauthenticated(str(form.get("current_password") or "")):
++        return await _render_settings(
++            request, error="Administrator re-authentication is required to refresh Shopify access."
++        )
++    try:
++        manager = ShopifyTokenManager(get_configuration_service())
++        manager.get_access_token(force_refresh=True)
++        result = ShopifyConnectionProbe(ShopifyConfig.from_env(), token_manager=manager).run()
++    except (ProviderProbeError, ShopifyCredentialError, ShopifyTokenError) as exc:
++        return await _render_settings(request, error=str(exc))
++    _event(
++        "shopify",
++        "shopify.token_refreshed",
++        status="REFRESHED",
++        outcome="SUCCESS",
++        detail={"store_domain": result.shop.get("myshopify_domain", "")},
++        retention_class="SECURITY",
++    )
++    return redirect(f"/settings?message={quote('Shopify access token refreshed and verified.')}#shopify")
++
++
++@app.post("/settings/shopify/remove", response_class=HTMLResponse)
++async def remove_shopify_connection(request: Request) -> Any:
++    form = await request.form()
++    if not _reauthenticated(str(form.get("current_password") or "")):
++        return await _render_settings(
++            request, error="Administrator re-authentication is required to remove Shopify credentials."
++        )
++    if str(form.get("confirmation") or "").strip() != "REMOVE":
++        return await _render_settings(
++            request, error="Type REMOVE to confirm removal of the Shopify connection."
++        )
++    service = get_configuration_service()
++    removal_fields = (
++        "SHOPIFY_CLIENT_SECRET",
++        "SHOPIFY_ADMIN_ACCESS_TOKEN",
++        "SHOPIFY_STORE_DOMAIN",
++        "SHOPIFY_CLIENT_ID",
++        "SHOPIFY_LOCATION_ID",
++        "SHOPIFY_API_VERSION",
++        "SHOPIFY_DRAFT_ONLY",
++    )
++    externally_managed = [
++        key for key in removal_fields if service.effective(key).externally_managed
++    ]
++    if externally_managed:
++        return await _render_settings(
++            request,
++            error=(
++                "Shopify connection cannot be removed in Settings while these fields are "
++                "managed by the process environment: " + ", ".join(externally_managed)
++            ),
++        )
++    stored = service._stored_secrets()
++    removable = [
++        key for key in ("SHOPIFY_CLIENT_SECRET", "SHOPIFY_ADMIN_ACCESS_TOKEN") if key in stored
++    ]
++    try:
++        if removable:
++            service.delete_secrets("shopify", removable)
++        service.delete_nonsecret(
++            "shopify",
++            [
++                "SHOPIFY_STORE_DOMAIN",
++                "SHOPIFY_CLIENT_ID",
++                "SHOPIFY_LOCATION_ID",
++                "SHOPIFY_API_VERSION",
++                "SHOPIFY_DRAFT_ONLY",
++            ],
++        )
++        ShopifyTokenManager(service).clear()
++    except ConfigurationError as exc:
++        return await _render_settings(request, error=str(exc))
++    _event(
++        "shopify",
++        "shopify.connection_removed",
++        status="REMOVED",
++        outcome="SUCCESS",
++        detail={"preserved_linkage_history": True},
++        retention_class="SECURITY",
++    )
++    return redirect(f"/settings?message={quote('Shopify credentials and cached access were removed. Inventory and linkage history were preserved.')}#shopify")
++
++
+ @app.post("/settings/movie/test", response_class=HTMLResponse)
+ async def test_movie_settings(request: Request) -> HTMLResponse:
+     form = await request.form()
+diff --git a/snapims/web/static/app.css b/snapims/web/static/app.css
+index 474cce8..dd9eee5 100644
+--- a/snapims/web/static/app.css
++++ b/snapims/web/static/app.css
+@@ -62,3 +62,80 @@
+ .batch-identity-panel>div,.batch-identity-panel>form{display:flex;flex-direction:column;gap:.35rem;min-width:0}.batch-identity-panel span,.batch-identity-panel small{color:var(--muted);font-size:.78rem}.batch-identity-panel code,.batch-identity-panel small{overflow-wrap:anywhere}.batch-identity-panel form label{display:flex;flex-direction:column;gap:.3rem}.batch-identity-panel form button{align-self:flex-start}
+ @media(max-width:900px){.batch-identity-panel{grid-template-columns:1fr 1fr}}@media(max-width:600px){.batch-identity-panel{grid-template-columns:1fr}}
+ .editor-pagination{display:flex;justify-content:center;align-items:center;gap:14px;margin:16px 0 24px}.editor-pagination .disabled{opacity:.45;pointer-events:none}.selection-scope{flex-basis:100%;color:var(--muted)}.editor-toolbar select[name="page_size"]{width:auto;min-width:72px}
++
++/* v0.14 Shopify connection wizard */
++.status-grid {
++  display: grid;
++  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
++  gap: .75rem;
++  margin: 1rem 0 1.25rem;
++}
++.status-grid > div,
++.choice-card {
++  border: 1px solid var(--border, #d5d9df);
++  border-radius: .65rem;
++  padding: .8rem;
++  background: var(--panel-subtle, rgba(127, 127, 127, .05));
++}
++.choice-list {
++  display: grid;
++  gap: .65rem;
++  margin: .75rem 0 1rem;
++}
++.choice-card {
++  display: grid;
++  grid-template-columns: auto 1fr;
++  column-gap: .65rem;
++  align-items: start;
++  cursor: pointer;
++}
++.choice-card small {
++  grid-column: 2;
++  overflow-wrap: anywhere;
++}
++.button-row {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 1rem;
++  align-items: end;
++}
++.button-row form {
++  margin: 0;
++}
++@media (max-width: 390px) {
++  .status-grid { grid-template-columns: 1fr; }
++  .button-row { display: grid; }
++}
++#shopify,
++#shopify form,
++#shopify .form-grid,
++#shopify .status-grid,
++#shopify .button-row,
++#shopify details {
++  min-width: 0;
++  max-width: 100%;
++}
++#shopify code,
++#shopify small,
++#shopify dd,
++#shopify p {
++  overflow-wrap: anywhere;
++  word-break: break-word;
++}
++#shopify button {
++  max-width: 100%;
++  white-space: normal;
++  overflow-wrap: anywhere;
++}
++@media (max-width: 600px) {
++  #shopify .form-grid,
++  #shopify .button-row {
++    display: grid;
++    grid-template-columns: minmax(0, 1fr);
++  }
++  #shopify .button-row form,
++  #shopify .button-row button,
++  #shopify .button-row input {
++    width: 100%;
++  }
++}
+diff --git a/snapims/web/static/app.js b/snapims/web/static/app.js
+index 078f161..137f8b5 100644
+--- a/snapims/web/static/app.js
++++ b/snapims/web/static/app.js
+@@ -1101,7 +1101,7 @@ document.querySelectorAll('form[method="post" i]').forEach((form) => {
+   });
+ })();
+ 
+-// SnapIMS v0.13.2: durable Import progress polling only while a job is active.
++// SnapIMS v0.14.0: durable Import progress polling only while a job is active.
+ (() => {
+   const root = document.querySelector('[data-import-job]');
+   if (!root) return;
+diff --git a/snapims/web/templates/settings.html b/snapims/web/templates/settings.html
+index b9dfbe0..31e4def 100644
+--- a/snapims/web/templates/settings.html
++++ b/snapims/web/templates/settings.html
+@@ -109,54 +109,106 @@
+ </section>
+ 
+ <section class="panel" id="shopify">
+-  <p class="eyebrow">STEP 2</p><h2>Shopify read-only connection wizard</h2>
+-  <p>This wizard reads shop identity, installed scopes, and locations. It never creates or changes a Shopify object.</p>
++  <p class="eyebrow">STEP 2</p><h2>Shopify connection</h2>
++  <p>Connect the installed Shopify Dev Dashboard app once. SnapIMS requests and refreshes short-lived access tokens automatically; you do not paste an Admin API access token.</p>
++
++  <div class="status-grid">
++    <div><strong>Authentication mode</strong><br><code>{{ shopify_token_status.mode }}</code></div>
++    <div><strong>Token status</strong><br>{{ shopify_token_status.state }}</div>
++    <div><strong>Expires</strong><br>{{ shopify_token_status.expires_at or 'Not available' }}</div>
++    <div><strong>Draft-only publishing</strong><br>Enabled</div>
++  </div>
++
++  {% if shopify_auth_mode == 'legacy_static_token' %}
++  <div class="alert warning">
++    A legacy static Admin API token is configured. It remains available as a deprecated fallback until Client ID and Client Secret are saved successfully.
++  </div>
++  {% endif %}
++
++  <h3>1. Store and Dev Dashboard credentials</h3>
+   <form method="post" action="/settings/shopify/test" data-prevent-double-submit>
+     {{ csrf() }}
+     <div class="form-grid">
+-      {{ field("shopify", "SHOPIFY_STORE_DOMAIN", "Store domain") }}
+-      {{ field("shopify", "SHOPIFY_ADMIN_ACCESS_TOKEN", "Unsaved Admin API token", "password") }}
++      {{ field("shopify", "SHOPIFY_STORE_DOMAIN", "Shopify store domain", "text", "Use the permanent .myshopify.com domain, without https:// or a trailing path") }}
+       {{ field("shopify", "SHOPIFY_API_VERSION", "Admin API version") }}
+-      <label>Current administrator password (only for test and save)
++      {{ field("shopify", "SHOPIFY_CLIENT_ID", "Client ID", "text", "Shopify Dev Dashboard → SnapIMS → Settings") }}
++      {{ field("shopify", "SHOPIFY_CLIENT_SECRET", "Client Secret", "password", "Often begins with shpss_. The generated access token is never entered manually") }}
++      <label>Current SnapIMS administrator password
+         <input type="password" name="current_password" autocomplete="current-password">
++        <small>Required only when saving or changing credentials.</small>
+       </label>
+     </div>
+-    <button>Test identity, permissions, and locations</button>
+-    <button name="save_after_test" value="true">Test and save connection securely</button>
++    <button name="test_only" value="true">Test credentials without saving</button>
++    <button class="primary" name="save_after_test" value="true">Test and save securely</button>
+   </form>
++
+   {% if test_result.kind == "shopify" and test_result.shop %}
+-  <h3>Verified shop</h3>
+-  <dl><dt>Name</dt><dd>{{ test_result.shop.name }}</dd><dt>Domain</dt><dd>{{ test_result.shop.myshopify_domain }}</dd><dt>ID</dt><dd><code>{{ test_result.shop.id }}</code></dd></dl>
+-  <h3>Capability permissions</h3>
+-  <table><thead><tr><th>Capability</th><th>Missing permissions</th></tr></thead><tbody>
++  <h3>2. Verified connection</h3>
++  <dl>
++    <dt>Store</dt><dd>{{ test_result.shop.name }}</dd>
++    <dt>Permanent domain</dt><dd>{{ test_result.shop.myshopify_domain }}</dd>
++    <dt>Shop ID</dt><dd><code>{{ test_result.shop.id }}</code></dd>
++    <dt>Authentication</dt><dd>{{ test_result.authentication_mode }}</dd>
++    <dt>Access token</dt><dd>{{ test_result.token_state }}{% if test_result.token_expires_at %} · expires {{ test_result.token_expires_at }}{% endif %}</dd>
++  </dl>
++
++  <h3>Required permissions</h3>
++  <table><thead><tr><th>Capability</th><th>Status</th></tr></thead><tbody>
+     {% for capability, missing in test_result.missing_by_capability.items() %}
+-    <tr><td>{{ capability }}</td><td>{% for scope in missing %}<code>{{ scope }}</code>{% else %}Ready{% endfor %}</td></tr>
++    <tr><td>{{ capability }}</td><td>{% for scope in missing %}<code>Missing {{ scope }}</code>{% else %}Ready{% endfor %}</td></tr>
+     {% endfor %}
+   </tbody></table>
+-  <h3>Discovered locations</h3>
+-  <table><thead><tr><th>Name</th><th>Location GID</th><th>Active</th><th>Online orders</th></tr></thead><tbody>
+-    {% for location in test_result.locations %}
+-    <tr><td>{{ location.name }}</td><td><code>{{ location.id }}</code></td><td>{{ location.is_active }}</td><td>{{ location.fulfills_online_orders }}</td></tr>
+-    {% else %}<tr><td colspan="4">No visible locations.</td></tr>{% endfor %}
+-  </tbody></table>
+-  {% endif %}
+-  <form method="post" action="/settings/shopify/secrets">
+-    {{ csrf() }}
+-    {{ field("shopify", "SHOPIFY_ADMIN_ACCESS_TOKEN", "Admin API token to save", "password") }}
+-    <label>Current administrator password<input type="password" name="current_password" autocomplete="current-password" required></label>
+-    <button>Save Shopify token securely</button>
+-  </form>
+-  <form method="post" action="/settings/shopify/save">
++
++  <h3>3. Inventory location</h3>
++  <p>Select the Shopify inventory location by name. SnapIMS stores the Location GID internally.</p>
++  <form method="post" action="/settings/shopify/location">
+     {{ csrf() }}
+-    <div class="form-grid">
+-      {{ field("shopify", "SHOPIFY_STORE_DOMAIN", "Verified store domain") }}
+-      {{ field("shopify", "SHOPIFY_LOCATION_ID", "Intended Location GID") }}
+-      {{ field("shopify", "SHOPIFY_API_VERSION", "Admin API version") }}
+-      {{ field("shopify", "SHOPIFY_DRAFT_ONLY", "Publication mode", "text", "SnapIMS v0.10 permits draft-only") }}
++    <div class="choice-list">
++      {% for location in test_result.locations %}
++      <label class="choice-card">
++        <input type="radio" name="SHOPIFY_LOCATION_ID" value="{{ location.id }}" {% if settings.shopify.SHOPIFY_LOCATION_ID.value == location.id %}checked{% endif %} {% if not location.is_active %}disabled{% endif %} required>
++        <strong>{{ location.name }}</strong>
++        <small>{{ 'Active' if location.is_active else 'Inactive' }} · {{ 'Fulfills online orders' if location.fulfills_online_orders else 'Does not fulfill online orders' }} · <code>{{ location.id }}</code></small>
++      </label>
++      {% else %}<div class="alert warning">No Shopify locations were returned. Confirm the app has <code>read_locations</code> and the store has an active location.</div>{% endfor %}
+     </div>
+-    <button class="primary">Save Shopify configuration</button>
++    {% if test_result.locations %}<button class="primary">Save selected inventory location</button>{% endif %}
+   </form>
+-  <p><a href="/publish">Open the separate publish simulation and live-draft acceptance workflow</a>. No live draft is created from Settings.</p>
++  {% endif %}
++
++  <h3>Connection controls</h3>
++  <div class="button-row">
++    <form method="post" action="/settings/shopify/test" data-prevent-double-submit>
++      {{ csrf() }}
++      <input type="hidden" name="SHOPIFY_STORE_DOMAIN" value="{{ settings.shopify.SHOPIFY_STORE_DOMAIN.value }}">
++      <input type="hidden" name="SHOPIFY_CLIENT_ID" value="{{ settings.shopify.SHOPIFY_CLIENT_ID.value }}">
++      <input type="hidden" name="SHOPIFY_API_VERSION" value="{{ settings.shopify.SHOPIFY_API_VERSION.value }}">
++      <button>Retest saved connection</button>
++    </form>
++    <form method="post" action="/settings/shopify/refresh" data-prevent-double-submit>
++      {{ csrf() }}
++      <label>Administrator password
++        <input type="password" name="current_password" autocomplete="current-password" required>
++      </label>
++      <button>Refresh access token now</button>
++    </form>
++  </div>
++
++  <details>
++    <summary>Advanced connection removal</summary>
++    <p>Removing the connection deletes saved Shopify credentials and cached access only. Inventory, Shopify IDs, publish attempts, and reconciliation history remain intact.</p>
++    <form method="post" action="/settings/shopify/remove" data-prevent-double-submit>
++      {{ csrf() }}
++      <div class="form-grid">
++        <label>Current administrator password<input type="password" name="current_password" autocomplete="current-password" required></label>
++        <label>Type REMOVE to confirm<input name="confirmation" required></label>
++      </div>
++      <button class="danger">Remove Shopify connection</button>
++    </form>
++  </details>
++
++  <p><strong>Publish safety:</strong> SnapIMS creates Shopify products as drafts. Settings performs only read-only identity, scope, and location checks.</p>
++  <p><a href="/publish">Open the separate publish simulation and one-item live draft acceptance workflow</a>.</p>
+ </section>
+ 
+ <section class="panel" id="movie">
+diff --git a/tests/test_provider_probes.py b/tests/test_provider_probes.py
+index 80fbd5c..f65efb1 100644
+--- a/tests/test_provider_probes.py
++++ b/tests/test_provider_probes.py
+@@ -110,12 +110,12 @@ def test_shopify_probe_reports_identity_locations_and_exact_missing_scope() -> N
+     assert result.shop["name"] == "Canada VHS"
+     assert result.locations[0]["name"] == "Warehouse"
+     assert result.granted_scopes == ("read_locations", "write_products")
+-    assert result.missing_by_capability["draft product creation"] == ()
++    assert result.missing_by_capability["draft product and media creation"] == ()
+     assert result.missing_by_capability["inventory activation"] == (
+         "write_inventory",
+     )
+     assert result.missing_scopes == (
+         "read_inventory",
+-        "read_markets_home",
++        "read_products",
+         "write_inventory",
+     )
+diff --git a/tests/test_settings_web.py b/tests/test_settings_web.py
+index d885038..f3a4ce4 100644
+--- a/tests/test_settings_web.py
++++ b/tests/test_settings_web.py
+@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
+ from snapims.auth import generate_secret, hash_password
+ from snapims.provider_probes import ModelProbeResult
+ from snapims.settings import ConfigurationService
++from snapims.shopify.auth import ShopifyTokenError
+ from snapims.web.app import app
+ 
+ PASSWORD = "correct horse battery staple"
+@@ -28,6 +29,8 @@ def configure_stored_auth(monkeypatch: pytest.MonkeyPatch) -> ConfigurationServi
+         "SNAPIMS_SESSION_GENERATION",
+         "OPENAI_API_KEY",
+         "SHOPIFY_ADMIN_ACCESS_TOKEN",
++        "SHOPIFY_CLIENT_ID",
++        "SHOPIFY_CLIENT_SECRET",
+     ):
+         monkeypatch.delenv(key, raising=False)
+     service = ConfigurationService.load_runtime()
+@@ -88,7 +91,8 @@ def test_settings_page_has_all_sections_and_masked_secret(
+     assert "secret store" in response.text
+     assert "Configured — enter a replacement" in response.text
+     assert stored_key not in response.text
+-    assert service.secret_file.read_text(encoding="utf-8").find(stored_key) >= 0
++    assert stored_key not in service.secret_file.read_text(encoding="utf-8")
++    assert service.value("OPENAI_API_KEY") == stored_key
+ 
+ 
+ def test_authenticated_secret_save_never_echoes_secret(
+@@ -167,11 +171,13 @@ def test_unsaved_shopify_probe_returns_safe_identity_scope_and_locations(
+     monkeypatch: pytest.MonkeyPatch,
+ ) -> None:
+     service = configure_stored_auth(monkeypatch)
+-    unsaved_token = "shpat-unsaved-never-render"
++    unsaved_secret = "shpss_unsaved_never_render"
+ 
+     class FakeShopifyProbe:
+-        def __init__(self, config) -> None:
+-            assert config.access_token == unsaved_token
++        def __init__(self, config, token_manager=None) -> None:
++            assert config.client_id == "client_example_123"
++            assert config.client_secret == unsaved_secret
++            assert token_manager is not None
+ 
+         def run(self):
+             return SimpleNamespace(
+@@ -183,7 +189,7 @@ def test_unsaved_shopify_probe_returns_safe_identity_scope_and_locations(
+                 granted_scopes=("read_locations", "write_products"),
+                 missing_scopes=("write_inventory",),
+                 missing_by_capability={
+-                    "draft product creation": (),
++                    "draft product and media creation": (),
+                     "inventory activation": ("write_inventory",),
+                 },
+                 locations=(
+@@ -194,6 +200,9 @@ def test_unsaved_shopify_probe_returns_safe_identity_scope_and_locations(
+                         "fulfills_online_orders": True,
+                     },
+                 ),
++                authentication_mode="client_credentials",
++                token_state="valid",
++                token_expires_at="2026-08-05T18:00:00-06:00",
+             )
+ 
+     monkeypatch.setattr("snapims.web.app.ShopifyConnectionProbe", FakeShopifyProbe)
+@@ -205,7 +214,8 @@ def test_unsaved_shopify_probe_returns_safe_identity_scope_and_locations(
+             data={
+                 "csrf_token": csrf(page.text),
+                 "SHOPIFY_STORE_DOMAIN": "canada-vhs.myshopify.com",
+-                "SHOPIFY_ADMIN_ACCESS_TOKEN": unsaved_token,
++                "SHOPIFY_CLIENT_ID": "client_example_123",
++                "SHOPIFY_CLIENT_SECRET": unsaved_secret,
+                 "SHOPIFY_API_VERSION": "2026-07",
+             },
+         )
+@@ -214,8 +224,8 @@ def test_unsaved_shopify_probe_returns_safe_identity_scope_and_locations(
+     assert "Canada VHS" in response.text
+     assert "write_inventory" in response.text
+     assert "Warehouse" in response.text
+-    assert unsaved_token not in response.text
+-    assert service.value("SHOPIFY_ADMIN_ACCESS_TOKEN") == ""
++    assert unsaved_secret not in response.text
++    assert service.value("SHOPIFY_CLIENT_SECRET") == ""
+ 
+ 
+ def test_revoke_all_sessions_invalidates_current_cookie(
+@@ -240,3 +250,300 @@ def test_revoke_all_sessions_invalidates_current_cookie(
+ 
+     assert after.status_code == 303
+     assert after.headers["location"] == "/login"
++
++
++def test_shopify_settings_use_client_credentials_and_no_manual_token_field(
++    data_paths,
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    configure_stored_auth(monkeypatch)
++    with TestClient(app) as client:
++        login(client)
++        response = client.get("/settings")
++    assert response.status_code == 200
++    assert "Client ID" in response.text
++    assert "Client Secret" in response.text
++    assert "you do not paste an Admin API access token" in response.text
++    assert "Unsaved Admin API token" not in response.text
++    assert "Admin API token to save" not in response.text
++
++
++def test_shopify_test_and_save_persists_credentials_without_rendering_secret(
++    data_paths,
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    service = configure_stored_auth(monkeypatch)
++    client_secret = "shpss_save_me_securely_123"
++
++    class FakeManager:
++        def __init__(self, *_args, **_kwargs) -> None:
++            self.mode = "client_credentials"
++            self.cache_file = data_paths.secrets / "fake-shopify-token-cache.enc"
++
++        def clear(self) -> None:
++            return None
++
++        def get_access_token(self, **_kwargs) -> str:
++            return "temporary-access-token"
++
++        def status(self):
++            return SimpleNamespace(
++                mode="client_credentials",
++                state="valid",
++                expires_at="2026-08-05T18:00:00-06:00",
++                granted_scopes=("read_locations",),
++                last_refresh_at="2026-08-04T18:00:00-06:00",
++                last_refresh_result="PASS",
++            )
++
++    class FakeProbe:
++        def __init__(self, config, token_manager=None) -> None:
++            assert config.client_secret == client_secret
++            assert token_manager is not None
++
++        def run(self):
++            return SimpleNamespace(
++                shop={
++                    "id": "gid://shopify/Shop/1",
++                    "name": "Canada VHS",
++                    "myshopify_domain": "canada-vhs.myshopify.com",
++                },
++                granted_scopes=(
++                    "read_inventory",
++                    "read_locations",
++                    "read_products",
++                    "write_inventory",
++                    "write_products",
++                ),
++                missing_scopes=(),
++                missing_by_capability={"location discovery": ()},
++                locations=(
++                    {
++                        "id": "gid://shopify/Location/2",
++                        "name": "Warehouse",
++                        "is_active": True,
++                        "fulfills_online_orders": True,
++                    },
++                ),
++                authentication_mode="client_credentials",
++                token_state="valid",
++                token_expires_at="2026-08-05T18:00:00-06:00",
++            )
++
++    monkeypatch.setattr("snapims.web.app.ShopifyTokenManager", FakeManager)
++    monkeypatch.setattr("snapims.web.app.ShopifyConnectionProbe", FakeProbe)
++    with TestClient(app) as client:
++        login(client)
++        page = client.get("/settings")
++        response = client.post(
++            "/settings/shopify/test",
++            data={
++                "csrf_token": csrf(page.text),
++                "SHOPIFY_STORE_DOMAIN": "canada-vhs.myshopify.com",
++                "SHOPIFY_CLIENT_ID": "client_example_123",
++                "SHOPIFY_CLIENT_SECRET": client_secret,
++                "SHOPIFY_API_VERSION": "2026-07",
++                "current_password": PASSWORD,
++                "save_after_test": "true",
++            },
++        )
++    assert response.status_code == 200
++    assert "Canada VHS" in response.text
++    assert client_secret not in response.text
++    assert client_secret not in service.secret_file.read_text(encoding="utf-8")
++    assert service.value("SHOPIFY_CLIENT_SECRET") == client_secret
++    assert service.value("SHOPIFY_CLIENT_ID") == "client_example_123"
++    assert service.value("SHOPIFY_STORE_DOMAIN") == "canada-vhs.myshopify.com"
++
++
++
++def test_shopify_test_and_save_rolls_back_when_persistent_refresh_fails(
++    data_paths,
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    service = configure_stored_auth(monkeypatch)
++    service.save_nonsecret(
++        "shopify",
++        {
++            "SHOPIFY_STORE_DOMAIN": "old-store.myshopify.com",
++            "SHOPIFY_CLIENT_ID": "old_client_123",
++            "SHOPIFY_LOCATION_ID": "gid://shopify/Location/99",
++            "SHOPIFY_API_VERSION": "2026-07",
++            "SHOPIFY_DRAFT_ONLY": "true",
++        },
++    )
++    service.save_secrets("shopify", {"SHOPIFY_CLIENT_SECRET": "shpss_old_secure_123"})
++
++    class FakeManager:
++        def __init__(self, *_args, **kwargs) -> None:
++            self.cache_enabled = kwargs.get("cache_enabled", True)
++            self.cache_file = data_paths.secrets / "fake-shopify-token-cache.enc"
++
++        def clear(self) -> None:
++            self.cache_file.unlink(missing_ok=True)
++
++        def get_access_token(self, **_kwargs) -> str:
++            if self.cache_enabled:
++                raise ShopifyTokenError("simulated persistent refresh failure")
++            return "temporary-test-token"
++
++        def status(self):
++            return SimpleNamespace(
++                mode="client_credentials",
++                state="not_requested",
++                expires_at="",
++                granted_scopes=(),
++                last_refresh_at="",
++                last_refresh_result="FAILED",
++            )
++
++    class FakeProbe:
++        def __init__(self, config, token_manager=None) -> None:
++            assert config.store_domain == "new-store.myshopify.com"
++            assert token_manager is not None
++
++        def run(self):
++            return SimpleNamespace(
++                shop={
++                    "id": "gid://shopify/Shop/2",
++                    "name": "New Store",
++                    "myshopify_domain": "new-store.myshopify.com",
++                },
++                granted_scopes=(
++                    "read_inventory",
++                    "read_locations",
++                    "read_products",
++                    "write_inventory",
++                    "write_products",
++                ),
++                missing_scopes=(),
++                missing_by_capability={"location discovery": ()},
++                locations=(),
++                authentication_mode="client_credentials",
++                token_state="valid",
++                token_expires_at="2026-08-05T18:00:00-06:00",
++            )
++
++    monkeypatch.setattr("snapims.web.app.ShopifyTokenManager", FakeManager)
++    monkeypatch.setattr("snapims.web.app.ShopifyConnectionProbe", FakeProbe)
++    with TestClient(app) as client:
++        login(client)
++        page = client.get("/settings")
++        response = client.post(
++            "/settings/shopify/test",
++            data={
++                "csrf_token": csrf(page.text),
++                "SHOPIFY_STORE_DOMAIN": "new-store.myshopify.com",
++                "SHOPIFY_CLIENT_ID": "new_client_123",
++                "SHOPIFY_CLIENT_SECRET": "shpss_new_secure_123",
++                "SHOPIFY_API_VERSION": "2026-07",
++                "current_password": PASSWORD,
++                "save_after_test": "true",
++            },
++        )
++
++    assert response.status_code == 200
++    assert "simulated persistent refresh failure" in response.text
++    assert service.value("SHOPIFY_STORE_DOMAIN") == "old-store.myshopify.com"
++    assert service.value("SHOPIFY_CLIENT_ID") == "old_client_123"
++    assert service.value("SHOPIFY_CLIENT_SECRET") == "shpss_old_secure_123"
++    assert service.value("SHOPIFY_LOCATION_ID") == "gid://shopify/Location/99"
++
++
++def test_shopify_location_selection_and_safe_connection_removal(
++    data_paths,
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    service = configure_stored_auth(monkeypatch)
++    service.save_nonsecret(
++        "shopify",
++        {
++            "SHOPIFY_STORE_DOMAIN": "canada-vhs.myshopify.com",
++            "SHOPIFY_CLIENT_ID": "client_example_123",
++            "SHOPIFY_API_VERSION": "2026-07",
++            "SHOPIFY_DRAFT_ONLY": "true",
++        },
++    )
++    service.save_secrets(
++        "shopify", {"SHOPIFY_CLIENT_SECRET": "shpss_remove_secure_123"}
++    )
++
++    class FakeManager:
++        def __init__(self, *_args, **_kwargs) -> None:
++            pass
++
++        def clear(self) -> None:
++            return None
++
++        def status(self):
++            return SimpleNamespace(
++                mode="client_credentials",
++                state="valid",
++                expires_at="",
++                granted_scopes=(),
++                last_refresh_at="",
++                last_refresh_result="PASS",
++            )
++
++    class FakeProbe:
++        def __init__(self, config, token_manager=None) -> None:
++            assert config.store_domain == "canada-vhs.myshopify.com"
++            assert token_manager is not None
++
++        def run(self):
++            return SimpleNamespace(
++                shop={
++                    "id": "gid://shopify/Shop/1",
++                    "name": "Canada VHS",
++                    "myshopify_domain": "canada-vhs.myshopify.com",
++                },
++                granted_scopes=(
++                    "read_inventory",
++                    "read_locations",
++                    "read_products",
++                    "write_inventory",
++                    "write_products",
++                ),
++                missing_scopes=(),
++                missing_by_capability={"location discovery": ()},
++                locations=(
++                    {
++                        "id": "gid://shopify/Location/2",
++                        "name": "Warehouse",
++                        "is_active": True,
++                        "fulfills_online_orders": True,
++                    },
++                ),
++                authentication_mode="client_credentials",
++                token_state="valid",
++                token_expires_at="2026-08-05T18:00:00-06:00",
++            )
++
++    monkeypatch.setattr("snapims.web.app.ShopifyTokenManager", FakeManager)
++    monkeypatch.setattr("snapims.web.app.ShopifyConnectionProbe", FakeProbe)
++    with TestClient(app) as client:
++        login(client)
++        page = client.get("/settings")
++        selected = client.post(
++            "/settings/shopify/location",
++            data={
++                "csrf_token": csrf(page.text),
++                "SHOPIFY_LOCATION_ID": "gid://shopify/Location/2",
++            },
++        )
++        assert selected.status_code == 200
++        assert service.value("SHOPIFY_LOCATION_ID") == "gid://shopify/Location/2"
++
++        page = client.get("/settings")
++        removed = client.post(
++            "/settings/shopify/remove",
++            data={
++                "csrf_token": csrf(page.text),
++                "current_password": PASSWORD,
++                "confirmation": "REMOVE",
++            },
++        )
++    assert removed.status_code == 200
++    assert service.value("SHOPIFY_CLIENT_SECRET") == ""
++    assert service.value("SHOPIFY_CLIENT_ID") == ""
++    assert service.value("SHOPIFY_STORE_DOMAIN") == ""
+diff --git a/tests/test_v0101_regressions.py b/tests/test_v0101_regressions.py
+index 654d910..30d412e 100644
+--- a/tests/test_v0101_regressions.py
++++ b/tests/test_v0101_regressions.py
+@@ -181,6 +181,6 @@ def test_no_accidental_terminal_help_file() -> None:
+ def test_release_version_is_current() -> None:
+     import snapims
+ 
+-    assert snapims.__version__ == "0.13.2"
++    assert snapims.__version__ == "0.14.0"
+     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+     assert 'version = "0.9.' not in pyproject

@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block title %}Publish · SnapIMS{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">PUBLISH</p>
+    <h1>Shopify publish workflow</h1>
+    <p>Validate, simulate, create drafts, review in Shopify, then deliberately publish live.</p>
+  </div>
+  <form method="get">
+    <select name="batch_id" data-auto-submit>
+      {% for batch in batches %}<option value="{{ batch.batch_id }}" {% if batch.batch_id==batch_id %}selected{% endif %}>{{ batch.display_name or batch.batch_id }}</option>{% endfor %}
+    </select>
+  </form>
+</div>
+{% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}
+{% if message %}<div class="alert error">{{ message }}</div>{% endif %}
+
+{% if batch_id %}
+<section class="health-grid">
+  <article><b>{{ health.total }}</b><span>Total items</span></article>
+  <article><b>{{ ready }}</b><span>Publish ready</span></article>
+  <article><b>{{ blocked }}</b><span>Blocked</span></article>
+  <article><b>{{ health.unfinished }}</b><span>Unfinished</span></article>
+  <article><b>{{ health.low_confidence }}</b><span>Low confidence</span></article>
+  <article><b>{{ health.publish_blockers }}</b><span>Validation blockers</span></article>
+</section>
+
+<section class="panel publish-stage {{ 'stage-pass' if blocked == 0 and health.total else 'stage-blocked' }}">
+  <div class="section-head">
+    <div><p class="eyebrow">STAGE 1</p><h2>Validate batch</h2></div>
+    <span class="status-pill {{ 'ready' if blocked == 0 and health.total else 'failed' }}">{{ 'PASSED' if blocked == 0 and health.total else 'BLOCKED' }}</span>
+  </div>
+  {% if blocked == 0 and health.total %}
+  <p>All {{ health.total }} Items satisfy the current SnapIMS publish gate.</p>
+  {% else %}
+  <p>{{ blocked }} Item(s) have publish blockers. Resolve them in Review or Batch Editor before Shopify writes are enabled.</p>
+  {% endif %}
+  <details><summary>Validation details</summary>
+    <dl class="status-grid">
+      <div><dt>Unfinished</dt><dd>{{ health.unfinished }}</dd></div>
+      <div><dt>Low confidence</dt><dd>{{ health.low_confidence }}</dd></div>
+      <div><dt>Missing required values</dt><dd>{{ health.missing_required }}</dd></div>
+      <div><dt>Test-sourced</dt><dd>{{ health.test_sourced }}</dd></div>
+      <div><dt>Changed after recognition</dt><dd>{{ health.changed_since_recognition }}</dd></div>
+      <div><dt>Readiness</dt><dd>{{ health.readiness_percent }}%</dd></div>
+    </dl>
+  </details>
+  <div class="actions">
+    <a class="button" href="/review?batch_id={{ batch_id }}">Individual Review</a>
+    <a class="button primary" href="/batch-editor?batch_id={{ batch_id }}">Batch Editor</a>
+  </div>
+</section>
+
+<section class="panel publish-stage">
+  <div class="section-head">
+    <div><p class="eyebrow">STAGE 2</p><h2>Shopify simulation</h2><p>Read-only. No Shopify data is created or changed.</p></div>
+    {% if simulate %}<span class="status-pill {{ 'ready' if blocked == 0 else 'failed' }}">{{ 'PASSED' if blocked == 0 else 'BLOCKED' }}</span>{% endif %}
+  </div>
+  <div class="actions">
+    <a class="button primary" href="/publish?batch_id={{ batch_id }}&simulate=true">Run Shopify simulation</a>
+  </div>
+  {% if reports %}
+  <div class="publish-simulation-summary"><strong>{{ reports|selectattr('ready')|list|length }} ready</strong><span>{{ reports|rejectattr('ready')|list|length }} blocked on this page</span></div>
+  <div class="publish-result-list">
+    {% for report in reports %}
+    <article class="publish-card {{ 'ready' if report.ready else 'blocked' }}">
+      <div><strong>{{ report.item_id }}</strong><span>{{ report.action }}</span></div>
+      <small>{{ report.image_count|default(0) }} image(s) · {{ report.payload.get('sku', 'No SKU') if report.payload is defined else 'No SKU' }}</small>
+      {% if report.errors %}<ul>{% for error in report.errors %}<li>{{ error }}</li>{% endfor %}</ul>{% endif %}
+      {% if report.warnings %}<ul>{% for warning in report.warnings %}<li>{{ warning }}</li>{% endfor %}</ul>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel publish-stage {{ 'stage-enabled' if simulate and blocked == 0 and shopify_configured else '' }}">
+  <div class="section-head">
+    <div><p class="eyebrow">STAGE 3</p><h2>Create Shopify drafts</h2><p>Creates draft products, configures SKU, price and inventory, attaches media, and stores returned Shopify IDs.</p></div>
+  </div>
+  {% if not shopify_configured %}<div class="alert warning">Complete Shopify store, credentials, inventory location, and API settings before creating drafts.</div>{% endif %}
+  {% if not simulate %}<div class="alert warning">Run simulation first. The server re-validates every Item again before starting the write job.</div>{% endif %}
+  <form method="post" action="/publish/jobs" data-shopify-job data-open-shopify-review data-prevent-double-submit>
+    <input type="hidden" name="batch_id" value="{{ batch_id }}">
+    <input type="hidden" name="action" value="CREATE_DRAFTS">
+    <input type="hidden" name="selection_scope" value="ALL">
+    <button class="primary publish-primary" {% if not (simulate and blocked == 0 and shopify_configured) %}disabled{% endif %}>Create Shopify Drafts</button>
+  </form>
+</section>
+
+<section class="panel publish-stage">
+  <div class="section-head">
+    <div><p class="eyebrow">STAGE 4</p><h2>Review Shopify drafts</h2><p>Draft review is optional but recommended. SnapIMS stays open while Shopify opens in another tab after a successful draft job.</p></div>
+  </div>
+  <div class="actions">
+    {% if shopify_drafts_url %}<a class="button primary" href="{{ shopify_drafts_url }}" target="_blank" rel="noopener">Open Shopify Drafts</a>{% endif %}
+    <a class="button" href="/publish?batch_id={{ batch_id }}">Refresh SnapIMS status</a>
+  </div>
+</section>
+
+<section class="panel publish-stage danger-zone">
+  <div class="section-head">
+    <div><p class="eyebrow">STAGE 5</p><h2>Publish drafts live</h2><p>This changes product status to ACTIVE and publishes each product to the selected Shopify publication.</p></div>
+  </div>
+  {% if not shopify_publication_configured %}<div class="alert warning">Select the storefront publication in Settings before live publishing.</div>{% endif %}
+  <form method="post" action="/publish/jobs" data-shopify-job data-confirm-phrase="SUBMIT" data-prevent-double-submit>
+    <input type="hidden" name="batch_id" value="{{ batch_id }}">
+    <input type="hidden" name="action" value="PUBLISH_LIVE">
+    <input type="hidden" name="selection_scope" value="ALL">
+    <label>Type <code>SUBMIT</code> exactly to publish this batch live
+      <input name="confirmation" autocomplete="off" required>
+    </label>
+    <button class="primary" data-exact-confirm="SUBMIT" disabled>Publish Drafts Live</button>
+  </form>
+</section>
+
+<details class="panel danger-zone">
+  <summary><strong>Fast track: publish directly</strong></summary>
+  <p>Draft-first remains the default. Direct publish creates any missing drafts and immediately promotes them live without a Shopify review pause.</p>
+  <form method="post" action="/publish/jobs" data-shopify-job data-confirm-phrase="SUBMIT LIVE" data-prevent-double-submit>
+    <input type="hidden" name="batch_id" value="{{ batch_id }}">
+    <input type="hidden" name="action" value="DIRECT_PUBLISH">
+    <input type="hidden" name="selection_scope" value="ALL">
+    <label>Type <code>SUBMIT LIVE</code> exactly
+      <input name="confirmation" autocomplete="off" required>
+    </label>
+    <button class="danger" data-exact-confirm="SUBMIT LIVE" disabled>Submit Entire Batch Live</button>
+  </form>
+</details>
+
+{% if shopify_job %}
+<section class="panel publish-job" data-shopify-job-status data-job-id="{{ shopify_job.job_id }}" data-job-action="{{ shopify_job.action }}" data-job-terminal="{{ 'true' if shopify_job.terminal else 'false' }}" data-drafts-url="{{ shopify_drafts_url }}">
+  <div class="section-head">
+    <div><p class="eyebrow">ACTIVE / RECENT JOB</p><h2>{{ shopify_job.action.replace('_',' ')|title }}</h2></div>
+    <span class="status-pill" data-job-status>{{ shopify_job.status }}</span>
+  </div>
+  <div class="progress-shell">
+    <div class="progress-track"><span data-job-progress style="width:{{ shopify_job.progress_percent }}%"></span></div>
+    <div class="progress-details">
+      <strong data-job-count>{{ shopify_job.completed }} / {{ shopify_job.total }}</strong>
+      <span data-job-rate>{{ shopify_job.items_per_minute }} items/min</span>
+      <span data-job-eta>{% if shopify_job.eta_seconds is not none %}ETA {{ shopify_job.eta_seconds }} s{% else %}ETA calculating…{% endif %}</span>
+    </div>
+  </div>
+  <div class="metric-grid compact">
+    <article><b data-job-succeeded>{{ shopify_job.succeeded }}</b><span>Succeeded</span></article>
+    <article><b data-job-skipped>{{ shopify_job.skipped }}</b><span>Skipped</span></article>
+    <article><b data-job-failed>{{ shopify_job.failed }}</b><span>Failed</span></article>
+    <article><b data-job-elapsed>{{ shopify_job.elapsed_seconds }}</b><span>Elapsed seconds</span></article>
+  </div>
+  <div class="shopify-job-items" data-job-items>
+    {% for row in shopify_job["items"] %}
+    <article class="job-item status-{{ row.status|lower }}" data-job-item="{{ row.item_id }}">
+      <div><strong>{{ row.title or row.item_id }}</strong><code>{{ row.sku }}</code></div>
+      <span data-item-status>{{ row.status }}</span>
+      {% if row.error_message %}<small data-item-error>{{ row.error_message }}</small>{% endif %}
+      {% if row.shopify_admin_url %}<a href="{{ row.shopify_admin_url }}" target="_blank" rel="noopener">Open in Shopify</a>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% if shopify_job.status in ['FAILED','COMPLETE_WITH_FAILURES','PAUSED'] %}
+  <form method="post" action="/publish/job/{{ shopify_job.job_id }}/resume">
+    <input type="hidden" name="batch_id" value="{{ batch_id }}">
+    <button>Retry failed or interrupted Items</button>
+  </form>
+  {% endif %}
+  {% if shopify_job.terminal and shopify_job.action == 'CREATE_DRAFTS' and shopify_drafts_url %}<a class="button primary" href="{{ shopify_drafts_url }}" target="_blank" rel="noopener">Open Created Drafts</a>{% endif %}
+  {% if shopify_job.terminal and shopify_job.action in ['PUBLISH_LIVE','DIRECT_PUBLISH'] and shopify_live_url %}<a class="button primary" href="{{ shopify_live_url }}" target="_blank" rel="noopener">Open Live Products</a>{% endif %}
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="section-head"><div><p class="eyebrow">PRODUCT MANAGEMENT</p><h2>Single, multiple, or entire-batch actions</h2><p>Edit local values in Batch Editor, then use Sync selected to update linked Shopify products.</p></div></div>
+  <form method="post" action="/publish/jobs" data-shopify-job data-management-form>
+    <input type="hidden" name="batch_id" value="{{ batch_id }}">
+    <div class="bulk-toolbar">
+      <label>Scope
+        <select name="selection_scope" data-selection-scope>
+          <option value="SELECTED">Checked products</option>
+          <option value="ALL">Entire batch</option>
+        </select>
+      </label>
+      <label>Action
+        <select name="action" data-shopify-action required>
+          <option value="RECONCILE">Check Shopify status</option>
+          <option value="SYNC">Keep SnapIMS — overwrite Shopify</option>
+          <option value="KEEP_SHOPIFY">Keep Shopify — overwrite local working values</option>
+          <option value="MERGE">Merge non-conflicting values</option>
+          <option value="PUBLISH_LIVE">Publish live</option>
+          <option value="RESTORE_DRAFT">Restore to draft</option>
+          <option value="ARCHIVE">Archive on Shopify</option>
+          <option value="DELETE">Delete permanently from Shopify</option>
+        </select>
+      </label>
+      <label>Typed confirmation
+        <input name="confirmation" data-management-confirm placeholder="Required for publish/archive/delete">
+      </label>
+      <button class="primary" data-management-submit>Run selected action</button>
+      <label>Search visible page<input type="search" data-product-search placeholder="Title, SKU, status"></label>
+      <label>Status filter<select data-product-filter><option value="">All statuses</option><option>DRAFT</option><option>PUBLISHED</option><option>ARCHIVED</option><option>DELETED</option><option>NOT_UPLOADED</option><option>CONFLICT</option></select></label>
+      <button type="button" class="button" data-select-all-products>Select all visible</button>
+      <button type="button" class="button" data-invert-products>Invert visible</button>
+    </div>
+    <div class="table-scroll"><table class="publish-products">
+      <thead><tr><th>Select</th><th>Item</th><th>Title / SKU</th><th>Shopify</th><th>Sync</th><th>Actions</th></tr></thead>
+      <tbody>
+      {% for item in items %}
+      <tr data-product-row data-product-search-text="{{ (item.title ~ ' ' ~ item.sku ~ ' ' ~ item.shopify_status ~ ' ' ~ item.sync_state)|lower }}" data-product-status="{{ item.shopify_status }} {{ item.sync_state }}">
+        <td><input type="checkbox" name="item_id" value="{{ item.item_id }}" data-product-checkbox></td>
+        <td>{{ item.sequence }}</td>
+        <td><strong>{{ item.title or 'Untitled' }}</strong><small>{{ item.sku }}</small></td>
+        <td><span class="status-pill status-{{ item.shopify_status|lower }}">{{ item.shopify_status }}</span>{% if item.shopify_product_id %}<code>{{ item.shopify_product_id }}</code>{% endif %}</td>
+        <td>{{ item.sync_state }}{% if item.last_error %}<small>{{ item.last_error }}</small>{% endif %}{% if item.shopify_conflicts %}<details><summary>{{ item.shopify_conflicts|length }} difference(s)</summary><ul>{% for field,values in item.shopify_conflicts.items() %}<li><strong>{{ field }}</strong>: SnapIMS <code>{{ values.snapims }}</code> · Shopify <code>{{ values.shopify }}</code></li>{% endfor %}</ul></details>{% endif %}</td>
+        <td><a href="/review?batch_id={{ batch_id }}&item_id={{ item.item_id }}">Edit</a>{% if item.shopify_admin_url %} · <a href="{{ item.shopify_admin_url }}" target="_blank" rel="noopener">Shopify</a> · <button type="button" class="link-button" data-copy-text="{{ item.shopify_product_id }}">Copy GID</button>{% endif %}</td>
+      </tr>
+      {% else %}<tr><td colspan="6">No Items in this batch.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+  </form>
+  {% if publish_page.page_count > 1 %}<nav class="editor-pagination" aria-label="Product pages">{% if publish_page.has_previous %}<a class="button" href="{{ request.url.include_query_params(page=publish_page.page-1) }}">Previous</a>{% endif %}<strong>Page {{ publish_page.page }} of {{ publish_page.page_count }}</strong>{% if publish_page.has_next %}<a class="button" href="{{ request.url.include_query_params(page=publish_page.page+1) }}">Next</a>{% endif %}</nav>{% endif %}
+</section>
+
+<section class="panel split-tools"><div><p class="eyebrow">CSV ROUND TRIP</p><h2>Export or upload edited CSV</h2><p>Upload enters a staged difference preview. Nothing changes until you approve the diff.</p><div class="actions"><a class="button primary" href="/publish/csv/{{ batch_id }}">Download CSV</a></div><form method="post" action="/publish/csv/preview" enctype="multipart/form-data"><input type="hidden" name="batch_id" value="{{ batch_id }}"><label>Edited SnapIMS CSV<input type="file" name="csv_file" accept=".csv,text/csv" required></label><button>Upload and preview differences</button></form></div><div><p class="eyebrow">EXTERNAL REVIEW</p><h2>Skip one-by-one review safely</h2><p>Only valid working values can be marked externally reviewed. This records the review source without changing AI confidence.</p><form method="post" action="/publish/external-review"><input type="hidden" name="batch_id" value="{{ batch_id }}"><label class="check"><input type="checkbox" name="confirmation" value="true" required> I reviewed this batch externally and accept responsibility for the working values.</label><button>Mark valid batch externally reviewed</button></form></div></section>
+
+<section class="panel">
+  <div class="section-head"><div><p class="eyebrow">BATCH MANAGEMENT</p><h2>Rename, archive, restore, or remove Shopify products</h2></div></div>
+  <div class="management-grid">
+    <form method="post" action="/publish/batch/rename"><input type="hidden" name="batch_id" value="{{ batch_id }}"><label>Display name<input name="display_name" value="{{ selected_batch_row.display_name if selected_batch_row else '' }}" required></label><button>Rename batch</button></form>
+    <form method="post" action="/publish/batch/archive"><input type="hidden" name="batch_id" value="{{ batch_id }}"><label>Type <code>ARCHIVE BATCH</code><input name="confirmation" required></label><button>Archive local batch</button></form>
+    <form method="post" action="/publish/batch/restore"><input type="hidden" name="batch_id" value="{{ batch_id }}"><button>Restore local batch</button></form>
+    <form method="post" action="/publish/batch/duplicate"><input type="hidden" name="batch_id" value="{{ batch_id }}"><label>Type <code>DUPLICATE BATCH</code><input name="confirmation" required></label><button>Duplicate local batch</button></form>
+    <form method="post" action="/publish/batch/delete"><input type="hidden" name="batch_id" value="{{ batch_id }}"><label>Type <code>DELETE BATCH</code><input name="confirmation" required></label><button class="danger">Remove local batch</button></form>
+  </div>
+  <p class="muted">Local removal is a recoverable soft delete. To permanently delete every linked Shopify product, choose <strong>Entire batch</strong> and <strong>Delete permanently from Shopify</strong> in Product Management. Permanent Shopify deletion cannot be restored; SnapIMS retains linkage history for audit.</p>
+</section>
+
+{% if checkpoints %}<section class="panel"><p class="eyebrow">ROLLBACK</p><h2>Restore a batch checkpoint</h2><div class="checkpoint-list">{% for checkpoint in checkpoints %}<article><div><strong>{{ checkpoint.reason }}</strong><span>{{ checkpoint.created_at }} · {{ checkpoint.item_count }} items</span></div><form method="post" action="/publish/restore-checkpoint"><input type="hidden" name="batch_id" value="{{ batch_id }}"><input type="hidden" name="checkpoint_id" value="{{ checkpoint.checkpoint_id }}"><button>Restore</button></form></article>{% endfor %}</div></section>{% endif %}
+
+{% if shopify_jobs %}<section class="panel"><p class="eyebrow">PUBLISH HISTORY</p><h2>Recent Shopify jobs</h2><div class="table-scroll"><table><thead><tr><th>Time</th><th>Action</th><th>Status</th><th>Progress</th><th>Open</th></tr></thead><tbody>{% for job in shopify_jobs %}<tr><td>{{ job.created_at }}</td><td>{{ job.action }}</td><td>{{ job.status }}</td><td>{{ job.completed }}/{{ job.total }} · {{ job.failed }} failed</td><td><a href="/publish?batch_id={{ batch_id }}&job_id={{ job.job_id }}">View</a></td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
+
+{% else %}<section class="empty"><h2>No batch available</h2><a class="button primary" href="/import">Import a batch</a></section>{% endif %}
+{% endblock %}

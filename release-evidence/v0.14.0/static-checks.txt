@@ -1,0 +1,3 @@
+compileall PASS
+node-check PASS
+bash-n PASS

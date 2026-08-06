@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Price {{ item.title or item.item_id }} - SnapIMS{% endblock %}
+{% block content %}
+<section class="pricing-heading">
+  <div><p class="eyebrow">PRICING EVIDENCE</p><h1>{{ item.title or 'Untitled Item' }}</h1><p><code>{{ item.item_id }}</code> - Batch {{ item.batch_id }}</p></div>
+  <div class="action-row"><a class="button" href="/pricing?batch_id={{ item.batch_id }}">Pricing Review</a><a class="button" href="/review?batch_id={{ item.batch_id }}&queue=DONE&item_id={{ item.item_id }}">Open Item Review</a></div>
+</section>
+{% if notice %}<div class="alert success" role="status">{{ notice }}</div>{% endif %}
+{% if message %}<div class="alert error" role="alert">{{ message }}</div>{% endif %}
+{% if evidence and not evidence_valid %}<div class="alert error" role="alert"><strong>Stale or unavailable evidence:</strong> {{ stale_reason }} Acceptance controls are disabled. Old evidence remains below for audit.</div>{% endif %}
+<div class="pricing-item-layout">
+  <section class="panel pricing-photo-card">
+    {% if photos %}<img src="/media/{{ photos[0].photo_id }}" alt="Primary photograph for {{ item.title or item.item_id }}">{% else %}<div class="photo-missing">No photograph</div>{% endif %}
+    <dl class="pricing-definition-list">
+      <div><dt>Current price</dt><dd>{% if item.price_cents is not none %}${{ '%.2f'|format(item.price_cents/100) }} CAD{% else %}Not set{% endif %}</dd></div>
+      <div><dt>Pricing status</dt><dd>{{ state.status|replace('_',' ')|title }}</dd></div>
+      <div><dt>Disposition</dt><dd>{{ state.disposition|title }}</dd></div>
+      <div><dt>Source</dt><dd>{{ state.pricing_source or 'None' }}</dd></div>
+      <div><dt>Approved title snapshot</dt><dd>{{ state.approved_title or item.title }}</dd></div>
+    </dl>
+    {% if state.search_url %}<a class="button primary full" href="{{ state.search_url }}" target="_blank" rel="noopener">Open eBay Sold Search</a>{% endif %}
+    <div class="action-row stacked">
+      <form method="post" action="/pricing/item/{{ item.item_id }}/queue"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Run Pricing Lookup</button></form>
+      <form method="post" action="/pricing/item/{{ item.item_id }}/queue"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="refresh" value="true"><button>Recollect Evidence</button></form>
+    </div>
+  </section>
+  <section class="panel pricing-evidence-card">
+    <h2>Market evidence</h2>
+    {% if evidence %}
+      <p><strong>Collection {{ evidence.collection_id }}</strong><br>Queried title: {{ evidence.queried_title }}<br>Collected {{ evidence.collected_at }}</p>
+      <div class="pricing-summary-grid compact-grid">
+        <div class="metric"><strong>{% if evidence.average_cad %}${{ evidence.average_cad }}{% else %}-{% endif %}</strong><span>Average</span></div>
+        <div class="metric"><strong>{% if evidence.median_cad %}${{ evidence.median_cad }}{% else %}-{% endif %}</strong><span>Median</span></div>
+        <div class="metric"><strong>{% if evidence.lowest_cad %}${{ evidence.lowest_cad }}{% else %}-{% endif %}</strong><span>Lowest</span></div>
+        <div class="metric"><strong>{% if evidence.highest_cad %}${{ evidence.highest_cad }}{% else %}-{% endif %}</strong><span>Highest</span></div>
+      </div>
+      <p><strong>{{ evidence.tapes_averaged }} tape{{ '' if evidence.tapes_averaged==1 else 's' }} averaged</strong> - Expires {{ evidence.expires_at }}</p>
+      {% if evidence.listings %}<div class="table-scroll"><table class="pricing-table"><thead><tr><th>Listing</th><th>Sold</th><th>Shipping</th><th>Total</th><th>Date</th></tr></thead><tbody>
+      {% for listing in evidence.listings %}<tr><td><a href="{{ listing.listing_url }}" target="_blank" rel="noopener">{{ listing.listing_title }}</a></td><td>${{ listing.sold_price_cad }}</td><td>${{ listing.shipping_price_cad }}</td><td>${{ '%.2f'|format((listing.sold_price_cad|float)+(listing.shipping_price_cad|float)) }}</td><td>{{ listing.sold_date or '-' }}</td></tr>{% endfor %}
+      </tbody></table></div>{% endif %}
+    {% else %}<div class="empty"><h3>No valid evidence is attached</h3><p>This is not the same as zero matches. Read the status, then run the lookup or open eBay manually.</p></div>{% endif %}
+    <h2>Pricing decision</h2>
+    <p class="hint">Keyboard: Tab to a decision, then press Enter. Each “&amp; Next” control advances without JavaScript.</p>
+    <div class="pricing-decision-grid">
+      {% if evidence_valid and evidence.average_cad %}<form method="post" action="/pricing/item/{{ item.item_id }}/decision"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="submission_id" value="{{ submission_id }}-average"><input type="hidden" name="decision" value="AVERAGE"><input type="hidden" name="advance" value="true"><button class="primary" accesskey="a">Approve Average &amp; Next - ${{ evidence.average_cad }}</button></form>{% endif %}
+      {% if evidence_valid and evidence.median_cad %}<form method="post" action="/pricing/item/{{ item.item_id }}/decision"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="submission_id" value="{{ submission_id }}-median"><input type="hidden" name="decision" value="MEDIAN"><input type="hidden" name="advance" value="true"><button class="primary" accesskey="m">Approve Median &amp; Next - ${{ evidence.median_cad }}</button></form>{% endif %}
+      <form method="post" action="/pricing/item/{{ item.item_id }}/decision" class="manual-price-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="submission_id" value="{{ submission_id }}-manual"><input type="hidden" name="decision" value="MANUAL"><input type="hidden" name="advance" value="true"><label>Manual price CAD<input name="manual_price" inputmode="decimal" required placeholder="2.00"></label><button>Save Manual Price &amp; Next</button></form>
+      <form method="post" action="/pricing/item/{{ item.item_id }}/decision"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="submission_id" value="{{ submission_id }}-keep"><input type="hidden" name="decision" value="KEEP"><input type="hidden" name="advance" value="true"><button>Keep Existing &amp; Next</button></form>
+      <form method="post" action="/pricing/item/{{ item.item_id }}/decision"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="submission_id" value="{{ submission_id }}-skip"><input type="hidden" name="decision" value="SKIP"><input type="hidden" name="advance" value="true"><button>Skip Pricing &amp; Next</button></form>
+    </div>
+    {% if evidence_history|length > 1 %}<details><summary>Older immutable evidence ({{ evidence_history|length - 1 }})</summary><ul>{% for old in evidence_history[1:] %}<li>Collection {{ old.collection_id }} - {{ old.collected_at }} - median {% if old.median_cad %}${{ old.median_cad }}{% else %}no valid matches{% endif %}</li>{% endfor %}</ul></details>{% endif %}
+  </section>
+</div>
+{% endblock %}

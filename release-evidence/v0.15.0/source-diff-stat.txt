@@ -1,0 +1,75 @@
+ release-evidence/v0.15.0/source-diff-stat.txt      | 158 ---------------------
+ scripts/build_manifest_v0150.py                    |   2 +-
+ snapims.egg-info/PKG-INFO                          |  85 -----------
+ snapims.egg-info/SOURCES.txt                       | 122 ----------------
+ snapims.egg-info/dependency_links.txt              |   1 -
+ snapims.egg-info/entry_points.txt                  |   2 -
+ snapims.egg-info/requires.txt                      |  23 ---
+ snapims.egg-info/top_level.txt                     |   1 -
+ snapims/__pycache__/__init__.cpython-313.pyc       | Bin 377 -> 0 bytes
+ snapims/__pycache__/auth.cpython-313.pyc           | Bin 7160 -> 0 bytes
+ snapims/__pycache__/bulk.cpython-313.pyc           | Bin 13783 -> 0 bytes
+ snapims/__pycache__/cli.cpython-313.pyc            | Bin 50074 -> 0 bytes
+ snapims/__pycache__/config.cpython-313.pyc         | Bin 13134 -> 0 bytes
+ snapims/__pycache__/db.cpython-313.pyc             | Bin 178582 -> 0 bytes
+ snapims/__pycache__/demo.cpython-313.pyc           | Bin 3200 -> 0 bytes
+ snapims/__pycache__/images.cpython-313.pyc         | Bin 5232 -> 0 bytes
+ .../__pycache__/import_location.cpython-313.pyc    | Bin 3336 -> 0 bytes
+ snapims/__pycache__/import_repair.cpython-313.pyc  | Bin 17711 -> 0 bytes
+ snapims/__pycache__/import_v0130.cpython-313.pyc   | Bin 62564 -> 0 bytes
+ snapims/__pycache__/interpreter.cpython-313.pyc    | Bin 11386 -> 0 bytes
+ snapims/__pycache__/inventory.cpython-313.pyc      | Bin 36696 -> 0 bytes
+ snapims/__pycache__/manager.cpython-313.pyc        | Bin 31469 -> 0 bytes
+ snapims/__pycache__/manifests.cpython-313.pyc      | Bin 2796 -> 0 bytes
+ snapims/__pycache__/models.cpython-313.pyc         | Bin 3706 -> 0 bytes
+ snapims/__pycache__/money.cpython-313.pyc          | Bin 4865 -> 0 bytes
+ snapims/__pycache__/observability.cpython-313.pyc  | Bin 25002 -> 0 bytes
+ snapims/__pycache__/pipeline.cpython-313.pyc       | Bin 5233 -> 0 bytes
+ snapims/__pycache__/processor.cpython-313.pyc      | Bin 46376 -> 0 bytes
+ snapims/__pycache__/protocol.cpython-313.pyc       | Bin 2780 -> 0 bytes
+ .../__pycache__/provider_probes.cpython-313.pyc    | Bin 18748 -> 0 bytes
+ snapims/__pycache__/qr.cpython-313.pyc             | Bin 3594 -> 0 bytes
+ snapims/__pycache__/runtime.cpython-313.pyc        | Bin 1510 -> 0 bytes
+ snapims/__pycache__/settings.cpython-313.pyc       | Bin 46745 -> 0 bytes
+ snapims/__pycache__/sorter.cpython-313.pyc         | Bin 3598 -> 0 bytes
+ snapims/__pycache__/sqlite_utils.cpython-313.pyc   | Bin 1080 -> 0 bytes
+ .../catalog/__pycache__/__init__.cpython-313.pyc   | Bin 466 -> 0 bytes
+ snapims/catalog/__pycache__/admin.cpython-313.pyc  | Bin 34927 -> 0 bytes
+ snapims/catalog/__pycache__/db.cpython-313.pyc     | Bin 33666 -> 0 bytes
+ snapims/catalog/__pycache__/models.cpython-313.pyc | Bin 3479 -> 0 bytes
+ .../__pycache__/normalization.cpython-313.pyc      | Bin 3903 -> 0 bytes
+ .../catalog/__pycache__/service.cpython-313.pyc    | Bin 59651 -> 0 bytes
+ .../catalog/__pycache__/wikipedia.cpython-313.pyc  | Bin 32004 -> 0 bytes
+ .../pricing/__pycache__/__init__.cpython-313.pyc   | Bin 790 -> 0 bytes
+ .../pricing/__pycache__/database.cpython-313.pyc   | Bin 19949 -> 0 bytes
+ .../__pycache__/integration.cpython-313.pyc        | Bin 7220 -> 0 bytes
+ .../__pycache__/listing_parser.cpython-313.pyc     | Bin 3960 -> 0 bytes
+ snapims/pricing/__pycache__/models.cpython-313.pyc | Bin 3595 -> 0 bytes
+ .../__pycache__/normalization.cpython-313.pyc      | Bin 7146 -> 0 bytes
+ .../playwright_controller.cpython-313.pyc          | Bin 28903 -> 0 bytes
+ snapims/pricing/__pycache__/router.cpython-313.pyc | Bin 18376 -> 0 bytes
+ .../__pycache__/search_urls.cpython-313.pyc        | Bin 1057 -> 0 bytes
+ .../pricing/__pycache__/settings.cpython-313.pyc   | Bin 4001 -> 0 bytes
+ .../pricing/__pycache__/statistics.cpython-313.pyc | Bin 1434 -> 0 bytes
+ .../pricing/__pycache__/throttle.cpython-313.pyc   | Bin 7288 -> 0 bytes
+ snapims/pricing/__pycache__/worker.cpython-313.pyc | Bin 9487 -> 0 bytes
+ .../pricing/__pycache__/workflow.cpython-313.pyc   | Bin 82040 -> 0 bytes
+ .../__pycache__/__init__.cpython-313.pyc           | Bin 194 -> 0 bytes
+ .../recognition/__pycache__/base.cpython-313.pyc   | Bin 2396 -> 0 bytes
+ .../__pycache__/providers.cpython-313.pyc          | Bin 10826 -> 0 bytes
+ .../__pycache__/service.cpython-313.pyc            | Bin 67877 -> 0 bytes
+ .../shopify/__pycache__/__init__.cpython-313.pyc   | Bin 165 -> 0 bytes
+ snapims/shopify/__pycache__/auth.cpython-313.pyc   | Bin 22043 -> 0 bytes
+ snapims/shopify/__pycache__/client.cpython-313.pyc | Bin 25299 -> 0 bytes
+ .../shopify/__pycache__/service.cpython-313.pyc    | Bin 49017 -> 0 bytes
+ snapims/web/__pycache__/__init__.cpython-313.pyc   | Bin 163 -> 0 bytes
+ snapims/web/__pycache__/app.cpython-313.pyc        | Bin 205622 -> 0 bytes
+ .../conftest.cpython-313-pytest-9.0.2.pyc          | Bin 10440 -> 0 bytes
+ tests/__pycache__/helpers.cpython-313.pyc          | Bin 2748 -> 0 bytes
+ .../test_db_migration.cpython-313-pytest-9.0.2.pyc | Bin 45045 -> 0 bytes
+ ...test_observability.cpython-313-pytest-9.0.2.pyc | Bin 41891 -> 0 bytes
+ ...st_provider_probes.cpython-313-pytest-9.0.2.pyc | Bin 13794 -> 0 bytes
+ .../test_settings_web.cpython-313-pytest-9.0.2.pyc | Bin 69919 -> 0 bytes
+ .../test_shopify.cpython-313-pytest-9.0.2.pyc      | Bin 58999 -> 0 bytes
+ ..._v0132_reliability.cpython-313-pytest-9.0.2.pyc | Bin 46377 -> 0 bytes
+ 74 files changed, 1 insertion(+), 393 deletions(-)

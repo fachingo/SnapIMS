@@ -1,0 +1,1 @@
+1943825e9b920b5b4c8c3f861a961e6f4f3bd62471a0eedabb1f792abcc043d5  dist/snapims-0.14.0-py3-none-any.whl

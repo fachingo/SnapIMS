@@ -1,0 +1,8 @@
+SnapIMS v0.15.0 clean install: PASS
+Version: 0.15.0
+Inventory schema: 16 / 16
+Shopify durable job tables: present (2 / 2)
+Data directory: isolated temporary directory
+Installer: offline controlled-host mode, no dependency download
+Application and database status: PASS
+Expected unavailable external services: Cloudflare, Guacamole, OpenAI, Shopify credentials

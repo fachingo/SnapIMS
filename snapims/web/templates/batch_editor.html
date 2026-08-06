@@ -1,0 +1,99 @@
+{% extends "base.html" %}{% block title %}Batch Editor · SnapIMS{% endblock %}{% block content %}
+<div class="page-heading editor-heading">
+  <div><p class="eyebrow">BATCH EDITOR</p><h1>Bulk operator workstation</h1><p>Fix uncertainty, bulk-price inventory, and approve valid rows without leaving the keyboard.</p></div>
+  <form method="get"><select name="batch_id" data-auto-submit>{% for batch in batches %}<option value="{{ batch.batch_id }}" {% if batch.batch_id==batch_id %}selected{% endif %}>{{ batch.display_name or batch.source_folder_name or batch.batch_id }} · {{ batch.batch_id }}</option>{% endfor %}</select></form>
+</div>
+{% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}
+{% if batch %}<section class="batch-identity-panel" aria-label="Batch identity">
+  <div><span>Source folder name</span><strong>{{ batch.source_folder_name or 'Legacy import' }}</strong><small>{{ batch.source_folder }}</small></div>
+  <form method="post" action="/batch-editor/batch-name"><input type="hidden" name="batch_id" value="{{ batch.batch_id }}"><label>Current batch display name<input name="display_name" value="{{ batch.display_name or batch.source_folder_name or batch.batch_id }}" required maxlength="160"></label><button class="button" type="submit">Save display name</button></form>
+  <div><span>Immutable Batch ID</span><code>{{ batch.batch_id }}</code><small>This never changes when the display name changes.</small></div>
+  <div><span>Batch default location</span><strong>{{ batch.batch_location or 'Unassigned' }}</strong><small>Item locations may be overridden below.</small></div>
+</section>{% endif %}
+{% if not batch_id %}<section class="empty"><h2>No batch available</h2><a class="button primary" href="/import">Import a batch</a></section>{% else %}
+<section class="health-grid" id="batch-health">
+  <article><b data-health="total">{{ health.total }}</b><span>Total</span></article>
+  <article><b data-health="approved">{{ health.approved }}</b><span>Approved</span></article>
+  <article><b data-health="unfinished">{{ health.unfinished }}</b><span>Unfinished</span></article>
+  <article><b data-health="failed">{{ health.failed }}</b><span>Failed</span></article>
+  <article><b data-health="blocked">{{ health.blocked }}</b><span>Blocked</span></article>
+  <article><b data-health="low_confidence">{{ health.low_confidence }}</b><span>Low confidence</span></article>
+  <article><b data-health="changed_since_recognition">{{ health.changed_since_recognition }}</b><span>Changed</span></article>
+  <article><b data-health="publish_blockers">{{ health.publish_blockers }}</b><span>Publish blockers</span></article>
+  <article><b data-health="test_sourced">{{ health.test_sourced }}</b><span>Test-sourced</span></article>
+  <article><b data-health="readiness_percent">{{ health.readiness_percent }}%</b><span>Publish readiness</span></article>
+</section>
+<section class="confidence-panel">
+  <div><strong>Confidence buckets</strong><span>Click a bucket to isolate risk.</span></div>
+  <button data-confidence-min="0.98"><b>{{ confidence_buckets['98_100'] }}</b><span>98–100%</span></button>
+  <button data-confidence-min="0.95" data-confidence-max="0.98"><b>{{ confidence_buckets['95_98'] }}</b><span>95–98%</span></button>
+  <button data-confidence-min="0.90" data-confidence-max="0.95"><b>{{ confidence_buckets['90_95'] }}</b><span>90–95%</span></button>
+  <button data-confidence-max="0.90"><b>{{ confidence_buckets['below_90'] }}</b><span>Below 90%</span></button>
+  <button data-confidence-manual><b>{{ confidence_buckets.manual }}</b><span>Manual</span></button>
+  <button data-confidence-unknown><b>{{ confidence_buckets.unknown }}</b><span>Not identified</span></button>
+</section>
+<section class="performance-strip">
+  <article><b>{{ metrics.approvals_per_minute if metrics.throughput_window_valid else '—' }}</b><span>{{ 'Approvals/min' if metrics.throughput_window_valid else 'Throughput needs more events' }}</span></article>
+  <article><b>{{ metrics.total_changes }}</b><span>Recorded edits</span></article>
+  <article><b>{{ metrics.provider_selected_images }}</b><span>Images sent to AI</span></article>
+  <article><b>{{ metrics.ai_ineligible_product_images }}</b><span>AI-ineligible photos</span></article>
+  <article><b>{{ metrics.payload_reduction_percent ~ '%' if metrics.provider_payload_bytes else '—' }}</b><span>Measured payload reduction</span></article>
+  <article><b>{{ metrics.estimated_api_cost }}</b><span>Estimated API cost</span></article>
+</section>
+<form class="editor-toolbar" data-batch-editor data-batch-id="{{ batch_id }}" method="get">
+  <input type="hidden" name="batch_id" value="{{ batch_id }}">
+  <input id="batch-search" name="search" type="search" value="{{ editor_search }}" placeholder="Search title, description, SKU, tag, location…">
+  <select id="batch-filter" name="filter"><option value="all" {% if editor_filter=='all' %}selected{% endif %}>All items</option><option value="unfinished" {% if editor_filter=='unfinished' %}selected{% endif %}>Unfinished</option><option value="approved" {% if editor_filter=='approved' %}selected{% endif %}>Approved</option><option value="failed" {% if editor_filter=='failed' %}selected{% endif %}>Failed recognition</option><option value="low" {% if editor_filter=='low' %}selected{% endif %}>Low confidence</option><option value="missing-title" {% if editor_filter=='missing-title' %}selected{% endif %}>Missing title</option><option value="flagged" {% if editor_filter=='flagged' %}selected{% endif %}>Review flag</option><option value="rare" {% if editor_filter=='rare' %}selected{% endif %}>Rare</option><option value="recent" {% if editor_filter=='recent' %}selected{% endif %}>Recently edited</option></select>
+  <select id="batch-sort" name="sort"><option value="sequence" {% if editor_sort=='sequence' %}selected{% endif %}>Physical order</option><option value="confidence" {% if editor_sort=='confidence' %}selected{% endif %}>Confidence low first</option><option value="title" {% if editor_sort=='title' %}selected{% endif %}>Title</option><option value="price" {% if editor_sort=='price' %}selected{% endif %}>Price</option><option value="updated" {% if editor_sort=='updated' %}selected{% endif %}>Recently edited</option></select>
+  <label class="threshold">Confidence below <input id="confidence-threshold" name="threshold" type="number" min="0" max="100" value="{{ editor_threshold }}">%</label>
+  <label class="threshold">Rows <select name="page_size"><option value="50" {% if editor_page.page_size==50 %}selected{% endif %}>50</option><option value="100" {% if editor_page.page_size==100 %}selected{% endif %}>100</option><option value="200" {% if editor_page.page_size==200 %}selected{% endif %}>200</option></select></label>
+  <button type="submit">Apply to whole batch</button>
+  <button type="button" data-select-visible>Select visible page</button><button type="button" data-clear-selection>Clear</button><span id="selection-count">0 selected</span>
+  <small class="selection-scope">Showing {{ editor_page.offset + 1 if editor_page.total else 0 }}–{{ [editor_page.offset + items|length, editor_page.total]|min }} of {{ editor_page.total }} matching items. Selection and bulk actions are limited to visible rows on this page.</small>
+</form>
+<section class="bulk-bar" data-quick-actions aria-label="Batch Editor quick actions">
+  <button type="button" data-bulk="set_price">Bulk Price</button>
+  <button type="button" data-bulk="add_price">Add to price</button>
+  <button type="button" data-bulk="subtract_percent">Subtract %</button>
+  <button type="button" data-bulk="round_price">Round price</button>
+  <button type="button" data-bulk="set_discount">Set discount</button>
+  <button type="button" data-bulk="set_location">Move location</button>
+  <button type="button" data-bulk="append_tags">Append tags</button>
+  <button type="button" data-bulk="prefix_description">Prefix descriptions</button>
+  <button type="button" data-bulk="replace_description">Find/replace descriptions</button>
+  <button type="button" data-fill-down>Fill Down</button>
+  <button type="button" data-bulk="flag_review">Flag review</button>
+  <button type="button" data-bulk="approve">Approve selected</button>
+  <button type="button" data-save-all>Save All Pending</button>
+  <span id="editor-save-state" role="status">Saved</span>
+</section>
+<div class="quick-action-tools"><button type="button" data-reset-quick-order>Reset quick-action order</button></div>
+<p class="shortcut-hint">Keyboard: Arrow keys move between cells · Enter saves and moves down · Tab moves normally · Esc cancels · Shift+Arrow selects a row range · Ctrl+A selects visible rows · Alt+1–9 opens visible quick actions · Alt+Left/Right reorders a focused quick action · Ctrl+S saves all · Ctrl+Z / Ctrl+Y undo and redo · F2 edits · Alt+P opens the command palette</p>
+<div class="data-grid-wrap"><table class="data-grid" id="batch-grid"><thead><tr><th><input type="checkbox" data-select-all aria-label="Select all visible"></th><th>Photo</th><th>Item</th><th>Confidence</th><th>Title</th><th>Price</th><th>Tags</th><th>Discount</th><th>Description</th><th>Location</th><th>Flags</th><th>Status</th></tr></thead><tbody>
+{% for item in items %}<tr data-item-id="{{ item.item_id }}" data-sequence="{{ item.sequence }}" data-confidence="{{ item.display_confidence if item.display_confidence is not none else -1 }}" data-value-state="{{ item.value_state }}" data-review-status="{{ item.review_status }}" data-recognition-status="{{ item.recognition_status }}" data-rare="{{ item.rare }}" data-review="{{ item.review }}" data-revision="{{ item.record_revision }}" data-updated="{{ item.updated_at }}">
+<td><input type="checkbox" class="row-select" aria-label="Select {{ item.item_id }}"></td>
+<td>{% if item.front_thumbnail %}<button class="thumb-button" type="button" data-media-item="{{ item.item_id }}"><img loading="lazy" src="/media/{{ item.front_photo_id }}" alt="{{ item.item_id }} thumbnail"></button>{% else %}<span class="no-thumb">—</span>{% endif %}</td>
+<td><strong>#{{ item.sequence }}</strong><code title="Immutable Item ID">{{ item.item_id }}</code><small>Immutable Item ID</small></td>
+<td><button class="confidence-cell" type="button" data-evidence>{% if item.display_confidence is not none %}{{ (item.display_confidence*100)|round|int }}%{% elif item.review_status=='DONE' %}Manual{% else %}—{% endif %}</button><small>{{ 'Suggested' if item.review_status!='DONE' and item.suggestion_confidence is not none else ('Accepted' if item.recognition_confidence is not none else 'No AI confidence') }}</small></td>
+<td><input data-field="title" value="{{ item.title }}" placeholder="{{ item.suggested_title or 'Title required' }}" aria-label="Saved title for {{ item.item_id }}"><small>{% if item.title %}Saved{% elif item.suggested_title %}AI suggestion: {{ item.suggested_title }}{% else %}No title suggestion{% endif %}</small></td>
+<td><input data-field="price_cents" inputmode="decimal" value="{{ '%.2f'|format(item.price_cents/100) if item.price_cents is not none else '' }}" placeholder="{{ '%.2f'|format(item.suggested_price_cents/100) if item.suggested_price_cents is not none else '0.00' }}" aria-label="Saved price for {{ item.item_id }}"><small>{% if item.price_cents is not none %}Saved{% elif item.suggested_price_cents is not none %}AI suggestion: ${{ '%.2f'|format(item.suggested_price_cents/100) }}{% else %}No price suggestion{% endif %}</small></td>
+<td><div class="tag-picker tag-picker-cell" data-tag-picker data-editor-tags data-field="tag_ids" data-selected="{{ item.tag_ids|join(',') }}"><div class="tag-pills" data-tag-pills></div><input type="text" data-tag-input autocomplete="off" placeholder="Add tag" aria-label="Tags for {{ item.item_id }}"><div class="tag-suggestions" data-tag-suggestions role="listbox" hidden></div></div></td>
+<td><input data-field="discount_percent" inputmode="decimal" value="{{ item.discount_percent }}" aria-label="Discount for {{ item.item_id }}"></td>
+<td><textarea data-field="description" rows="2" aria-label="Description for {{ item.item_id }}">{{ item.description }}</textarea></td>
+<td><input data-field="location" value="{{ item.location if item.location is not none else item.shelf }}" placeholder="Unassigned" aria-label="Current Item location for {{ item.item_id }}"><small>Free text or None</small></td>
+<td><label class="mini-check"><input type="checkbox" data-field="review" {% if item.review %}checked{% endif %}> Review</label><label class="mini-check"><input type="checkbox" data-field="rare" {% if item.rare %}checked{% endif %}> Rare</label></td>
+<td><span class="status-pill {{ item.review_status|lower }}">{{ item.value_state }}</span><small>{{ item.working_source }}{% if item.suggestion_source_kind=='TEST' %} · TEST SOURCE{% endif %}</small></td>
+</tr>{% endfor %}{% if not items %}<tr><td colspan="12"><div class="empty"><strong>No Items match this page query.</strong><p>Change the whole-batch search or filter and apply it again.</p></div></td></tr>{% endif %}</tbody></table></div>
+<nav class="editor-pagination" aria-label="Batch Editor pages">
+  {% if editor_page.has_previous %}<a class="button" href="{{ request.url.include_query_params(page=editor_page.page-1) }}">Previous page</a>{% else %}<span class="button disabled" aria-disabled="true">Previous page</span>{% endif %}
+  <strong>Page {{ editor_page.page }} of {{ editor_page.page_count }}</strong>
+  {% if editor_page.has_next %}<a class="button" href="{{ request.url.include_query_params(page=editor_page.page+1) }}">Next page</a>{% else %}<span class="button disabled" aria-disabled="true">Next page</span>{% endif %}
+</nav>
+<section class="panel"><div class="section-head"><div><p class="eyebrow">ROLLBACK</p><h2>Batch checkpoints</h2></div></div>{% if checkpoints %}<div class="checkpoint-list">{% for checkpoint in checkpoints %}<article><div><strong>{{ checkpoint.reason }}</strong><span>{{ checkpoint.created_at }} · {{ checkpoint.item_count }} items · {{ checkpoint.source }}</span></div><button type="button" data-restore-checkpoint="{{ checkpoint.checkpoint_id }}">Restore</button></article>{% endfor %}</div>{% else %}<p class="muted">A checkpoint is created before CSV replacement and every large bulk edit.</p>{% endif %}</section>
+<dialog id="bulk-dialog"><form method="dialog"><div class="palette-head"><strong id="bulk-title">Bulk action</strong><button value="cancel">×</button></div><p id="bulk-summary"></p><p id="bulk-description" class="muted"></p><label id="bulk-value-label">Value<input id="bulk-value"><datalist id="controlled-tag-values">{% for tag in tag_definitions if tag.active %}<option value="{{ tag.tag_id }}">{{ tag.canonical_label }}</option>{% endfor %}</datalist></label><label>Reason<input id="bulk-reason" value="Batch Editor bulk change"></label><div class="actions"><button value="cancel">Cancel</button><button id="bulk-apply" type="button" class="primary">Preview and apply</button></div></form></dialog>
+<dialog id="evidence-dialog"><div class="palette-head"><strong>Recognition evidence</strong><button type="button" data-close-dialog>×</button></div><div id="evidence-content"></div></dialog>
+<dialog id="media-dialog"><div class="palette-head"><strong>Item media</strong><button type="button" data-close-dialog>×</button></div><div id="media-content"></div></dialog>
+<script id="batch-items-json" type="application/json">{{ items|tojson }}</script>
+<script id="tag-definitions-json" type="application/json">{{ tag_definitions|tojson }}</script>
+{% endif %}
+{% endblock %}

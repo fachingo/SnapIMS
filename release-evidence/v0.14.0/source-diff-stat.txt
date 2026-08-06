@@ -1,0 +1,100 @@
+ .env.example                                       |    3 +
+ ARCHITECTURE.md                                    |    2 +-
+ BROWSER_VERIFICATION.md                            |   41 +-
+ DEPLOYMENT_GUIDE.md                                |    2 +-
+ DEVELOPER_GUIDE.md                                 |    4 +-
+ DOCUMENTATION_VERIFICATION.md                      |   26 +-
+ END_OF_BATCH_CHECKLIST.md                          |    2 +-
+ IMPORT_FIXTURE_MATRIX.md                           |    2 +-
+ INSTALLATION_GUIDE.md                              |   23 +-
+ ISSUE_REGISTER_V0132.csv                           |   15 -
+ ISSUE_TRACEABILITY_V0132.md                        |   22 -
+ LOCAL_SOURCE_INVENTORY.md                          |   35 +-
+ OPERATOR_GUIDE.md                                  |   17 +-
+ PERFORMANCE_REPORT.md                              |    6 +-
+ PRODUCTION_READINESS.md                            |   25 +-
+ README.md                                          |   16 +-
+ RECOVERY_PROCEDURES.md                             |    4 +-
+ RELEASE_NOTES.md                                   |   70 +-
+ ROLLBACK.md                                        |    4 +-
+ SCREENSHOT_INDEX.md                                |    4 +-
+ SKIPPED_EXTERNAL_TESTS.md                          |    4 +-
+ SNAPIMS_PRE_1_0_ROADMAP_V0132.md                   |    3 -
+ SnapIMS_Operator_Guide_v0.13.2.docx                |  Bin 1418110 -> 0 bytes
+ SnapIMS_Operator_Guide_v0.13.2.pdf                 |  Bin 818817 -> 0 bytes
+ TEST_RESULTS.md                                    |   45 +-
+ V1_PRODUCTION_ACCEPTANCE_GAPS.md                   |    6 +-
+ browser-evidence/v0.13.2/browser-verification.json |  189 -
+ .../v0.13.2/chromium-batch-editor-controls.png     |  Bin 336287 -> 0 bytes
+ browser-evidence/v0.13.2/chromium-batch-editor.png |  Bin 399218 -> 0 bytes
+ .../v0.13.2/chromium-import-commit.png             |  Bin 206798 -> 0 bytes
+ .../v0.13.2/chromium-import-correction.png         |  Bin 199011 -> 0 bytes
+ .../v0.13.2/chromium-import-preview.png            |  Bin 2540331 -> 0 bytes
+ browser-evidence/v0.13.2/chromium-import-top.png   |  Bin 584009 -> 0 bytes
+ .../v0.13.2/chromium-mobile-editor-top.png         |  Bin 185848 -> 0 bytes
+ .../v0.13.2/chromium-mobile-editor.png             |  Bin 460518 -> 0 bytes
+ browser-evidence/v0.13.2/server.log                |   47 -
+ .../SnapIMS_v0.13.2_Complete_Operating_Manual.docx |  Bin 1081541 -> 0 bytes
+ docs/SnapIMS_v0.13.2_Complete_Operating_Manual.pdf |  Bin 673655 -> 0 bytes
+ docs/SnapIMS_v0.13.2_Day-to-Day_Guide.docx         |  Bin 1261093 -> 0 bytes
+ docs/SnapIMS_v0.13.2_Day-to-Day_Guide.pdf          |  Bin 742811 -> 0 bytes
+ docs/SnapIMS_v0.13.2_Operator_Guide.docx           |  Bin 1418110 -> 0 bytes
+ docs/SnapIMS_v0.13.2_Operator_Guide.pdf            |  Bin 818817 -> 0 bytes
+ install_v0132.sh                                   |  138 -
+ pyproject.toml                                     |    3 +-
+ release-evidence/v0.13.2/QA_REQUIREMENTS_SOURCE.md | 1124 -----
+ .../v0.13.2/QA_V0130_ISSUE_REGISTER.csv            |   11 -
+ release-evidence/v0.13.2/QA_V0130_STRESS_REPORT.md |  364 --
+ release-evidence/v0.13.2/clean-install-doctor.log  |   20 -
+ release-evidence/v0.13.2/clean-install-service.txt |   14 -
+ release-evidence/v0.13.2/clean-install-status.txt  |   22 -
+ release-evidence/v0.13.2/clean-install.log         |   16 -
+ release-evidence/v0.13.2/final-clean-install.log   |   16 -
+ release-evidence/v0.13.2/final-clean-status.txt    |   22 -
+ .../v0.13.2/final-restart-health-1.json            |    1 -
+ .../v0.13.2/final-restart-health-2.json            |    1 -
+ release-evidence/v0.13.2/focused-final-tests.log   |    1 -
+ .../v0.13.2/full-pytest-fd-late-samples.tsv        |   11 -
+ .../v0.13.2/full-pytest-fd-monitor.json            | 1814 --------
+ .../v0.13.2/full-pytest-monitored.done             |    1 -
+ release-evidence/v0.13.2/full-pytest-monitored.log |    4 -
+ release-evidence/v0.13.2/full-pytest-summary.txt   |   20 -
+ release-evidence/v0.13.2/full-pytest-verbose.log   |  289 --
+ release-evidence/v0.13.2/full-pytest.log           |    2 -
+ release-evidence/v0.13.2/performance-import.json   |   48 -
+ .../v0.13.2/release-static-verification.json       |    8 -
+ release-evidence/v0.13.2/restart-health-1.json     |    1 -
+ release-evidence/v0.13.2/restart-health-2.json     |    1 -
+ release-evidence/v0.13.2/restart-server-1.log      |   10 -
+ release-evidence/v0.13.2/restart-server-2.log      |   10 -
+ release-evidence/v0.13.2/skip-reasons.txt          |    5 -
+ release-evidence/v0.13.2/source-changes.patch      | 4364 --------------------
+ release-evidence/v0.13.2/source-diff-stat.txt      |   85 -
+ .../v0.13.2/source-status-before-package.txt       |  147 -
+ release-evidence/v0.13.2/static-checks.txt         |    3 -
+ release-evidence/v0.13.2/upgrade-install.log       |   16 -
+ .../v0.13.2/upgrade-launcher-rewritten.sh          |    5 -
+ release-evidence/v0.13.2/upgrade-preservation.txt  |    5 -
+ .../v0.13.2/upgrade-service-rewritten.txt          |   14 -
+ release-evidence/v0.13.2/wheel-build.log           |   11 -
+ scripts/benchmark_import_v0132.py                  |  195 -
+ scripts/browser_verify_v0132.py                    |  430 --
+ scripts/build_guides_v0132.py                      |  287 --
+ scripts/build_manifest_v0132.py                    |   23 -
+ scripts/generate_import_fixture_sets_v0132.py      |  202 -
+ scripts/verify_release_v0132.py                    |   22 -
+ snapims/__init__.py                                |    2 +-
+ snapims/cli.py                                     |    8 +-
+ snapims/config.py                                  |   41 +-
+ snapims/provider_probes.py                         |   42 +-
+ snapims/settings.py                                |  147 +-
+ snapims/shopify/client.py                          |   74 +-
+ snapims/shopify/service.py                         |    4 +-
+ snapims/web/app.py                                 |  262 +-
+ snapims/web/static/app.css                         |   77 +
+ snapims/web/static/app.js                          |    2 +-
+ snapims/web/templates/settings.html                |  118 +-
+ tests/test_provider_probes.py                      |    4 +-
+ tests/test_settings_web.py                         |  323 +-
+ tests/test_v0101_regressions.py                    |    2 +-
+ 99 files changed, 1179 insertions(+), 10330 deletions(-)

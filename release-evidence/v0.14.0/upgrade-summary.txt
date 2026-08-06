@@ -1,0 +1,10 @@
+Source layout: installed SnapIMS v0.13.2 release
+Target: SnapIMS v0.14.0
+Data directory preserved: yes
+Batch ID preserved: upgrade-batch-0132
+Item ID preserved: upgrade-item-0132
+Item title preserved: Preserve Me
+Location preserved: A6
+Launcher/service stale v0.13.2 path removed: yes
+Target version: 0.14.0
+Inventory schema: 15 / 15
