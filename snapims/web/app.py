@@ -134,6 +134,30 @@ from snapims.pricing.router import router as pricing_router
 from snapims.pricing.workflow import PricingWorkflow
 from snapims.pricing.worker import get_worker as get_pricing_worker
 
+from snapims.operator_first.taxonomy import seed_approved_taxonomy
+from snapims.operator_first.pricing import (
+    autofill_database_price as operator_autofill_database_price,
+    database_price_suggestion as operator_database_price_suggestion,
+    ebay_sold_url as operator_ebay_sold_url,
+    pricing_badge as operator_pricing_badge,
+)
+from snapims.operator_first.search import (
+    find_title_candidates as operator_find_title_candidates,
+    title_intelligence as operator_title_intelligence,
+)
+from snapims.operator_first.lifecycle import (
+    commit_preview as operator_commit_preview,
+    commit_batch as operator_commit_batch,
+)
+from snapims.operator_first.data_sources import data_source_status as operator_data_source_status
+from snapims.operator_first.help_registry import get_topic as operator_help_topic, search_topics as operator_search_help, generic_control_topic as operator_generic_help
+from snapims.operator_first.review import (
+    operator_approve as operator_review_approve,
+    operator_reject as operator_review_reject,
+    bulk_approval_preview as operator_bulk_approval_preview,
+    bulk_approve as operator_bulk_approve,
+)
+
 PACKAGE_ROOT = Path(__file__).resolve().parent
 STATIC_ROOT = PACKAGE_ROOT / "static"
 TEMPLATES = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
@@ -302,6 +326,7 @@ async def lifespan(app: FastAPI):
         snapims_logger.setLevel(logging.INFO)
     LOGGER.info("SnapIMS %s starting", __version__)
     db.initialize(paths.db_file, paths=paths)
+    seed_approved_taxonomy(paths.db_file)
     PricingWorkflow(paths)
     import_recovery = reconcile_import_journals(paths)
     folder_import_recovery = recover_import_jobs(paths)
@@ -1541,103 +1566,92 @@ async def approve(
     batch_id: str = Form(...),
     item_id: str = Form(...),
     title: str = Form(""),
-    price: str = Form(""),
     tag_ids: str = Form(""),
-    discount: str = Form("0"),
-    pricing_disposition: str = Form(""),
-    pricing_price_touched: bool = Form(False),
     request: Request = None,
     revision: int = Form(...),
 ) -> RedirectResponse:
-    try:
-        price_cents = parse_price_cents(price, allow_blank=True)
-        discount_percent = parse_discount_percent(discount)
-    except ValueError:
-        return redirect(
-            f"/review?batch_id={quote(batch_id)}&item_id={quote(item_id)}&edit=true&errors="
-            + quote("Price or discount is invalid")
-        )
-    current_before = db.get_item(get_paths().db_file, item_id)
+    paths = get_paths()
+    current_before = db.get_item(paths.db_file, item_id)
     if current_before is None:
         raise HTTPException(404)
     current_sequence = int(current_before["sequence"])
+    actor = str(getattr(request.state, "username", "") or "local-operator")
     try:
-        errors = accept_item(
-            get_paths().db_file,
+        saved = operator_review_approve(
+            paths.db_file,
             item_id,
-            price_cents=price_cents,
-            discount_percent=discount_percent,
-            title_override=title.strip() or None,
+            title=title,
             tag_ids=[value for value in tag_ids.split(",") if value],
             expected_revision=revision,
+            actor=actor,
         )
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         return redirect(
-            f"/review?batch_id={quote(batch_id)}&item_id={quote(item_id)}&errors="
-            + quote(str(exc))
+            f"/review?batch_id={quote(batch_id)}&queue=UNRESOLVED&item_id={quote(item_id)}&errors={quote(str(exc))}"
         )
-    except ValueError as exc:
-        return redirect(
-            f"/review?batch_id={quote(batch_id)}&item_id={quote(item_id)}&errors="
-            + quote(str(exc))
-        )
-    if errors:
-        message = "|".join(
-            "This tape still needs information in the exception editor."
-            if error == "Title is required"
-            else error
-            for error in errors
-        )
-        return redirect(
-            f"/review?batch_id={quote(batch_id)}&item_id={quote(item_id)}&edit=true&errors={quote(message)}"
-        )
-    try:
-        saved = db.get_item(get_paths().db_file, item_id)
-        if saved and saved.get("title"):
+    if saved.get("title"):
+        try:
             queue_operator_title_correction(
-                get_paths(),
+                paths,
                 item_id,
                 str(saved["title"]),
                 int(saved["release_year"]) if saved.get("release_year") is not None else None,
             )
-    except Exception as exc:
-        LOGGER.debug("Catalog lookup could not be queued after approval for %s: %s", item_id, exc)
-    try:
-        saved_for_pricing = db.get_item(get_paths().db_file, item_id)
-        if saved_for_pricing and saved_for_pricing.get("title"):
-            record_review_pricing(
-                item_id=item_id,
-                batch_id=batch_id,
-                approved_title=str(saved_for_pricing["title"]),
-                submitted_price_cents=saved_for_pricing.get("price_cents"),
-                price_touched=pricing_price_touched,
-                requested_disposition=(
-                    pricing_disposition or pricing_default_disposition(batch_id)
-                ),
-                previous_price_cents=current_before.get("price_cents"),
-                item_revision=int(saved_for_pricing["record_revision"]),
-                actor=str(getattr(request.state, "username", "") or "local-operator"),
-            )
-    except Exception as exc:
-        # Review approval is authoritative. Pricing can be retried from the
-        # Pricing Review workspace without forcing a second recognition review.
-        LOGGER.exception("Pricing disposition could not be recorded for %s: %s", item_id, exc)
-    unresolved = db.list_items(get_paths().db_file, batch_id=batch_id, queue="UNRESOLVED")
-    after = next(
-        (row for row in unresolved if int(row["sequence"]) > current_sequence),
-        None,
-    )
+        except Exception as exc:
+            LOGGER.exception("Catalog correction lookup failed after Recognition Review for %s: %s", item_id, exc)
+    unresolved = db.list_items(paths.db_file, batch_id=batch_id, queue="UNRESOLVED")
+    after = next((row for row in unresolved if int(row["sequence"]) > current_sequence), None)
     target_row = after or (unresolved[0] if unresolved else None)
-    target = str(target_row["item_id"]) if target_row else ""
-    if target:
-        db.set_cursor(get_paths().db_file, batch_id, "UNRESOLVED", target)
-        return redirect(
-            f"/review?batch_id={quote(batch_id)}&queue=UNRESOLVED&item_id={quote(target)}&notice="
-            + quote("Approved. Next unfinished tape opened.")
+    if target_row:
+        target = str(target_row["item_id"])
+        db.set_cursor(paths.db_file, batch_id, "UNRESOLVED", target)
+        return redirect(f"/review?batch_id={quote(batch_id)}&queue=UNRESOLVED&item_id={quote(target)}&notice={quote('Approved. Next unfinished tape opened.')}" )
+    return redirect(f"/review?batch_id={quote(batch_id)}&queue=DONE&notice={quote('Recognition Review complete.')}" )
+
+
+@app.post("/review/reject")
+async def operator_reject_review(
+    request: Request,
+    batch_id: str = Form(...),
+    item_id: str = Form(...),
+    revision: int = Form(...),
+) -> RedirectResponse:
+    paths = get_paths()
+    current = db.get_item(paths.db_file, item_id)
+    if current is None:
+        raise HTTPException(404)
+    sequence = int(current["sequence"])
+    try:
+        operator_review_reject(
+            paths.db_file,
+            item_id,
+            expected_revision=revision,
+            actor=str(getattr(request.state, "username", "") or "local-operator"),
         )
-    return redirect(
-        f"/review?batch_id={quote(batch_id)}&queue=DONE&notice={quote('Review complete.')}"
+    except (RuntimeError, ValueError) as exc:
+        return redirect(f"/review?batch_id={quote(batch_id)}&item_id={quote(item_id)}&errors={quote(str(exc))}")
+    unresolved = db.list_items(paths.db_file, batch_id=batch_id, queue="UNRESOLVED")
+    after = next((row for row in unresolved if int(row["sequence"]) > sequence and row["item_id"] != item_id), None)
+    target_row = after or next((row for row in unresolved if row["item_id"] != item_id), None)
+    target = str(target_row["item_id"]) if target_row else item_id
+    db.set_cursor(paths.db_file, batch_id, "UNRESOLVED", target)
+    return redirect(f"/review?batch_id={quote(batch_id)}&queue=UNRESOLVED&item_id={quote(target)}&notice={quote('Recognition rejected and flagged. Continuing to the next tape.')}" )
+
+
+@app.post("/review/bulk-approve")
+async def operator_bulk_approve_review(
+    request: Request,
+    batch_id: str = Form(...),
+    threshold_percent: float = Form(95),
+) -> RedirectResponse:
+    preview = operator_bulk_approve(
+        get_paths().db_file,
+        batch_id,
+        threshold_percent / 100.0,
+        actor=str(getattr(request.state, "username", "") or "local-operator"),
     )
+    notice = f"Approved {preview.eligible_count} eligible item(s) at or above {threshold_percent:.0f}% confidence."
+    return redirect(f"/review?batch_id={quote(batch_id)}&queue=UNRESOLVED&notice={quote(notice)}")
 
 
 @app.post("/review/later")
@@ -1852,6 +1866,56 @@ async def batch_editor(
             "items": [], "page": 1, "page_size": page_size, "page_count": 1,
             "total": 0, "offset": 0, "has_previous": False, "has_next": False,
         }
+    for operator_row in editor_page["items"]:
+        try:
+            suggestion = operator_autofill_database_price(
+                paths.db_file, str(operator_row["item_id"])
+            )
+            refreshed = db.get_item(
+                paths.db_file, str(operator_row["item_id"])
+            )
+            if refreshed:
+                for key in (
+                    "price_cents",
+                    "working_source",
+                    "record_revision",
+                    "updated_at",
+                ):
+                    operator_row[key] = refreshed.get(key)
+                operator_row["operator_price_badge"] = (
+                    operator_pricing_badge(paths.db_file, refreshed)
+                )
+            else:
+                operator_row["operator_price_badge"] = "UNPRICED"
+
+            operator_row["operator_database_price"] = suggestion.as_dict()
+            operator_row["operator_ebay_url"] = operator_ebay_sold_url(
+                str(
+                    operator_row.get("title")
+                    or operator_row.get("suggested_title")
+                    or ""
+                )
+            )
+        except Exception as exc:
+            LOGGER.exception(
+                "Database-first pricing decoration failed for %s: %s",
+                operator_row.get("item_id"),
+                exc,
+            )
+            operator_row["operator_price_badge"] = (
+                "MANUAL"
+                if operator_row.get("price_cents") is not None
+                else "UNPRICED"
+            )
+            operator_row["operator_database_price"] = {}
+            operator_row["operator_ebay_url"] = operator_ebay_sold_url(
+                str(
+                    operator_row.get("title")
+                    or operator_row.get("suggested_title")
+                    or ""
+                )
+            )
+
     batch = db.get_batch(paths.db_file, batch_id) if batch_id else None
     checkpoints = db.list_batch_checkpoints(paths.db_file, batch_id) if batch_id else []
     return TEMPLATES.TemplateResponse(
@@ -2213,6 +2277,134 @@ def _shopify_item_rows(paths: DataPaths, items: list[dict[str, Any]]) -> list[di
     return result
 
 
+
+
+@app.get("/search", response_class=HTMLResponse)
+async def operator_item_search(request: Request, q: str = "", identity: str = "") -> HTMLResponse:
+    query = q.strip()
+    candidates = operator_find_title_candidates(get_paths().db_file, query, limit=20) if query else []
+    resolved_query = query
+    if query and len(candidates) == 1 and candidates[0].get("title"):
+        resolved_query = str(candidates[0]["title"])
+    intelligence = operator_title_intelligence(get_paths().db_file, resolved_query, identity=identity) if resolved_query else None
+    return TEMPLATES.TemplateResponse(
+        request,
+        "operator_first_search.html",
+        context(request, query=query, candidates=candidates, intelligence=intelligence),
+    )
+
+
+@app.get("/data-sources", response_class=HTMLResponse)
+async def operator_data_sources_page(request: Request) -> HTMLResponse:
+    return TEMPLATES.TemplateResponse(
+        request,
+        "operator_first_data_sources.html",
+        context(request, sources=operator_data_source_status(get_paths().db_file)),
+    )
+
+
+@app.get("/commit", response_class=HTMLResponse)
+async def operator_commit_page(
+    request: Request, batch_id: str | None = None, notice: str = "", message: str = ""
+) -> HTMLResponse:
+    paths = get_paths()
+    batches = db.list_batches(paths.db_file)
+    batch_id = selected_batch(paths, batch_id)
+    preview = operator_commit_preview(paths.db_file, batch_id).as_dict() if batch_id else None
+    return TEMPLATES.TemplateResponse(
+        request,
+        "operator_first_commit.html",
+        context(request, batches=batches, batch_id=batch_id, preview=preview, notice=notice, message=message),
+    )
+
+
+@app.post("/commit")
+async def operator_commit_action(request: Request, batch_id: str = Form(...), force: bool = Form(False)) -> RedirectResponse:
+    actor = str(getattr(request.state, "username", "") or "local-operator")
+    result = operator_commit_batch(get_paths().db_file, batch_id, force=force, actor=actor)
+    if result.items_with_warnings and not force and not result.already_committed:
+        message = f"{result.items_with_warnings} record(s) still have advisory warnings. Review them or choose Commit Anyway."
+        return redirect(f"/commit?batch_id={quote(batch_id)}&message={quote(message)}")
+    return redirect(f"/commit?batch_id={quote(batch_id)}&notice={quote('Inventory commit recorded. Warnings remain visible and auditable.')}")
+
+
+@app.get("/api/operator-first/help/{help_key:path}")
+async def operator_help_api(help_key: str) -> JSONResponse:
+    topic = operator_help_topic(help_key)
+    if topic is None and help_key.startswith("setting."):
+        key = help_key.split(".", 1)[1]
+        definition = DEFINITIONS.get(key)
+        if definition:
+            topic = {
+                "key": help_key,
+                "title": key.replace("SNAPIMS_", "").replace("_", " ").title(),
+                "purpose": f"Configure the {definition.section} setting {key}.",
+                "when_to_use": f"Use this only when changing {definition.section} configuration; normal operator work does not require it.",
+                "effect": "Changes the configured value used by future operations. Existing records remain operator-controlled unless the existing feature explicitly documents otherwise.",
+                "warnings": "Secret values are never returned by contextual help." if definition.secret else "",
+                "example": definition.default or (definition.choices[0] if definition.choices else ""),
+                "related": [f"settings.{definition.section}"],
+                "keywords": [definition.section, key],
+            }
+    if topic is None:
+        raise HTTPException(404, "No contextual help is registered for this control")
+    return JSONResponse(topic)
+
+
+@app.get("/api/operator-first/help-auto")
+async def operator_help_auto_api(label: str = "", kind: str = "control", name: str = "", form_action: str = "", href: str = "") -> JSONResponse:
+    return JSONResponse(operator_generic_help(label=label, kind=kind, name=name, form_action=form_action, href=href))
+
+
+@app.get("/api/operator-first/palette")
+async def operator_palette_api(q: str = "") -> JSONResponse:
+    query = q.strip()
+    navigation = [
+        ("Home", "/"), ("Import", "/import"), ("Recognition", "/recognition"),
+        ("Recognition Review", "/review"), ("Bulk Editor / Pricing", "/batch-editor"),
+        ("Commit to Inventory", "/commit"), ("Publish", "/publish"),
+        ("eBay Pricing", "/pricing"), ("Settings", "/settings"),
+        ("Diagnostics", "/diagnostics"), ("Data Sources", "/data-sources"),
+    ]
+    needle = query.casefold()
+    nav_results = [
+        {"label": label, "url": url, "detail": "Navigation"}
+        for label, url in navigation
+        if not needle or needle in label.casefold()
+    ][:12]
+    item_results = []
+    if query:
+        for row in operator_find_title_candidates(get_paths().db_file, query, limit=12):
+            item_results.append({
+                "label": str(row.get("title") or row.get("sample_item_id") or query),
+                "url": "/search?q=" + quote(str(row.get("title") or query)),
+                "detail": f"{row.get('count', 1)} local record(s)",
+            })
+    help_results = [
+        {"label": topic["title"], "url": "#", "help_key": topic["key"], "detail": "Help"}
+        for topic in operator_search_help(query, limit=10)
+    ]
+    setting_results = []
+    for key, definition in DEFINITIONS.items():
+        label = key.replace("SNAPIMS_", "").replace("_", " ").title()
+        if not needle or needle in label.casefold() or needle in definition.section.casefold():
+            setting_results.append({"label": label, "url": f"/settings#{definition.section}", "detail": "Setting"})
+        if len(setting_results) >= 10:
+            break
+    return JSONResponse({"groups": [
+        {"label": "Items", "results": item_results},
+        {"label": "Navigation", "results": nav_results},
+        {"label": "Settings", "results": setting_results},
+        {"label": "Help", "results": help_results},
+    ]})
+
+
+@app.get("/api/operator-first/review/bulk-preview")
+async def operator_review_bulk_preview(batch_id: str, threshold_percent: float = 95) -> JSONResponse:
+    preview = operator_bulk_approval_preview(get_paths().db_file, batch_id, threshold_percent / 100.0)
+    return JSONResponse(preview.as_dict())
+
+
 @app.get("/publish", response_class=HTMLResponse)
 async def publish_page(
     request: Request,
@@ -2295,6 +2487,7 @@ async def publish_create_job(request: Request) -> Any:
     scope = str(form.get("selection_scope") or "SELECTED").strip().upper()
     confirmation = str(form.get("confirmation") or "")
     item_ids = [str(value) for value in form.getlist("item_id")]
+    allow_incomplete = str(form.get("allow_incomplete") or "").strip().casefold() in {"1", "true", "yes", "on"}
     try:
         job_id = create_shopify_job(
             get_paths(),
@@ -2303,6 +2496,7 @@ async def publish_create_job(request: Request) -> Any:
             item_ids=item_ids,
             selection_scope=scope,
             confirmation=confirmation,
+            options={"allow_incomplete": allow_incomplete},
         )
     except ShopifyJobError as exc:
         if request.headers.get("x-requested-with") == "fetch":

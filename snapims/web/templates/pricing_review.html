@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Pricing Review · SnapIMS{% endblock %}
+{% block title %}eBay Pricing · SnapIMS{% endblock %}
 {% block content %}
 <section class="pricing-heading">
   <div>
-    <p class="eyebrow">REVIEW · PRICING</p>
-    <h1>Pricing Review</h1>
+    <p class="eyebrow">MARKET PRICING</p>
+    <h1>eBay Pricing</h1>
     <p>Price only approved titles that require market evidence. Manual and fixed prices are never overwritten automatically.</p>
   </div>
-  <a class="button" href="/review{% if batch_id %}?batch_id={{ batch_id }}{% endif %}">Back to Item Review</a>
+  <a class="button" href="/review{% if batch_id %}?batch_id={{ batch_id }}{% endif %}">Back to Recognition Review</a>
 </section>
 
 {% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}
@@ -34,6 +34,7 @@
   </div>
 </section>
 
+<details class="panel operator-config-details"><summary>Batch, filter & collection settings</summary>
 <div class="pricing-layout">
 <section class="panel">
   <h2>Batch and filters</h2>
@@ -107,6 +108,7 @@
   <p class="hint">Conservative enforces 1 page and 15-30 seconds. Balanced enforces 2 pages and 8-15 seconds. Choose Custom to edit concurrency or delay. Starts are throttled across queued jobs and restarts.</p>
 </section>
 </div>
+</details>
 
 <section class="panel pricing-table-panel">
   <div class="panel-heading"><div><h2>Pricing items</h2><p>{{ total }} matching Items</p></div></div>
@@ -143,7 +145,7 @@
         <td><span class="status-badge status-{{ row.status|lower|replace('_','-') }}">{{ row.status|replace('_',' ')|title }}</span>{% if row.stale_evidence %}<small class="stale-evidence">Title mismatch - acceptance blocked</small>{% endif %}{% if row.error_message %}<small>{{ row.error_message }}</small>{% endif %}</td>
         <td>{% if row.tapes_averaged %}<strong>{{ row.tapes_averaged }} tape{{ '' if row.tapes_averaged==1 else 's' }} averaged</strong><small>{{ row.cache_age }}</small>{% elif row.status=='NO_VALID_MATCHES' %}<strong>No valid matches</strong><small>{{ row.cache_age }}</small>{% else %}-{% endif %}</td>
         <td>{% if row.average_cad %}Avg ${{ row.average_cad }}<br>Median ${{ row.median_cad }}{% else %}—{% endif %}</td>
-        <td><a class="button compact" href="/pricing/item/{{ row.item_id }}">Review price</a>{% if row.search_url %}<a class="button compact" href="{{ row.search_url }}" target="_blank" rel="noopener">Open eBay</a>{% endif %}</td>
+        <td><a class="button compact" href="/pricing/item/{{ row.item_id }}">Review price</a>{% if row.search_url %}<a class="button compact" href="{{ row.search_url }}" target="_blank" rel="noopener" data-help-key="bulk.ebay_sold">View eBay Sold</a>{% endif %}</td>
       </tr>
       {% endfor %}
       </tbody>
@@ -155,6 +157,6 @@
     <span>Page {{ page }} of {{ pages }}</span>
     {% if page < pages %}<a class="button" href="/pricing?batch_id={{ batch_id }}&status={{ status_filter }}&cache_status={{ cache_status }}&price_status={{ price_status }}&evidence_min={{ evidence_min }}&page={{ page+1 }}">Next</a>{% endif %}
   </nav>
-  {% else %}<div class="empty"><h2>No Items match this pricing view</h2><p>Approve titles in Review, then choose Queue for Pricing Review or enter a manual price.</p></div>{% endif %}
+  {% else %}<div class="empty"><h2>No Items match this pricing view</h2><p>Approve titles in Review, then choose Queue for eBay Pricing or enter a manual price.</p></div>{% endif %}
 </section>
 {% endblock %}

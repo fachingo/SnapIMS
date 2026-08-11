@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Item Search · SnapIMS{% endblock %}
+{% block content %}
+<div class="page-heading operator-first-heading"><div><p class="eyebrow">UNIFIED SEARCH</p><h1>Item Search</h1><p>Ask what SnapIMS knows about one exact/canonical title across local workflow, pricing, Shopify sync, and metadata.</p></div></div>
+<form method="get" action="/search" class="operator-search-form">
+  <label class="operator-search-box">Search title, Item ID, SKU, or batch
+    <input name="q" value="{{ query }}" autofocus autocomplete="off" data-help-key="global.search" placeholder="The Shining">
+  </label>
+  <button class="primary" data-help-key="global.search">Search</button>
+</form>
+{% if candidates %}
+<section class="panel"><h2>Matches</h2><p class="muted">Choose one exact title. Similar titles remain separate.</p>
+  <div class="operator-search-results">
+  {% for candidate in candidates %}
+    <a class="operator-search-result" href="/search?q={{ candidate.title|urlencode }}"><strong>{{ candidate.title }}</strong><span>{{ candidate.count }} local record{{ '' if candidate.count == 1 else 's' }}{% if candidate.batch_id %} · {{ candidate.batch_id }}{% endif %}</span></a>
+  {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% if intelligence and intelligence.status == 'AMBIGUOUS' %}
+<section class="panel"><h2>Choose the canonical identity</h2>{% for candidate in intelligence.candidates %}<a class="button" href="/search?q={{ query|urlencode }}&identity={{ candidate.identity|urlencode }}">{{ candidate.title }} · {{ candidate.local_count }} record{{ '' if candidate.local_count == 1 else 's' }}</a>{% endfor %}</section>
+{% elif intelligence and intelligence.status == 'FOUND' %}
+<section class="operator-intel-summary panel">
+  <div><p class="eyebrow">TITLE INTELLIGENCE</p><h2>{{ intelligence.title }}</h2>{% if intelligence.movie_id %}<code>{{ intelligence.movie_id }}</code>{% endif %}</div>
+  <div class="operator-metrics">
+    <article><b>{{ intelligence.local_count }}</b><span>Local</span></article>
+    <article><b>{{ intelligence.committed_count }}</b><span>Committed</span></article>
+    <article><b>{{ intelligence.pending_count }}</b><span>Pending</span></article>
+    <article><b>{{ intelligence.shopify_listed_count }}</b><span>Shopify linked</span></article>
+  </div>
+</section>
+<div class="operator-intel-grid">
+<section class="panel" id="local"><h2>Local SnapIMS</h2><p>Batches: {{ intelligence.batches|join(', ') or '—' }}<br>Locations: {{ intelligence.locations|join(', ') or '—' }}</p><div class="table-scroll"><table><thead><tr><th>Item</th><th>Batch</th><th>Review</th><th>Price</th><th>Source</th></tr></thead><tbody>{% for item in intelligence.records %}<tr><td><a href="/batch-editor?batch_id={{ item.batch_id }}&search={{ item.item_id|urlencode }}">{{ item.title or item.item_id }}</a><small>{{ item.item_id }}</small></td><td>{{ item.batch_id }}</td><td>{{ item.review_status }}</td><td>{% if item.price_cents is not none %}${{ '%.2f'|format(item.price_cents/100) }}{% else %}UNPRICED{% endif %}</td><td>{{ item.working_source }}</td></tr>{% endfor %}</tbody></table></div></section>
+<section class="panel" id="shopify"><h2>Shopify</h2>{% if intelligence.shopify %}{% for row in intelligence.shopify %}<div class="operator-history-row"><strong>{{ row.title or row.item_id }}</strong><span>{{ row.product_status or row.sync_state or 'linked' }}{% if row.price_cents is not none %} · ${{ '%.2f'|format(row.price_cents/100) }}{% endif %}</span></div>{% endfor %}{% else %}<p class="muted">No current Shopify-linked records are stored for this title.</p>{% endif %}</section>
+<section class="panel"><h2>Sales history</h2>{% if intelligence.sales_history_available %}<p>{{ intelligence.sold_count }} sold.</p>{% else %}<p class="muted">{{ intelligence.sales_history_note }}</p>{% endif %}</section>
+<section class="panel"><h2>Pricing history</h2>{% if intelligence.pricing_history %}{% for row in intelligence.pricing_history %}<div class="operator-history-row"><strong>{{ row.pricing_source or row.status or 'pricing record' }}</strong><span>{% if row.current_price_cents is defined and row.current_price_cents is not none %}${{ '%.2f'|format(row.current_price_cents/100) }}{% elif row.average_cad is defined %}Avg {{ row.average_cad }}{% endif %}</span></div>{% endfor %}{% else %}<p class="muted">No dedicated pricing-history rows are stored for this title yet.</p>{% endif %}</section>
+<section class="panel"><h2>Metadata</h2>{% if intelligence.metadata %}<strong>{{ intelligence.metadata.canonical_title }}</strong>{% if intelligence.metadata.primary_release_year %} ({{ intelligence.metadata.primary_release_year }}){% endif %}{% if intelligence.metadata.genres %}<p>{{ intelligence.metadata.genres|join(', ') }}</p>{% endif %}<small>Local catalog{% if intelligence.metadata.source and intelligence.metadata.source.provider_name %} · {{ intelligence.metadata.source.provider_name }}{% endif %}</small>{% else %}<p class="muted">No resolved local catalog identity is stored for this title.</p>{% endif %}</section>
+</div>
+{% elif query and not candidates %}<section class="empty"><h2>No exact local title found</h2><p>Try a shorter search to discover separate title choices.</p></section>{% endif %}
+{% endblock %}

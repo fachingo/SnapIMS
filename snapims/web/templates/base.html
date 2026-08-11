@@ -7,7 +7,9 @@
   <title>{% block title %}SnapIMS{% endblock %}</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='operator_first.css') }}">
   <script defer src="{{ url_for('static', path='app.js') }}"></script>
+  <script defer src="{{ url_for('static', path='operator_first.js') }}"></script>
 </head>
 <body>
   <header class="topbar">
@@ -16,16 +18,19 @@
     <nav>
       <a href="/">Home</a>
       <a href="/import">Import</a>
-      <a href="/review">Review</a>
-      <a href="/pricing">Pricing Review</a>
       <a href="/recognition">Recognition</a>
-      <a href="/batch-editor">Batch Editor</a>
+      <a href="/review">Recognition Review</a>
+      <a href="/batch-editor">Bulk Editor</a>
+      <a href="/commit">Commit</a>
       <a href="/publish">Publish</a>
+      <a href="/pricing">eBay Pricing</a>
+      <a href="/search">Search</a>
       <a href="/settings">Settings</a>
       <a href="/diagnostics">Diagnostics</a>
       <form method="post" action="/logout" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Log out</button></form>
     </nav>
-    <button class="command-trigger" type="button" data-command-open title="Command palette (Alt+P)">⌘</button>
+    <button class="command-trigger operator-help-trigger" id="operator-help-open" type="button" aria-label="Open contextual help" title="Contextual help (F1)">?</button>
+    <button class="command-trigger" type="button" data-command-open title="Command palette (Ctrl+K; Alt+P remains supported)">⌘</button>
     {% endif %}
   </header>
   <main class="page">{% block content %}{% endblock %}</main>
@@ -46,8 +51,10 @@
       <button type="button" data-command data-command-action="bulk-price">Set selected prices</button>
       <button type="button" data-command data-command-action="approve-selected">Approve selected</button>
     </div>
-    <small>Alt+P · Esc closes</small>
+    <div id="operator-palette-results" class="operator-palette-results" aria-live="polite"></div>
+    <small>Ctrl+K / Alt+P · Esc closes</small>
   </dialog>
   {% endif %}
+<dialog id="operator-help-dialog" class="command-palette" aria-labelledby="operator-help-title"><div class="palette-head"><strong id="operator-help-title">Contextual Help</strong><button id="operator-help-close" type="button" aria-label="Close help">×</button></div><div id="operator-help-content"><p>Focus a supported control and press F1.</p></div></dialog>
 </body>
 </html>

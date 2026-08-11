@@ -9,6 +9,7 @@
       type="{{ type }}"
       value="{{ form_values.get(key, item.value) if not item.secret else '' }}"
       {% if item.externally_managed %}disabled{% endif %}
+      data-help-key="setting.{{ key }}"
       {% if item.secret %}autocomplete="off" placeholder="{{ 'Configured — enter a replacement' if item.configured else 'Not configured' }}"{% endif %}
     >
     <small>
@@ -37,6 +38,7 @@
   <a href="#infrastructure">Infrastructure</a>
   <a href="#security">Security</a>
   <a href="#backup">Backup &amp; Retention</a>
+  <a href="/data-sources" data-help-key="diagnostics.data_sources">Data Sources</a>
 </nav>
 
 <section class="panel" id="general">
@@ -53,7 +55,7 @@
   <ul>{% for folder in recent %}<li><code>{{ folder }}</code></li>{% else %}<li>No successful imports yet.</li>{% endfor %}</ul>
 </section>
 
-<section class="panel" id="recognition">
+<details class="panel operator-config-details" id="recognition"><summary>Recognition & AI</summary><div>
   <p class="eyebrow">STEP 1</p><h2>Recognition</h2>
   <p>Connection tests use submitted values in memory. Secret inputs are blank in every response and are discarded unless you explicitly save them.</p>
   <form method="post" action="/settings/recognition/secrets" data-prevent-double-submit>
@@ -106,9 +108,9 @@
   </form>
   <h3>Provider runtime</h3>
   <table><tbody>{% for name,state in providers.items() %}<tr><th>{{ name }}</th><td>{{ 'Available' if state[0] else 'Unavailable' }}</td><td>{{ state[1] }}</td></tr>{% endfor %}</tbody></table>
-</section>
+</div></details>
 
-<section class="panel" id="shopify">
+<details class="panel operator-config-details" id="shopify"><summary>Publishing / Shopify</summary><div>
   <p class="eyebrow">STEP 2</p><h2>Shopify connection</h2>
   <p>Connect the installed Shopify Dev Dashboard app once. SnapIMS requests and refreshes short-lived access tokens automatically; you do not paste an Admin API access token.</p>
 
@@ -225,9 +227,9 @@
 
   <p><strong>Publish safety:</strong> SnapIMS is draft-first. Live storefront publication requires a separate typed confirmation in Publish.</p>
   <p><a href="/publish">Open the complete simulation, draft review, and live publication workflow</a>.</p>
-</section>
+</div></details>
 
-<section class="panel" id="movie">
+<details class="panel operator-config-details" id="movie"><summary>Metadata / Catalog</summary><div>
   <p class="eyebrow">STEP 3</p><h2>Movie Data</h2>
   <form method="post" action="/settings/movie/test" data-prevent-double-submit>
     {{ csrf() }}
@@ -271,9 +273,9 @@
     <button class="primary">Save Movie Data settings</button>
   </form>
   <p>Catalog database: <code>{{ infrastructure.catalog_db }}</code>. Bootstrap and maintenance status is available in <a href="/diagnostics">Diagnostics</a>.</p>
-</section>
+</div></details>
 
-<section class="panel" id="infrastructure">
+<details class="panel operator-config-details" id="infrastructure"><summary>Infrastructure</summary><div>
   <h2>Infrastructure</h2>
   <p>Read-only effective paths and endpoints. Credential file contents are never displayed.</p>
   <dl>
@@ -284,9 +286,9 @@
   <h3>Current health</h3>
   <dl>{% for label, value in infrastructure_health.items() %}<dt>{{ label.replace('_', ' ') | title }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
   <p>Use <a href="/diagnostics">Diagnostics</a> for service health and external endpoint status.</p>
-</section>
+</div></details>
 
-<section class="panel" id="security">
+<details class="panel operator-config-details" id="security"><summary>Advanced Security</summary><div>
   <h2>Security</h2>
   <p>Authentication is currently <strong>{{ 'enabled' if authentication_enabled else 'disabled' }}</strong>. Secret changes require the current administrator password and revoke existing sessions.</p>
   <form method="post" action="/settings/security/change">
@@ -311,9 +313,9 @@
     {% for event in login_events %}<tr><td>{{ event.occurred_at }}</td><td>{{ event.event_type }}</td><td>{{ event.outcome }}</td></tr>
     {% else %}<tr><td colspan="3">No login events in the retained window.</td></tr>{% endfor %}
   </tbody></table>
-</section>
+</div></details>
 
-<section class="panel" id="backup">
+<details class="panel operator-config-details" id="backup"><summary>Backup & Retention</summary><div>
   <h2>Backup and Retention</h2>
   <form method="post" action="/settings/backup/save">
     {{ csrf() }}
@@ -325,7 +327,7 @@
     <button class="primary">Save retention settings</button>
   </form>
   <p>Backup destination: <code>{{ infrastructure.backup_path }}</code></p>
-</section>
+</div></details>
 
 {% if legacy_secret_fields %}
 <section class="panel" id="legacy-secrets">

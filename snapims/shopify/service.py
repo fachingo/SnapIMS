@@ -147,6 +147,7 @@ class ShopifyService:
         item_id: str,
         *,
         confirmed: bool = False,
+        allow_incomplete: bool = False,
         media_timeout: float = 30,
         poll_interval: float = 0.5,
     ) -> dict[str, Any]:
@@ -155,7 +156,7 @@ class ShopifyService:
         if self.config.problems():
             raise ValueError("Shopify configuration blocked upload: " + "; ".join(self.config.problems()))
         report = self.dry_run(item_id, remote_check=False)
-        if not report.ready:
+        if not report.ready and not allow_incomplete:
             raise ValueError("Shopify dry-run blocked upload: " + "; ".join(report.errors))
 
         backup = db.backup_database(self.paths, "before-shopify-upload")
@@ -239,7 +240,7 @@ class ShopifyService:
 
             if order.get(step, 0) < order["configure_variant"]:
                 active_stage = "configure_variant"
-                self.client.configure_variant(item, product_id, variant_id)
+                self.client.configure_variant(item, product_id, variant_id, allow_incomplete=allow_incomplete)
                 step = "configure_variant"
                 self._checkpoint(item_id, step)
 

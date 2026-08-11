@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Data Sources · SnapIMS{% endblock %}
+{% block content %}
+<div class="page-heading operator-first-heading"><div><p class="eyebrow">DIAGNOSTICS</p><h1>Data Sources</h1><p>Read-only visibility into the logical data sources SnapIMS is actually using. Secrets are never displayed.</p></div></div>
+<section class="panel no-pad"><div class="table-scroll"><table class="operator-source-table"><thead><tr><th>Source</th><th>State</th><th>Records</th><th>Freshness</th><th>Details</th></tr></thead><tbody>{% for source in sources %}<tr><td><strong>{{ source.source }}</strong></td><td><span class="operator-source-state state-{{ source.state|lower|replace(' ','-') }}">{{ source.state }}</span></td><td>{{ source.records }}</td><td>{{ source.freshness }}</td><td>{{ source.detail }}</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

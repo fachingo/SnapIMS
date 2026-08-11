@@ -66,8 +66,8 @@ class MockRecognizer(BaseRecognizer):
             edition=item.get("edition") or "Standard VHS",
             distributor=item.get("distributor") or "Demo Distributor",
             year=item.get("release_year") or 1990 + (sequence % 10),
-            suggested_price_cents=item.get("price_cents") or 999,
-            suggested_discount_percent=float(item.get("discount_percent") or 0),
+            suggested_price_cents=None,
+            suggested_discount_percent=0.0,
             confidence=0.91,
             uncertainty_reasons=("Synthetic mock result; verify against the cover",),
             title_evidence=("Synthetic fixture label",),
@@ -79,7 +79,7 @@ class MockRecognizer(BaseRecognizer):
             },
             provider_name=self.name,
             raw_response_reference=f"mock:{reference}",
-            pricing_source="MOCK_ESTIMATE_NO_LIVE_MARKET_DATA",
+            pricing_source="NO_RECOGNITION_PRICING",
             requires_review=True,
         )
 
@@ -135,9 +135,9 @@ class OpenAIRecognizer(BaseRecognizer):
                 "Use the exact title printed on the evidence, never a slogan or tagline. "
                 "Return title UNKNOWN when the evidence is insufficient. Record short evidence "
                 "snippets by field and flag conflicts between front, spine, back, or barcode. "
-                "Suggest a CAD listing price in cents only as an AI estimate. You do not have live sold-market data. "
-                "Use 999 when uncertain and include the lack of live comparable sales in uncertainty_reasons. "
-                "For suggested_tag_ids, return only IDs from this approved AI-eligible list: "
+                "Do not estimate or suggest a listing price. Set suggested_price_cents to null and "
+                "suggested_discount_percent to 0. Pricing is a separate operator/database/eBay workflow. "
+                "For suggested_tag_ids, return zero to three conservative IDs only from this approved AI-eligible list. "
                 + json.dumps(item.get("approved_ai_tags") or [])
             ),
         }]
@@ -154,15 +154,24 @@ class OpenAIRecognizer(BaseRecognizer):
         usage = getattr(response, "usage", None)
         input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
         output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        approved_ids = {
+            str(row.get("tag_id") or "")
+            for row in (item.get("approved_ai_tags") or [])
+            if isinstance(row, dict) and row.get("tag_id")
+        }
+        suggested_tag_ids = tuple(
+            value for value in (str(raw).strip() for raw in payload["suggested_tag_ids"])
+            if value in approved_ids
+        )[:3]
         return RecognitionResult(
             suggested_title=str(payload["title"]),
             edition=str(payload["edition"]),
             distributor=str(payload["distributor"]),
             year=payload["year"],
             barcode_candidates=tuple(payload["barcode_candidates"]),
-            suggested_tag_ids=tuple(payload["suggested_tag_ids"]),
-            suggested_price_cents=payload["suggested_price_cents"] or 999,
-            suggested_discount_percent=float(payload["suggested_discount_percent"]),
+            suggested_tag_ids=suggested_tag_ids,
+            suggested_price_cents=None,
+            suggested_discount_percent=0.0,
             confidence=float(payload["confidence"]),
             uncertainty_reasons=tuple(payload["uncertainty_reasons"]),
             title_evidence=tuple(payload["title_evidence"]),
@@ -170,7 +179,7 @@ class OpenAIRecognizer(BaseRecognizer):
             contradiction_flags=tuple(payload["contradiction_flags"]),
             provider_name=self.name,
             raw_response_reference=str(response.id),
-            pricing_source="AI_ESTIMATE_NO_LIVE_MARKET_DATA",
+            pricing_source="NO_RECOGNITION_PRICING",
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             requires_review=True,

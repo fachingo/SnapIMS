@@ -174,13 +174,9 @@ class ShopifyClient:
         variant = product["variants"]["nodes"][0]
         return {"product_id": product["id"], "variant_id": variant["id"], "inventory_item_id": variant["inventoryItem"]["id"]}
 
-    def configure_variant(self, item: dict[str, Any], product_id: str, variant_id: str) -> None:
-        final_price = final_price_cents(
-            int(item["price_cents"]), item.get("discount_percent") or 0
-        )
+    def configure_variant(self, item: dict[str, Any], product_id: str, variant_id: str, *, allow_incomplete: bool = False) -> None:
         variant: dict[str, Any] = {
             "id": variant_id,
-            "price": format_price_cents(final_price),
             "taxable": True,
             "inventoryItem": {
                 "sku": item["sku"],
@@ -194,6 +190,11 @@ class ShopifyClient:
                 },
             },
         }
+        if item.get("price_cents") is not None:
+            final_price = final_price_cents(int(item["price_cents"]), item.get("discount_percent") or 0)
+            variant["price"] = format_price_cents(final_price)
+        elif not allow_incomplete:
+            raise ValueError("Price is required unless the operator explicitly attempts an incomplete Shopify draft.")
         if item["barcode"]:
             variant["barcode"] = item["barcode"]
         self._call(

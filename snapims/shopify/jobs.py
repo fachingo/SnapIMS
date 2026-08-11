@@ -123,6 +123,8 @@ def create_job(
     if scope not in {"SELECTED", "ALL"}:
         raise ShopifyJobError("Selection scope must be SELECTED or ALL.")
     _validate_confirmation(normalized_action, confirmation)
+    normalized_options = dict(options or {})
+    allow_incomplete = bool(normalized_options.get("allow_incomplete"))
     selected = _normalize_item_ids(paths.db_file, batch_id, item_ids, scope)
     if not selected:
         raise ShopifyJobError("This batch has no Items to process.")
@@ -130,7 +132,7 @@ def create_job(
 
     config = ShopifyConfig.from_env()
     service = (service_factory or ShopifyService)(paths.db_file, config)
-    if normalized_action in {"CREATE_DRAFTS", "DIRECT_PUBLISH"}:
+    if normalized_action in {"CREATE_DRAFTS", "DIRECT_PUBLISH"} and not allow_incomplete:
         blocked: list[str] = []
         for item_id in selected:
             item = db.get_item(paths.db_file, item_id)
@@ -164,7 +166,7 @@ def create_job(
                 scope,
                 len(selected),
                 confirmation.strip(),
-                json.dumps(options or {}, sort_keys=True),
+                json.dumps(normalized_options, sort_keys=True),
                 timestamp,
                 timestamp,
             ),
@@ -196,8 +198,9 @@ def _is_transient(exc: Exception) -> bool:
     return isinstance(exc, (TimeoutError, ConnectionError))
 
 
-def _perform(service: ShopifyService, action: str, item_id: str) -> dict[str, Any]:
+def _perform(service: ShopifyService, action: str, item_id: str, *, options: dict[str, Any] | None = None) -> dict[str, Any]:
     item = db.get_item(service.db_file, item_id)
+    options = dict(options or {})
     if item is None:
         raise ShopifyJobError(f"Unknown Item ID: {item_id}")
     remote_id = str(item.get("shopify_product_id") or "")
@@ -206,7 +209,7 @@ def _perform(service: ShopifyService, action: str, item_id: str) -> dict[str, An
     if action == "CREATE_DRAFTS":
         if remote_id and upload_status not in {"FAILED", "DELETED", "NOT_UPLOADED"}:
             return {"status": "SKIPPED", "reason": "Shopify product already linked", "product_id": remote_id}
-        return service.upload_draft(item_id, confirmed=True)
+        return service.upload_draft(item_id, confirmed=True, allow_incomplete=bool(options.get("allow_incomplete")))
     if action == "PUBLISH_LIVE":
         if upload_status == "PUBLISHED":
             return {"status": "SKIPPED", "reason": "Already published", "product_id": remote_id}
@@ -214,7 +217,7 @@ def _perform(service: ShopifyService, action: str, item_id: str) -> dict[str, An
     if action == "DIRECT_PUBLISH":
         draft = None
         if not remote_id or upload_status in {"FAILED", "DELETED", "NOT_UPLOADED"}:
-            draft = service.upload_draft(item_id, confirmed=True)
+            draft = service.upload_draft(item_id, confirmed=True, allow_incomplete=bool(options.get("allow_incomplete")))
         live = service.publish_live(item_id, confirmed=True)
         return {"status": "PUBLISHED", "draft": draft, "live": live, **live}
     if action == "SYNC":
@@ -253,6 +256,10 @@ def _run_job_inner(
         if job is None:
             return
         action = str(job["action"])
+        try:
+            job_options = json.loads(str(job["options_json"] or "{}"))
+        except json.JSONDecodeError:
+            job_options = {}
         timestamp = db.now()
         with db.transaction(paths.db_file) as connection:
             connection.execute(
@@ -304,7 +311,7 @@ def _run_job_inner(
             item_status = "FAILED"
             for attempt in range(1, 4):
                 try:
-                    result = _perform(service, action, item_id)
+                    result = _perform(service, action, item_id, options=job_options)
                     item_status = "SKIPPED" if str(result.get("status") or "").upper() == "SKIPPED" else "SUCCESS"
                     break
                 except Exception as exc:  # bounded retry is classified below

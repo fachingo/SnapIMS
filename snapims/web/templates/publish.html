@@ -34,7 +34,7 @@
   {% if blocked == 0 and health.total %}
   <p>All {{ health.total }} Items satisfy the current SnapIMS publish gate.</p>
   {% else %}
-  <p>{{ blocked }} Item(s) have publish blockers. Resolve them in Review or Batch Editor before Shopify writes are enabled.</p>
+  <p>{{ blocked }} Item(s) have publish blockers. Review them in Recognition Review or Bulk Editor. They are advisory unless Shopify itself rejects the requested payload.</p>
   {% endif %}
   <details><summary>Validation details</summary>
     <dl class="status-grid">
@@ -85,7 +85,8 @@
     <input type="hidden" name="batch_id" value="{{ batch_id }}">
     <input type="hidden" name="action" value="CREATE_DRAFTS">
     <input type="hidden" name="selection_scope" value="ALL">
-    <button class="primary publish-primary" {% if not (simulate and blocked == 0 and shopify_configured) %}disabled{% endif %}>Create Shopify Drafts</button>
+    <label class="check"><input type="checkbox" name="allow_incomplete" value="true" data-help-key="commit.commit_anyway"> Attempt incomplete items anyway (warnings remain recorded)</label>
+    <button class="primary publish-primary" {% if not (simulate and shopify_configured) %}disabled{% endif %}>Create Shopify Drafts</button>
   </form>
 </section>
 

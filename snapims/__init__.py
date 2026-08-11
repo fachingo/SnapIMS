@@ -8,4 +8,4 @@ except ImportError:  # HEIC remains optional when the native codec is unavailabl
 if register_heif_opener is not None:
     register_heif_opener()
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
